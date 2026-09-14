@@ -3,7 +3,7 @@
 # PipeWire is a per-user session service, and so is this daemon).
 #
 #   ./install.sh            install/upgrade, enable the user service
-#   ./install.sh --uninstall
+#   ./uninstall.sh [--purge]   (or ./install.sh --uninstall)
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

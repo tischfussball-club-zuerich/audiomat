@@ -47,8 +47,8 @@ This copies the package to `~/.local/share/tfcz-audio` (no pip, no
 network needed), writes the `~/.local/bin/tfcz-audio` wrapper, installs the
 systemd **user** unit and writes an example config to
 `~/.config/tfcz-audio/config.toml` if none exists. Re-run it to upgrade;
-`./install.sh --uninstall` removes everything except the config.
-`pip install .` works too if you prefer a venv.
+`./uninstall.sh` removes everything except config and state, `./uninstall.sh
+--purge` removes those too. `pip install .` works too if you prefer a venv.
 
 Then:
 
