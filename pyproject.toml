@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tfcz-audio"
+version = "0.1.0"
+description = "PipeWire audio router: headset intercom, HDMI feed and OBS virtual mic with an HTTP API"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+tfcz-audio = "tfcz_audio.cli:main"
+
+[tool.setuptools]
+packages = ["tfcz_audio"]

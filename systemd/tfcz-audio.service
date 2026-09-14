@@ -1,0 +1,21 @@
+# User service: install to ~/.config/systemd/user/tfcz-audio.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tfcz-audio
+# PipeWire runs per user session, so this must be a *user* unit, not a system one.
+# If the box should route audio without a graphical login, also run:
+#   loginctl enable-linger $USER
+[Unit]
+Description=TFCZ audio router (PipeWire intercom, HDMI feed, OBS virtual mic)
+After=pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/tfcz-audio run
+Restart=on-failure
+RestartSec=2
+# pw-loopback children are killed together with the daemon
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

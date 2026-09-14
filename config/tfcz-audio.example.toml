@@ -1,0 +1,106 @@
+# tfcz-audio configuration
+#
+# Volumes use the same scale as wpctl / pavucontrol:
+#   1.0 = 0 dB (unity), 0.5 ~ -18 dB, 0.0 = silence, max 1.5 (~ +10.5 dB).
+#
+# Find node names with:   tfcz-audio devices
+
+# Top-level keys must stay above the first [table].
+# Where the last applied volumes are stored so they survive a restart.
+# Set to false to always start from the values in this file.
+# state_file = "~/.local/state/tfcz-audio/state.json"
+
+[api]
+listen = "127.0.0.1"   # keep on localhost unless you set a token
+port = 8787
+token = ""             # optional: require "Authorization: Bearer <token>" or ?token=
+
+[audio]
+latency = "256/48000"  # per-hop buffer, ~5 ms at 48 kHz. 128/48000 for lower latency.
+channels = 2
+
+[virtual]
+obs_mic_name = "tfcz.obsmic"
+obs_mic_description = "TFCZ OBS Mic"   # what OBS shows in "Audio Input Capture"
+
+# Friendly aliases for PipeWire node.name values (see `tfcz-audio devices`).
+[devices]
+headset_a_mic = "alsa_input.usb-Logitech_Logitech_USB_Headset-00.mono-fallback"
+headset_a_out = "alsa_output.usb-Logitech_Logitech_USB_Headset-00.analog-stereo"
+headset_b_mic = "alsa_input.usb-Jabra_Jabra_EVOLVE_20_MS-00.mono-fallback"
+headset_b_out = "alsa_output.usb-Jabra_Jabra_EVOLVE_20_MS-00.analog-stereo"
+hdmi_1        = "alsa_input.pci-0000_03_00.0.analog-stereo"
+
+# Routes: one pw-loopback each. "to" may be a device alias, a raw node.name,
+# or the special value "obs_mic" (the virtual microphone OBS captures).
+[routes.a_to_b]
+description = "Headset A mic -> Headset B ears"
+from = "headset_a_mic"
+to = "headset_b_out"
+volume = 1.0
+
+[routes.b_to_a]
+description = "Headset B mic -> Headset A ears"
+from = "headset_b_mic"
+to = "headset_a_out"
+volume = 1.0
+
+[routes.hdmi_to_a]
+description = "HDMI program audio -> Headset A"
+from = "hdmi_1"
+to = "headset_a_out"
+volume = 0.6
+
+[routes.hdmi_to_b]
+description = "HDMI program audio -> Headset B"
+from = "hdmi_1"
+to = "headset_b_out"
+volume = 0.6
+
+[routes.a_to_obs]
+description = "Headset A mic -> OBS virtual mic"
+from = "headset_a_mic"
+to = "obs_mic"
+volume = 1.0
+
+[routes.b_to_obs]
+description = "Headset B mic -> OBS virtual mic"
+from = "headset_b_mic"
+to = "obs_mic"
+volume = 1.0
+
+# Optional sidetone (hear yourself). Uncomment if wanted.
+# [routes.a_sidetone]
+# from = "headset_a_mic"
+# to = "headset_a_out"
+# volume = 0.3
+
+# Presets: apply several routes at once. Values are a volume, or a table
+# with volume and/or mute. Apply with: POST /presets/<name>
+[presets.default]
+a_to_b = 1.0
+b_to_a = 1.0
+hdmi_to_a = 0.6
+hdmi_to_b = 0.6
+a_to_obs = 1.0
+b_to_obs = 1.0
+
+[presets.hdmi_quiet]
+hdmi_to_a = 0.25
+hdmi_to_b = 0.25
+
+[presets.hdmi_off]
+hdmi_to_a = { mute = true }
+hdmi_to_b = { mute = true }
+
+[presets.hdmi_on]
+hdmi_to_a = { mute = false }
+hdmi_to_b = { mute = false }
+
+[presets.mics_off_air]
+a_to_obs = { mute = true }
+b_to_obs = { mute = true }
+
+[presets.mics_on_air]
+a_to_obs = { mute = false }
+b_to_obs = { mute = false }
