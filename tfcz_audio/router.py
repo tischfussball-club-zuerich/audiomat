@@ -155,18 +155,68 @@ class Router:
     def stop(self) -> None:
         with self._lock:
             self._started = False
-            for name, proc in list(self.procs.items()):
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
-                except Exception:  # noqa: BLE001
-                    try:
-                        proc.kill()
-                    except Exception:  # noqa: BLE001
-                        pass
-                log.info("stopped loopback %s", name)
-            self.procs.clear()
+            for name in list(self.procs):
+                self._terminate(name)
             self._applied.clear()
+
+    def _terminate(self, name: str) -> None:
+        proc = self.procs.pop(name, None)
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        self._applied.pop(name, None)
+        log.info("stopped loopback %s", name)
+
+    def reload(self, new_cfg: Config) -> dict[str, Any]:
+        """Switch to a new config at runtime. Only loopbacks whose spec
+        actually changed are restarted; runtime volumes of unchanged routes
+        are kept unless their config default changed."""
+        with self._lock:
+            old_specs = {n: route_spec(self.cfg, r) for n, r in self.cfg.routes.items()}
+            new_specs = {n: route_spec(new_cfg, r) for n, r in new_cfg.routes.items()}
+            virtual_changed = virtual_spec(self.cfg) != virtual_spec(new_cfg)
+
+            desired: dict[str, RouteState] = {}
+            for name, route in new_cfg.routes.items():
+                old = self.cfg.routes.get(name)
+                if old is not None and name in self.desired and (old.volume, old.mute) == (route.volume, route.mute):
+                    desired[name] = self.desired[name]
+                else:
+                    desired[name] = RouteState(route.volume, route.mute)
+
+            for name in list(self.procs):
+                if name == VIRTUAL:
+                    if virtual_changed:
+                        self._terminate(name)
+                    continue
+                if name not in new_specs or old_specs.get(name) != new_specs[name]:
+                    self._terminate(name)
+
+            new_cfg.path = new_cfg.path or self.cfg.path
+            self.cfg = new_cfg
+            self.desired = desired
+            for stale in set(self._failures) - set(new_cfg.routes) - {VIRTUAL}:
+                self._failures.pop(stale, None)
+                self._retry_at.pop(stale, None)
+            self._save_state()
+
+            if self._started:
+                if VIRTUAL not in self.procs:
+                    self._spawn(VIRTUAL)
+                    self._wait_for_node(self.cfg.virtual.obs_mix_name)
+                for name in self.cfg.routes:
+                    if name not in self.procs:
+                        self._spawn(name)
+                self.reconcile()
+            log.info("config reloaded: %d routes, %d presets", len(self.cfg.routes), len(self.cfg.presets))
+            return self.status()
 
     def _spec(self, name: str) -> LoopbackSpec:
         if name == VIRTUAL:

@@ -46,7 +46,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     cfg = _load_config(args)
     if args.no_state:
         cfg.state_file = None
-    backend = PipeWireBackend(dry_run=args.dry_run)
+    if args.fake:
+        from .pw import FakeBackend
+
+        backend = FakeBackend()
+        for alias, node in cfg.devices.items():
+            backend.add_device(node, "Audio/Sink" if "output" in node or alias.endswith("_out") else "Audio/Source", alias)
+        log.warning("running against a FAKE in-memory PipeWire (demo/UI development only)")
+    else:
+        backend = PipeWireBackend(dry_run=args.dry_run)
     router = Router(cfg, backend, node_wait=args.node_wait)
     stop = threading.Event()
 
@@ -251,6 +259,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("run", help="run the daemon (foreground)")
     s.add_argument("--dry-run", action="store_true", help="log commands instead of executing them")
+    s.add_argument("--fake", action="store_true", help="use an in-memory fake PipeWire (UI demo, no audio)")
     s.add_argument("--no-state", action="store_true", help="do not persist or restore volumes")
     s.add_argument("--node-wait", type=float, default=5.0, help="seconds to wait for spawned nodes")
     s.add_argument("--interval", type=float, default=1.0, help="supervisor poll interval in seconds")

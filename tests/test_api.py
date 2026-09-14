@@ -155,3 +155,58 @@ class ParamTests(unittest.TestCase):
         self.assertEqual(vol, 1.0)
         with self.assertRaises(BadRequest):
             extract_route_params({"volume": "abc"})
+
+
+class ConfigApiTests(ApiTestCase):
+    def test_ui_served(self):
+        for path in ("/", "/ui"):
+            req = urllib.request.Request(self.base + path)
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertIn("text/html", resp.headers["Content-Type"])
+                body = resp.read().decode()
+        self.assertIn("<title>tfcz-audio</title>", body)
+        self.assertIn("/config/devices", body)
+
+    def test_get_config(self):
+        code, body = self.call("GET", "/config")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["routes"]["a_to_obs"]["to"], "obs_mic")
+        self.assertIn("devices", body)
+        self.assertNotIn("token", body["api"])
+
+    def test_route_crud_via_api(self):
+        code, body = self.call("PUT", "/config/routes/hdmi_to_b", {"from": "hdmi", "to": "b_out", "volume": 0.3})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["routes"]["hdmi_to_b"]["volume"], 0.3)
+        self.assertIsNotNone(self.backend.graph().by_name("tfcz.hdmi_to_b.out"))
+        code, body = self.call("PUT", "/config/routes/hdmi_to_b", {"from": "hdmi"})
+        self.assertEqual(code, 400)
+        code, body = self.call("DELETE", "/config/routes/hdmi_to_b")
+        self.assertEqual(code, 200)
+        self.assertNotIn("hdmi_to_b", body["routes"])
+        code, body = self.call("DELETE", "/config/routes/hdmi_to_b")
+        self.assertEqual(code, 404)
+
+    def test_devices_and_defaults_via_api(self):
+        self.backend.add_device("alsa_input.hdmi2", "Audio/Source")
+        code, body = self.call("GET", "/config")
+        devices = dict(body["devices"], hdmi="alsa_input.hdmi2")
+        code, body = self.call("PUT", "/config/devices", devices)
+        self.assertEqual(code, 200, body)
+        self.assertEqual(body["routes"]["hdmi_to_a"]["from"], "alsa_input.hdmi2")
+        self.call("PUT", "/routes/hdmi_to_a", {"volume": 0.11})
+        code, body = self.call("POST", "/config/save-defaults")
+        self.assertEqual(code, 200)
+        code, body = self.call("GET", "/config")
+        self.assertEqual(body["routes"]["hdmi_to_a"]["volume"], 0.11)
+
+    def test_preset_crud_via_api(self):
+        code, body = self.call("PUT", "/config/presets/night", {"hdmi_to_a": {"mute": True}, "a_to_b": 0.5})
+        self.assertEqual(code, 200, body)
+        code, body = self.call("GET", "/presets")
+        self.assertEqual(body["presets"]["night"]["a_to_b"], {"volume": 0.5})
+        code, body = self.call("DELETE", "/config/presets/night")
+        self.assertEqual(code, 200)
+        code, body = self.call("DELETE", "/config/presets/night")
+        self.assertEqual(code, 404)

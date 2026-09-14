@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tomllib
@@ -49,6 +50,8 @@ class RouteConfig:
     mute: bool = False
     description: str = ""
     capture_sink: bool = False  # capture a sink's monitor instead of a source
+    source_ref: str = ""  # 'from' as written in the config (alias or node name)
+    sink_ref: str = ""  # 'to' as written in the config
 
     @property
     def in_node(self) -> str:
@@ -194,6 +197,8 @@ def parse(data: dict) -> Config:
             mute=_bool(spec.get("mute", False), where),
             description=str(spec.get("description", "")),
             capture_sink=_bool(spec.get("capture_sink", False), where),
+            source_ref=str(src),
+            sink_ref=str(dst),
         )
 
     presets = _section(data, "presets")
@@ -229,3 +234,115 @@ def parse(data: dict) -> Config:
         cfg.state_file = Path(str(state)).expanduser()
 
     return cfg
+
+
+# --------------------------------------------------------------------------- #
+# Writing the config back (used by the web UI / config API)
+# --------------------------------------------------------------------------- #
+
+
+def to_dict(cfg: Config) -> dict[str, Any]:
+    """Inverse of parse(): a plain dict that parse() accepts again."""
+    data: dict[str, Any] = {}
+    if cfg.state_file is None:
+        data["state_file"] = False
+    elif cfg.state_file != default_state_file():
+        data["state_file"] = str(cfg.state_file)
+    data["api"] = {"listen": cfg.api.listen, "port": cfg.api.port, "token": cfg.api.token}
+    data["audio"] = {"latency": cfg.audio.latency, "channels": cfg.audio.channels}
+    data["virtual"] = {
+        "obs_mix_name": cfg.virtual.obs_mix_name,
+        "obs_mic_name": cfg.virtual.obs_mic_name,
+        "obs_mic_description": cfg.virtual.obs_mic_description,
+    }
+    data["devices"] = dict(cfg.devices)
+    routes: dict[str, Any] = {}
+    for name, r in cfg.routes.items():
+        entry: dict[str, Any] = {}
+        if r.description:
+            entry["description"] = r.description
+        entry["from"] = r.source_ref or r.source
+        entry["to"] = r.sink_ref or r.sink
+        entry["volume"] = r.volume
+        if r.mute:
+            entry["mute"] = True
+        if r.capture_sink:
+            entry["capture_sink"] = True
+        routes[name] = entry
+    data["routes"] = routes
+    presets: dict[str, Any] = {}
+    for pname, entries in cfg.presets.items():
+        preset: dict[str, Any] = {}
+        for rname, e in entries.items():
+            if e.mute is None and e.volume is not None:
+                preset[rname] = e.volume
+            else:
+                item: dict[str, Any] = {}
+                if e.volume is not None:
+                    item["volume"] = e.volume
+                if e.mute is not None:
+                    item["mute"] = e.mute
+                preset[rname] = item
+        presets[pname] = preset
+    data["presets"] = presets
+    return data
+
+
+def _toml_key(key: str) -> str:
+    return key if re.fullmatch(r"[A-Za-z0-9_-]+", key) else json.dumps(key)
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{_toml_key(k)} = {_toml_value(v)}" for k, v in value.items()) + " }"
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    raise TypeError(f"cannot serialise {type(value).__name__} to TOML")
+
+
+HEADER = """# tfcz-audio configuration (generated; comments are not preserved).
+# Volumes: 1.0 = 0 dB, 0.5 ~ -18 dB, max 1.5. Node names: `tfcz-audio devices`.
+"""
+
+
+def dumps(data: dict[str, Any]) -> str:
+    """Serialise the dict shape produced by to_dict() as TOML."""
+    out = [HEADER]
+    for key, value in data.items():
+        if not isinstance(value, dict):
+            out.append(f"{_toml_key(key)} = {_toml_value(value)}")
+    for section in ("api", "audio", "virtual", "devices"):
+        table = data.get(section)
+        if not isinstance(table, dict):
+            continue
+        out.append(f"\n[{section}]")
+        for k, v in table.items():
+            out.append(f"{_toml_key(k)} = {_toml_value(v)}")
+    for section in ("routes", "presets"):
+        tables = data.get(section) or {}
+        for name, table in tables.items():
+            out.append(f"\n[{section}.{_toml_key(name)}]")
+            for k, v in table.items():
+                out.append(f"{_toml_key(k)} = {_toml_value(v)}")
+    return "\n".join(out) + "\n"
+
+
+def save(cfg: Config, path: Path | None = None) -> Path:
+    """Validate (via a parse round-trip) and atomically write the config."""
+    path = path or cfg.path
+    if path is None:
+        raise ConfigError("config has no path to save to")
+    data = to_dict(cfg)
+    text = dumps(data)
+    parse(tomllib.loads(text))  # never write something we cannot read back
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+    return path

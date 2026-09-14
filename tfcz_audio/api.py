@@ -14,7 +14,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import __version__
+from importlib import resources
+
+from . import __version__, edit
+from .config import ConfigError
 from .pw import db_to_cubic
 from .router import Router, RouterError, UnknownPreset, UnknownRoute
 
@@ -60,6 +63,16 @@ def extract_route_params(params: dict[str, Any]) -> tuple[float | None, bool | N
     return volume, mute
 
 
+_UI_CACHE: bytes | None = None
+
+
+def load_ui() -> bytes:
+    global _UI_CACHE  # noqa: PLW0603
+    if _UI_CACHE is None:
+        _UI_CACHE = resources.files("tfcz_audio").joinpath("ui.html").read_bytes()
+    return _UI_CACHE
+
+
 class ApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -92,6 +105,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _error(self, status: HTTPStatus, message: str) -> None:
         self._send(status, {"ok": False, "error": message})
+
+    def _send_html(self, body: bytes) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _read_params(self) -> dict[str, Any]:
         parts = urlsplit(self.path)
@@ -141,13 +163,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self) -> None:  # noqa: N802
         self._dispatch()
 
+    def do_DELETE(self) -> None:  # noqa: N802
+        self._dispatch()
+
     def _dispatch(self) -> None:
         try:
+            path = urlsplit(self.path).path
+            if self.command in ("GET", "HEAD") and path in ("/", "/ui", "/ui/", "/index.html"):
+                self._send_html(load_ui())
+                return
             params = self._read_params()
             if not self._authorized(params):
                 self._error(HTTPStatus.UNAUTHORIZED, "invalid or missing token")
                 return
-            path = urlsplit(self.path).path
             segments = [unquote(s) for s in path.strip("/").split("/") if s]
             status, payload = self._route(self.command, segments, params)
             self._send(status, payload)
@@ -158,6 +186,8 @@ class Handler(BaseHTTPRequestHandler):
         except UnknownPreset as exc:
             self._error(HTTPStatus.NOT_FOUND, f"unknown preset '{exc}'")
         except RouterError as exc:
+            self._error(HTTPStatus.BAD_REQUEST, str(exc))
+        except ConfigError as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         except Exception:  # noqa: BLE001
             log.exception("unhandled error for %s %s", self.command, self.path)
@@ -207,7 +237,26 @@ class Handler(BaseHTTPRequestHandler):
             if len(seg) == 2 and write:
                 return ok, {"ok": True, **router.apply_preset(seg[1])}
 
-        if read or write:
+        if seg[0] == "config":
+            body = {k: v for k, v in params.items() if k != "token"}
+            if len(seg) == 1 and read:
+                return ok, {"ok": True, **edit.public_config(router.cfg)}
+            if seg[1:] == ["devices"] and method == "PUT":
+                return ok, edit.set_devices(router, body)
+            if seg[1:] == ["save-defaults"] and write:
+                return ok, edit.save_current_as_defaults(router)
+            if len(seg) == 3 and seg[1] == "routes":
+                if method == "PUT":
+                    return ok, edit.upsert_route(router, seg[2], body)
+                if method == "DELETE":
+                    return ok, edit.delete_route(router, seg[2])
+            if len(seg) == 3 and seg[1] == "presets":
+                if method == "PUT":
+                    return ok, edit.upsert_preset(router, seg[2], body)
+                if method == "DELETE":
+                    return ok, edit.delete_preset(router, seg[2])
+
+        if read or write or method == "DELETE":
             return HTTPStatus.NOT_FOUND, {"ok": False, "error": f"no such endpoint: {method} /{'/'.join(seg)}"}
         return HTTPStatus.METHOD_NOT_ALLOWED, {"ok": False, "error": "method not allowed"}
 

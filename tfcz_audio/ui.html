@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tfcz-audio</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f4; --card: #ffffff; --text: #1c1917; --muted: #78716c; --line: #e7e5e4;
+    --accent: #2563eb; --ok: #16a34a; --bad: #dc2626; --warn: #d97706;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1c1917; --card: #292524; --text: #f5f5f4; --muted: #a8a29e; --line: #44403c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); padding: 16px; max-width: 1100px; margin-inline: auto; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+  th { border-top: 0; color: var(--muted); font-weight: 600; font-size: 12px; }
+  tr:first-child td { border-top: 0; }
+  .name { font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: middle; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  input[type=range] { width: 100%; min-width: 140px; accent-color: var(--accent); }
+  .vol { display: flex; gap: 10px; align-items: center; }
+  .vol output { width: 80px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+  button, select, input[type=text], input[type=number], input[type=password] {
+    font: inherit; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 6px 10px;
+  }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.muted { background: var(--bad); color: #fff; border-color: var(--bad); }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
+  select { max-width: 100%; }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px; background: var(--text); color: var(--bg); opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  #toast.show { opacity: 1; }
+  #toast.error { background: var(--bad); color: #fff; }
+  details summary { cursor: pointer; color: var(--muted); }
+  .missing { color: var(--bad); }
+  @media (max-width: 700px) {
+    table, thead, tbody, tr, td, th { display: block; }
+    thead { display: none; }
+    tr { border-top: 1px solid var(--line); padding: 8px 0; }
+    td { border: 0; padding: 4px 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>tfcz-audio</h1>
+    <div class="sub" id="summary">connecting…</div>
+  </div>
+  <div class="row">
+    <span id="micstate"><span class="dot"></span>OBS mic</span>
+    <details id="tokenbox"><summary>API token</summary>
+      <input type="password" id="token" placeholder="Bearer token" autocomplete="off">
+    </details>
+  </div>
+</header>
+
+<section>
+  <h2>Routes</h2>
+  <table id="routes"><thead><tr>
+    <th>Route</th><th style="width:34%">Volume</th><th>Mute</th><th>State</th><th></th>
+  </tr></thead><tbody></tbody></table>
+  <div class="row" style="margin-top:12px">
+    <button id="save-defaults" title="Write the current volumes and mutes into the config as the new defaults">Save current as defaults</button>
+    <button id="reset" title="Back to the config values">Reset to config</button>
+  </div>
+</section>
+
+<section>
+  <h2>Presets</h2>
+  <div class="row" id="presets"></div>
+</section>
+
+<section>
+  <h2>Devices</h2>
+  <p class="sub">Map each alias to a PipeWire device. Only devices matching how the alias is used (source or sink) are listed. Saving restarts the affected routes only.</p>
+  <div class="grid" id="devices"></div>
+  <div class="row" style="margin-top:12px">
+    <input type="text" id="new-alias" placeholder="new alias, e.g. headset_c_out" pattern="[a-z0-9_]+" style="width:220px">
+    <select id="new-alias-node"></select>
+    <button id="add-alias">Add alias</button>
+    <button class="primary" id="save-devices">Save devices</button>
+  </div>
+</section>
+
+<section>
+  <h2>Add or edit route</h2>
+  <div class="row">
+    <input type="text" id="r-name" placeholder="name (a-z0-9_-)" style="width:160px">
+    <select id="r-from"></select>
+    <span>→</span>
+    <select id="r-to"></select>
+    <input type="number" id="r-volume" min="0" max="1.5" step="0.05" value="1" style="width:80px" title="volume">
+    <input type="text" id="r-desc" placeholder="description" style="flex:1;min-width:160px">
+    <button class="primary" id="r-save">Save route</button>
+  </div>
+  <p class="sub">Use an existing name to change that route. Volumes: 1.0 = 0 dB, 0.5 ≈ −18 dB, max 1.5. Config file: <code id="cfgpath"></code></p>
+</section>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  const $ = (s, el = document) => el.querySelector(s);
+  const state = { status: null, config: null, devices: [], dragging: new Set(), pending: new Map() };
+  const tokenInput = $('#token');
+  try { tokenInput.value = localStorage.getItem('tfcz-token') || ''; } catch (e) {}
+  tokenInput.addEventListener('change', () => { try { localStorage.setItem('tfcz-token', tokenInput.value); } catch (e) {} refresh(true); });
+
+  async function api(method, path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (tokenInput.value) headers['Authorization'] = 'Bearer ' + tokenInput.value;
+    const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    let data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error(data.error || (res.status + ' ' + res.statusText));
+    return data;
+  }
+
+  let toastTimer;
+  function toast(msg, isError) {
+    const t = $('#toast');
+    t.textContent = msg; t.className = 'show' + (isError ? ' error' : '');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', isError ? 6000 : 2500);
+  }
+  const fail = e => toast(e.message || String(e), true);
+  const db = v => v <= 0 ? '−∞ dB' : (60 * Math.log10(v)).toFixed(1).replace('-', '−') + ' dB';
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // ---------------------------------------------------------------- routes
+  function renderRoutes() {
+    const tbody = $('#routes tbody');
+    const routes = state.status.routes;
+    const names = Object.keys(routes);
+    const existing = [...tbody.children].map(tr => tr.dataset.name);
+    if (existing.join() !== names.join()) {
+      tbody.innerHTML = names.map(n => `
+        <tr data-name="${esc(n)}">
+          <td><div class="name">${esc(n)}</div><div class="sub route-path"></div></td>
+          <td><div class="vol"><input type="range" min="0" max="1.5" step="0.01"><output></output></div></td>
+          <td><button class="mute"></button></td>
+          <td class="state"></td>
+          <td><button class="danger del" title="delete route">✕</button></td>
+        </tr>`).join('');
+      for (const tr of tbody.children) bindRow(tr);
+    }
+    for (const tr of tbody.children) {
+      const r = routes[tr.dataset.name];
+      const cfgRoute = (state.config && state.config.routes[tr.dataset.name]) || {};
+      tr.querySelector('.route-path').textContent = (r.description ? r.description + ' · ' : '') + (cfgRoute.from || r.from) + ' → ' + (cfgRoute.to || r.to);
+      const slider = tr.querySelector('input[type=range]');
+      if (!state.dragging.has(tr.dataset.name)) { slider.value = r.volume; tr.querySelector('output').textContent = db(r.volume); }
+      const mute = tr.querySelector('.mute');
+      mute.textContent = r.mute ? 'Muted' : 'On';
+      mute.className = 'mute' + (r.mute ? ' muted' : '');
+      const dots = [
+        [r.running ? 'ok' : 'bad', r.running ? 'loopback running' : 'loopback not running'],
+        [r.source_present ? 'ok' : 'bad', 'source ' + (r.source_present ? 'present' : 'missing')],
+        [r.sink_present ? 'ok' : 'bad', 'sink ' + (r.sink_present ? 'present' : 'missing')],
+        [r.connected ? 'ok' : 'warn', r.connected ? 'linked' : 'not linked'],
+      ];
+      tr.querySelector('.state').innerHTML = dots.map(([c, t]) => `<span class="dot ${c}" title="${esc(t)}"></span>`).join('') +
+        `<span class="sub">${r.connected ? 'linked' : (r.running ? 'waiting for device' : 'stopped')}</span>`;
+    }
+  }
+
+  function bindRow(tr) {
+    const name = tr.dataset.name;
+    const slider = tr.querySelector('input[type=range]');
+    const out = tr.querySelector('output');
+    slider.addEventListener('input', () => {
+      state.dragging.add(name); out.textContent = db(parseFloat(slider.value));
+      // throttle live updates while dragging
+      if (!state.pending.has(name)) state.pending.set(name, setTimeout(() => { state.pending.delete(name); sendVolume(name, slider.value); }, 150));
+    });
+    const done = () => { sendVolume(name, slider.value); setTimeout(() => state.dragging.delete(name), 400); };
+    slider.addEventListener('change', done);
+    slider.addEventListener('pointerup', done);
+    tr.querySelector('.mute').addEventListener('click', () => api('POST', `/routes/${encodeURIComponent(name)}/toggle`).then(refresh, fail));
+    tr.querySelector('.del').addEventListener('click', () => {
+      if (!confirm(`Delete route "${name}"? Its loopback stops immediately and the config file is rewritten.`)) return;
+      api('DELETE', `/config/routes/${encodeURIComponent(name)}`).then(() => { toast('route deleted'); refresh(true); }, fail);
+    });
+  }
+  function sendVolume(name, value) {
+    api('PUT', `/routes/${encodeURIComponent(name)}`, { volume: parseFloat(value) }).catch(fail);
+  }
+
+  // --------------------------------------------------------------- presets
+  function renderPresets() {
+    const box = $('#presets');
+    const presets = state.config ? state.config.presets : {};
+    const names = Object.keys(presets);
+    box.innerHTML = names.length ? '' : '<span class="sub">No presets defined in the config.</span>';
+    for (const p of names) {
+      const b = document.createElement('button');
+      b.textContent = p;
+      b.title = Object.entries(presets[p]).map(([r, v]) => `${r}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n');
+      b.addEventListener('click', () => api('POST', `/presets/${encodeURIComponent(p)}`).then(() => { toast('preset ' + p); refresh(); }, fail));
+      box.appendChild(b);
+    }
+  }
+
+  // --------------------------------------------------------------- devices
+  const SOURCE_CLASSES = ['Audio/Source', 'Audio/Source/Virtual', 'Audio/Duplex'];
+  const SINK_CLASSES = ['Audio/Sink', 'Audio/Duplex'];
+  function aliasUsage() {
+    const usage = {};
+    for (const r of Object.values(state.config.routes)) {
+      usage[r.from] = (usage[r.from] || new Set()).add('from');
+      usage[r.to] = (usage[r.to] || new Set()).add('to');
+    }
+    return usage;
+  }
+  function deviceOptions(kind, current) {
+    const allowed = kind === 'from' ? SOURCE_CLASSES : kind === 'to' ? SINK_CLASSES : null;
+    const nodes = state.devices.filter(d => !d.name.startsWith('tfcz.') && (!allowed || allowed.includes(d.media_class)));
+    let opts = nodes.map(d => `<option value="${esc(d.name)}" ${d.name === current ? 'selected' : ''}>${esc(d.description || d.name)} — ${esc(d.name)}</option>`);
+    if (current && !nodes.some(d => d.name === current)) opts.unshift(`<option value="${esc(current)}" selected class="missing">(missing) ${esc(current)}</option>`);
+    return opts.join('');
+  }
+  function renderDevices() {
+    const grid = $('#devices');
+    const usage = aliasUsage();
+    grid.innerHTML = '';
+    for (const [alias, node] of Object.entries(state.config.devices)) {
+      const use = usage[alias]; const kind = use && use.size === 1 ? [...use][0] : null;
+      const present = state.devices.some(d => d.name === node);
+      grid.insertAdjacentHTML('beforeend',
+        `<label><span class="dot ${present ? 'ok' : 'bad'}"></span>${esc(alias)} <span class="sub">${kind === 'from' ? 'source' : kind === 'to' ? 'sink' : ''}</span></label>
+         <div class="row"><select data-alias="${esc(alias)}" style="flex:1">${deviceOptions(kind, node)}</select>
+         <button class="danger" data-remove="${esc(alias)}" title="remove alias" ${use ? 'disabled' : ''}>✕</button></div>`);
+    }
+    grid.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', () => {
+      delete state.config.devices[b.dataset.remove]; renderDevices(); renderRouteForm();
+    }));
+    $('#new-alias-node').innerHTML = deviceOptions(null, null);
+  }
+  $('#add-alias').addEventListener('click', () => {
+    const alias = $('#new-alias').value.trim(); const node = $('#new-alias-node').value;
+    if (!/^[a-z0-9_]+$/.test(alias)) return toast('alias: lowercase letters, digits, underscore', true);
+    if (!node) return toast('pick a device', true);
+    state.config.devices[alias] = node; $('#new-alias').value = ''; renderDevices(); renderRouteForm();
+  });
+  $('#save-devices').addEventListener('click', () => {
+    const devices = {};
+    $('#devices').querySelectorAll('select[data-alias]').forEach(s => devices[s.dataset.alias] = s.value);
+    api('PUT', '/config/devices', devices).then(() => { toast('devices saved'); refresh(true); }, fail);
+  });
+
+  // ------------------------------------------------------------ route form
+  function renderRouteForm() {
+    const aliases = Object.keys(state.config.devices);
+    const usage = aliasUsage();
+    const opt = (a, sel) => `<option value="${esc(a)}" ${a === sel ? 'selected' : ''}>${esc(a)}</option>`;
+    const from = $('#r-from'), to = $('#r-to');
+    const fsel = from.value, tsel = to.value;
+    const fromAliases = aliases.filter(a => !usage[a] || usage[a].has('from') || !usage[a].has('to'));
+    const toAliases = aliases.filter(a => !usage[a] || usage[a].has('to') || !usage[a].has('from'));
+    from.innerHTML = fromAliases.map(a => opt(a, fsel)).join('');
+    to.innerHTML = `<option value="obs_mic" ${tsel === 'obs_mic' ? 'selected' : ''}>obs_mic (virtual OBS microphone)</option>` + toAliases.map(a => opt(a, tsel)).join('');
+  }
+  $('#r-save').addEventListener('click', () => {
+    const name = $('#r-name').value.trim();
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) return toast('route name: a-z, 0-9, _ or -', true);
+    const body = { from: $('#r-from').value, to: $('#r-to').value, volume: parseFloat($('#r-volume').value || '1'), description: $('#r-desc').value.trim() };
+    api('PUT', `/config/routes/${encodeURIComponent(name)}`, body).then(() => { toast('route saved'); $('#r-name').value = ''; $('#r-desc').value = ''; refresh(true); }, fail);
+  });
+  $('#save-defaults').addEventListener('click', () => api('POST', '/config/save-defaults').then(() => { toast('saved as defaults'); refresh(true); }, fail));
+  $('#reset').addEventListener('click', () => api('POST', '/reset').then(() => { toast('reset to config'); refresh(); }, fail));
+
+  // ----------------------------------------------------------------- loop
+  let lastConfig = '';
+  async function refresh(withConfig) {
+    try {
+      const [status, devices] = await Promise.all([api('GET', '/status'), api('GET', '/devices')]);
+      state.status = status; state.devices = devices.devices;
+      if (withConfig || !state.config) {
+        const cfg = await api('GET', '/config');
+        const serialized = JSON.stringify(cfg);
+        if (serialized !== lastConfig) { lastConfig = serialized; state.config = cfg; renderPresets(); renderDevices(); renderRouteForm(); $('#cfgpath').textContent = cfg.path || '(none)'; }
+      }
+      renderRoutes();
+      const vm = status.virtual_mic;
+      $('#micstate').innerHTML = `<span class="dot ${vm.present ? 'ok' : 'bad'}"></span>${esc(vm.description)} ${vm.present ? 'available in OBS' : 'missing'}`;
+      const missing = Object.values(status.devices).filter(d => !d.present).length;
+      $('#summary').textContent = `${Object.keys(status.routes).length} routes · ${missing ? missing + ' device(s) missing' : 'all devices present'}`;
+    } catch (e) {
+      $('#summary').textContent = 'error: ' + e.message;
+      if (/token/i.test(e.message)) $('#tokenbox').open = true;
+    }
+  }
+  refresh(true);
+  setInterval(() => refresh(false), 2000);
+  setInterval(() => refresh(true), 15000);
+})();
+</script>
+</body>
+</html>

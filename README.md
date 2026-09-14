@@ -7,7 +7,8 @@ and to Advanced Scene Switcher:
 * headset A mic -> headset B ears, and the other way round (intercom)
 * HDMI program audio -> both headsets
 * both headset mics -> one virtual microphone ("TFCZ OBS Mic") for OBS
-* a volume and mute per route, changeable at runtime over HTTP or CLI
+* a volume and mute per route, changeable at runtime over HTTP, CLI or a
+  small web UI
 * presets to switch several routes at once (e.g. "hdmi_off" during a talk)
 
 There is no audio code in this project. Every route is a `pw-loopback`
@@ -67,6 +68,26 @@ lingering so the user session (and PipeWire) starts at boot:
 ```
 loginctl enable-linger $USER
 ```
+
+## Web UI
+
+Open <http://127.0.0.1:8787/> on the streaming PC (or from the LAN if you
+change `listen` and set a `token`). The page shows every route with a
+live volume slider, dB readout and mute button, the preset buttons, and
+whether each device is present and linked. It also edits the config:
+
+* **Devices**: assign each alias to one of the PipeWire devices currently
+  present (filtered to sources or sinks depending on how the alias is
+  used), add new aliases, and save. Only routes using a changed device are
+  restarted.
+* **Routes**: add a route from two aliases (or to `obs_mic`), change an
+  existing one by reusing its name, or delete one.
+* **Save current as defaults** writes the current volumes and mutes into
+  the config as the new startup values.
+
+Every UI change rewrites `config.toml` (comments in the file are not kept)
+and hot-reloads the daemon. Hand edits to the file still work; restart the
+service afterwards.
 
 ## Configuration
 
@@ -134,6 +155,12 @@ client can drive it.
 | POST | `/presets/{p}` | apply a preset |
 | POST | `/reset` | all routes back to config values |
 | GET | `/devices` | audio sources/sinks currently in PipeWire |
+| GET | `/` | web UI |
+| GET | `/config` | current config as JSON (token hidden) |
+| PUT | `/config/devices` | replace the alias -> node mapping, save, hot-reload |
+| PUT / DELETE | `/config/routes/{r}` | create or update (`from`, `to`, `volume`, `mute`, `description`) or delete a route |
+| PUT / DELETE | `/config/presets/{p}` | create or update or delete a preset |
+| POST | `/config/save-defaults` | write current volumes/mutes into the config |
 
 Examples:
 
@@ -185,4 +212,6 @@ python3 -m tfcz_audio -c config/tfcz-audio.example.toml run --dry-run
 ```
 
 `--dry-run` logs the exact `pw-loopback` and `wpctl` commands instead of
-executing them, which also works on machines without PipeWire.
+executing them, which also works on machines without PipeWire. `--fake`
+runs against an in-memory PipeWire populated with the config's devices,
+which is handy for working on the web UI: open <http://127.0.0.1:8787/>.
