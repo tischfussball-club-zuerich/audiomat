@@ -42,6 +42,26 @@ class VirtualConfig:
 
 
 @dataclass
+class DeviceSpec:
+    """How to find a device. Either a fixed PipeWire node.name, or a property
+    matcher (e.g. device.serial or device.bus-path) resolved at runtime so the
+    device keeps its identity across reboots and USB ports."""
+
+    alias: str
+    node: str = ""
+    match: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def is_static(self) -> bool:
+        return bool(self.node)
+
+    def to_value(self) -> Any:
+        if self.is_static:
+            return self.node
+        return {"match": dict(self.match)}
+
+
+@dataclass
 class RouteConfig:
     name: str
     source: str  # PipeWire node.name of the capture device
@@ -73,7 +93,8 @@ class Config:
     api: ApiConfig = field(default_factory=ApiConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     virtual: VirtualConfig = field(default_factory=VirtualConfig)
-    devices: dict[str, str] = field(default_factory=dict)
+    devices: dict[str, DeviceSpec] = field(default_factory=dict)
+    labels: dict[str, str] = field(default_factory=dict)  # alias or alias prefix -> friendly name
     routes: dict[str, RouteConfig] = field(default_factory=dict)
     presets: dict[str, dict[str, PresetEntry]] = field(default_factory=dict)
     state_file: Path | None = None
@@ -166,11 +187,29 @@ def parse(data: dict) -> Config:
 
     devices = _section(data, "devices")
     for key, value in devices.items():
-        if not isinstance(value, str) or not value:
-            raise ConfigError(f"[devices] {key}: expected a PipeWire node.name string")
         if key == OBS_MIC:
             raise ConfigError(f"[devices] '{OBS_MIC}' is reserved for the virtual OBS microphone")
-        cfg.devices[key] = value
+        if not ROUTE_NAME_RE.match(key):
+            raise ConfigError(f"[devices] '{key}': names must match {ROUTE_NAME_RE.pattern}")
+        if isinstance(value, str) and value:
+            cfg.devices[key] = DeviceSpec(alias=key, node=value)
+        elif isinstance(value, dict) and isinstance(value.get("match"), dict) and value["match"]:
+            match = {}
+            for mk, mv in value["match"].items():
+                if not isinstance(mk, str) or not isinstance(mv, (str, int, float, bool)):
+                    raise ConfigError(f"[devices] {key}: match values must be strings")
+                match[mk] = str(mv)
+            if match.get("kind") not in (None, "input", "output"):
+                raise ConfigError(f"[devices] {key}: match.kind must be 'input' or 'output'")
+            cfg.devices[key] = DeviceSpec(alias=key, match=match)
+        else:
+            raise ConfigError(f"[devices] {key}: expected a node.name string or {{ match = {{ ... }} }}")
+
+    labels = _section(data, "labels")
+    for key, value in labels.items():
+        if not isinstance(value, str):
+            raise ConfigError(f"[labels] {key}: expected a string")
+        cfg.labels[str(key)] = value
 
     routes = _section(data, "routes")
     if not routes:
@@ -187,8 +226,9 @@ def parse(data: dict) -> Config:
             raise ConfigError(f"{where}: missing key {exc}") from None
         if src == OBS_MIC:
             raise ConfigError(f"{where}: '{OBS_MIC}' can only be used as 'to'")
-        source = cfg.devices.get(src, src)
-        sink = OBS_MIC if dst == OBS_MIC else cfg.devices.get(dst, dst)
+        # static node names are known now; matcher-based devices resolve at runtime
+        source = cfg.devices[src].node if src in cfg.devices else src
+        sink = OBS_MIC if dst == OBS_MIC else (cfg.devices[dst].node if dst in cfg.devices else dst)
         cfg.routes[name] = RouteConfig(
             name=name,
             source=source,
@@ -255,7 +295,9 @@ def to_dict(cfg: Config) -> dict[str, Any]:
         "obs_mic_name": cfg.virtual.obs_mic_name,
         "obs_mic_description": cfg.virtual.obs_mic_description,
     }
-    data["devices"] = dict(cfg.devices)
+    data["devices"] = {alias: spec.to_value() for alias, spec in cfg.devices.items()}
+    if cfg.labels:
+        data["labels"] = dict(cfg.labels)
     routes: dict[str, Any] = {}
     for name, r in cfg.routes.items():
         entry: dict[str, Any] = {}
@@ -317,7 +359,7 @@ def dumps(data: dict[str, Any]) -> str:
     for key, value in data.items():
         if not isinstance(value, dict):
             out.append(f"{_toml_key(key)} = {_toml_value(value)}")
-    for section in ("api", "audio", "virtual", "devices"):
+    for section in ("api", "audio", "virtual", "devices", "labels"):
         table = data.get(section)
         if not isinstance(table, dict):
             continue
@@ -346,3 +388,21 @@ def save(cfg: Config, path: Path | None = None) -> Path:
     tmp.write_text(text)
     os.replace(tmp, path)
     return path
+
+
+def human(cfg: Config | None, alias: str) -> str:
+    """Friendly name for an alias: user label first, then a readable fallback."""
+    if alias == OBS_MIC:
+        return "OBS stream"
+    labels = cfg.labels if cfg else {}
+    if alias in labels:
+        return labels[alias]
+    base, _, kind = alias.rpartition("_")
+    suffix = {"mic": "microphone", "out": "headphones"}.get(kind)
+    if base and suffix and base in labels:
+        return f"{labels[base]} {suffix}"
+    words = alias.replace("-", "_").split("_")
+    acr = {"hdmi": "HDMI", "obs": "OBS", "usb": "USB", "pc": "PC", "tv": "TV", "a": "A", "b": "B", "c": "C", "d": "D"}
+    out = " ".join(acr.get(w, w) for w in words)
+    out = out.replace(" mic", " microphone").replace(" out", " headphones")
+    return out[:1].upper() + out[1:]

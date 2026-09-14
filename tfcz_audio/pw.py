@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import shlex
+import signal
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -80,9 +82,21 @@ class Link:
 
 
 @dataclass
+class Device:
+    id: int
+    name: str = ""
+    description: str = ""
+    bus: str = ""
+    form_factor: str = ""
+    api: str = ""
+    props: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Graph:
     nodes: dict[int, Node] = field(default_factory=dict)
     links: list[Link] = field(default_factory=list)
+    devices: dict[int, Device] = field(default_factory=dict)
 
     def by_name(self, name: str) -> Node | None:
         for node in self.nodes.values():
@@ -101,6 +115,157 @@ class Graph:
             (n for n in self.nodes.values() if n.media_class in AUDIO_CLASSES),
             key=lambda n: (n.media_class, n.name),
         )
+
+
+_STRIP_WORDS = (
+    "Analog Stereo", "Analog Mono", "Analog Surround 5.1", "Analog Surround 7.1", "Digital Stereo (IEC958)",
+    "Digital Stereo (HDMI)", "Digital Stereo", "Stereo", "Mono", "Multichannel", "Pro", "Duplex", "Audio",
+)
+
+
+def _clean_description(text: str) -> str:
+    out = text.strip()
+    changed = True
+    while changed and out:
+        changed = False
+        for word in _STRIP_WORDS:
+            if out.endswith(word):
+                out = out[: -len(word)].strip(" -_,")
+                changed = True
+    return out or text.strip()
+
+
+def bus_of(node: Node, device: Device | None) -> str:
+    """'USB', 'Bluetooth', 'PCI card', 'built-in' or ''."""
+    api = str(node.props.get("device.api", "")) or (device.api if device else "")
+    if api == "bluez5":
+        return "Bluetooth"
+    name = node.name
+    bus = device.bus if device else ""
+    if bus == "usb" or ".usb-" in name or name.startswith("alsa_input.usb") or name.startswith("alsa_output.usb"):
+        return "USB"
+    if bus == "pci" or ".pci-" in name:
+        ff = (device.form_factor if device else "") or str(node.props.get("device.form-factor", ""))
+        if ff == "internal":
+            return "built-in"
+        return "PCI card"
+    return ""
+
+
+def is_hdmi_capture(node: Node, device: Device | None) -> bool:
+    text = " ".join(
+        str(x)
+        for x in (
+            node.props.get("alsa.card_name"), node.props.get("alsa.long_card_name"), node.props.get("alsa.driver_name"),
+            device.props.get("alsa.card_name") if device else "", device.name if device else "", node.name,
+        )
+        if x
+    ).lower()
+    return node.media_class.startswith("Audio/Source") and ("hws" in text or "capture" in text or "hdmi" in text)
+
+
+def looks_like_speakers(node: Node, device: Device | None) -> bool:
+    """Output that is probably a loudspeaker rather than a headset: HDMI/monitor
+    audio or the built-in card. Routing a microphone there risks echo."""
+    if not node.media_class.startswith("Audio/Sink"):
+        return False
+    ff = (device.form_factor if device else "") or str(node.props.get("device.form-factor", ""))
+    if ff in ("headset", "headphone", "hands-free"):
+        return False
+    if ff in ("speaker", "internal", "tv"):
+        return True
+    text = (node.name + " " + node.description).lower()
+    return "hdmi" in text or "displayport" in text or (bus_of(node, device) == "built-in")
+
+
+def friendly_name(node: Node, device: Device | None) -> str:
+    """Plain-language label: 'Jabra EVOLVE 20 · microphone', 'HDMI capture input 2'."""
+    if is_hdmi_capture(node, device):
+        idx = node.props.get("api.alsa.card") or node.props.get("alsa.card") or ""
+        card = str(node.props.get("alsa.card_name") or (device.props.get("alsa.card_name") if device else "") or "")
+        label = "HDMI capture input"
+        if idx != "":
+            label += f" {idx}"
+        return f"{label} ({card})" if card else label
+    base = _clean_description(node.description) if node.description else ""
+    if device and device.description:
+        dev_base = _clean_description(device.description)
+        if dev_base and (not base or len(dev_base) <= len(base)):
+            base = dev_base
+    if not base:
+        base = node.name
+    if node.media_class.startswith("Audio/Source"):
+        return f"{base} · microphone"
+    if node.media_class.startswith("Audio/Sink"):
+        ff = (device.form_factor if device else "") or str(node.props.get("device.form-factor", ""))
+        what = "headphones" if ff in ("headset", "headphone", "hands-free") or bus_of(node, device) in ("USB", "Bluetooth") else "speakers"
+        return f"{base} · {what}"
+    return base
+
+
+def describe_node(node: Node, graph: Graph) -> dict[str, Any]:
+    device = None
+    dev_id = node.props.get("device.id")
+    if dev_id is not None:
+        try:
+            device = graph.devices.get(int(dev_id))
+        except (TypeError, ValueError):
+            device = None
+    kind = "input" if node.media_class.startswith("Audio/Source") else "output" if node.media_class.startswith("Audio/Sink") else "other"
+    return {
+        **node.to_dict(),
+        "friendly": friendly_name(node, device),
+        "kind": kind,
+        "bus": bus_of(node, device),
+        "device_id": device.id if device else None,
+        "device_name": _clean_description(device.description) if device and device.description else "",
+        "hdmi_capture": is_hdmi_capture(node, device),
+        "speakers": looks_like_speakers(node, device),
+        "system_mute": bool(node.mute) if node.mute is not None else False,
+        "system_volume": node.volume,
+        "virtual": node.media_class == "Audio/Source/Virtual" or node.name.startswith("tfcz."),
+        "serial": str((device.props.get("device.serial") if device else None) or node.props.get("device.serial") or ""),
+        "bus_path": str((device.props.get("device.bus-path") if device else None) or node.props.get("device.bus-path") or ""),
+        "port": port_label(str((device.props.get("device.bus-path") if device else None) or node.props.get("device.bus-path") or "")),
+    }
+
+
+def physical_devices(graph: Graph) -> list[dict[str, Any]]:
+    """Group audio nodes by the hardware they belong to. A USB headset becomes
+    one entry with an input (microphone) and an output (headphones)."""
+    groups: dict[str, dict[str, Any]] = {}
+    for node in graph.audio_devices():
+        if node.name.startswith("tfcz."):
+            continue
+        info = describe_node(node, graph)
+        key = f"dev:{info['device_id']}" if info["device_id"] is not None else f"node:{node.name}"
+        g = groups.setdefault(
+            key,
+            {
+                "id": key,
+                "name": info["device_name"] or _clean_description(node.description) or node.name,
+                "bus": info["bus"],
+                "inputs": [],
+                "outputs": [],
+                "hdmi_capture": False,
+                "speakers": False,
+            },
+        )
+        g["hdmi_capture"] = g["hdmi_capture"] or info["hdmi_capture"]
+        if info["hdmi_capture"]:
+            g["name"] = info["friendly"].split(" (")[0]
+        g["speakers"] = g["speakers"] or info["speakers"]
+        g["port"] = info["port"]
+        g["serial"] = info["serial"]
+        (g["inputs"] if info["kind"] == "input" else g["outputs"] if info["kind"] == "output" else []).append(info)
+    out = list(groups.values())
+    for g in out:
+        g["headset"] = bool(g["inputs"] and g["outputs"] and g["bus"] in ("USB", "Bluetooth") and not g["hdmi_capture"])
+        first = (g["inputs"] or g["outputs"])[0]
+        node = graph.by_name(first["name"])
+        g["identity"] = identity_for(node, graph) if node else {"strategy": "name", "text": "", "port": "", "match": {}}
+    out.sort(key=lambda g: (not g["headset"], not g["hdmi_capture"], g["name"]))
+    return out
 
 
 def _iter_json_documents(text: str):
@@ -148,6 +313,17 @@ def parse_dump(text: str) -> Graph:
                     elif "volume" in p and node.volume is None:
                         node.volume = round(float(p["volume"]), 4)
                 graph.nodes[node.id] = node
+            elif otype == "PipeWire:Interface:Device":
+                props = info.get("props") or {}
+                graph.devices[int(obj["id"])] = Device(
+                    id=int(obj["id"]),
+                    name=str(props.get("device.name", "")),
+                    description=str(props.get("device.description") or props.get("device.nick") or props.get("device.product.name") or ""),
+                    bus=str(props.get("device.bus", "")),
+                    form_factor=str(props.get("device.form-factor", "")),
+                    api=str(props.get("device.api", "")),
+                    props=props,
+                )
             elif otype == "PipeWire:Interface:Link":
                 try:
                     graph.links.append(
@@ -349,11 +525,36 @@ class FakeBackend:
         for name, media_class in devices or []:
             self.add_device(name, media_class)
 
-    def add_device(self, name: str, media_class: str, description: str = "") -> Node:
-        node = Node(id=self._next_id, name=name, media_class=media_class, description=description or name)
+    def add_device(self, name: str, media_class: str, description: str = "", props: dict[str, Any] | None = None) -> Node:
+        node = Node(id=self._next_id, name=name, media_class=media_class, description=description or name, props=dict(props or {}))
+        node.props.setdefault("node.name", name)
+        node.props.setdefault("media.class", media_class)
         self._next_id += 1
         self._graph.nodes[node.id] = node
         return node
+
+    def add_physical(self, description: str, bus: str, mic: str | None, out: str | None, form_factor: str = "", extra: dict[str, Any] | None = None) -> Device:
+        """Add a hardware device with optional microphone and output nodes."""
+        extra = dict(extra or {})
+        dev = Device(id=self._next_id, name=f"alsa_card.{description}", description=description, bus=bus, form_factor=form_factor, api="alsa")
+        dev.props = {
+            "device.description": description, "device.bus": bus, "device.form-factor": form_factor,
+            "device.serial": extra.pop("device.serial", description.replace(" ", "_")),
+            "device.bus-path": extra.pop("device.bus-path", f"pci-0000:00:14.0-usb-0:{dev.id % 9 + 1}:1.0" if bus == "usb" else f"pci-0000:03:0{dev.id % 9}.0"),
+            "device.vendor.id": extra.pop("device.vendor.id", str(abs(hash(description.split(' (')[0])) % 9999)),
+            "device.product.id": extra.pop("device.product.id", "0001"),
+            **{k: v for k, v in extra.items() if k.startswith("alsa.") or k.startswith("device.")},
+        }
+        self._next_id += 1
+        self._graph.devices[dev.id] = dev
+        props = {"device.id": dev.id, "device.api": "alsa", **extra}
+        if mic:
+            n = self.add_device(mic, "Audio/Source", f"{description} Mono", props)
+            n.volume, n.mute = 1.0, False
+        if out:
+            n = self.add_device(out, "Audio/Sink", f"{description} Analog Stereo", props)
+            n.volume, n.mute = 1.0, False
+        return dev
 
     def remove_node(self, name: str) -> None:
         node = self._graph.by_name(name)
@@ -402,3 +603,170 @@ class FakeBackend:
             _, spec = entry
             self.remove_node(spec.capture_node)
             self.remove_node(spec.playback_node)
+
+
+# --------------------------------------------------------------------------- #
+# Orphan cleanup
+# --------------------------------------------------------------------------- #
+
+OWNED_EXECUTABLES = ("pw-loopback", "pw-record")
+OWNED_MARKERS = ("tfcz.",)
+
+
+def is_owned_helper(argv: list[str]) -> bool:
+    """True for a pw-loopback/pw-record process that this daemon spawned
+    (identified by our node-name prefix in its arguments)."""
+    if not argv:
+        return False
+    exe = os.path.basename(argv[0])
+    if exe not in OWNED_EXECUTABLES:
+        return False
+    return any(marker in arg for arg in argv[1:] for marker in OWNED_MARKERS)
+
+
+def find_stale_helpers(proc_root: str = "/proc", exclude_pids: set[int] | None = None) -> list[int]:
+    """PIDs of leftover helper processes from a previous daemon instance."""
+    exclude = exclude_pids or set()
+    uid = os.getuid()
+    found: list[int] = []
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return found
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid in exclude or pid == os.getpid():
+            continue
+        try:
+            if os.stat(f"{proc_root}/{entry}").st_uid != uid:
+                continue
+            with open(f"{proc_root}/{entry}/cmdline", "rb") as fh:
+                argv = [a.decode("utf-8", "replace") for a in fh.read().split(b"\0") if a]
+        except OSError:
+            continue
+        if is_owned_helper(argv):
+            found.append(pid)
+    return found
+
+
+def kill_stale_helpers(exclude_pids: set[int] | None = None) -> list[int]:
+    killed: list[int] = []
+    for pid in find_stale_helpers(exclude_pids=exclude_pids):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed.append(pid)
+        except OSError:
+            continue
+    if killed:
+        log.warning("terminated %d leftover helper process(es) from a previous run: %s", len(killed), killed)
+    return killed
+
+
+# --------------------------------------------------------------------------- #
+# Device identity: resolve config matchers to live nodes, explain how a
+# device is recognised, and label USB ports for humans.
+# --------------------------------------------------------------------------- #
+
+
+def node_identity_props(node: Node, graph: Graph) -> dict[str, str]:
+    """Node props merged with the props of the hardware device it belongs to."""
+    merged: dict[str, str] = {}
+    dev_id = node.props.get("device.id")
+    if dev_id is not None:
+        try:
+            device = graph.devices.get(int(dev_id))
+        except (TypeError, ValueError):
+            device = None
+        if device is not None:
+            merged.update({k: str(v) for k, v in device.props.items()})
+    merged.update({k: str(v) for k, v in node.props.items()})
+    merged["kind"] = "input" if node.media_class.startswith("Audio/Source") else "output" if node.media_class.startswith("Audio/Sink") else "other"
+    return merged
+
+
+def resolve_match(match: dict[str, str], graph: Graph) -> list[Node]:
+    """All audio nodes whose (node + device) properties equal every match entry."""
+    found: list[Node] = []
+    for node in graph.audio_devices():
+        if node.name.startswith("tfcz."):
+            continue
+        props = node_identity_props(node, graph)
+        if all(props.get(k) == str(v) for k, v in match.items()):
+            found.append(node)
+    found.sort(key=lambda n: n.name)
+    return found
+
+
+def port_label(bus_path: str) -> str:
+    """'pci-0000:00:14.0-usb-0:3.2:1.0' -> 'USB port 3.2'."""
+    if not bus_path:
+        return ""
+    if "-usb-" in bus_path:
+        tail = bus_path.split("-usb-", 1)[1]  # 0:3.2:1.0
+        parts = tail.split(":")
+        if len(parts) >= 2 and parts[1]:
+            return f"USB port {parts[1]}"
+        return "USB port"
+    if bus_path.startswith("pci-"):
+        return "internal slot " + bus_path[4:]
+    return bus_path
+
+
+def identity_for(node: Node, graph: Graph) -> dict[str, Any]:
+    """Decide how to recognise this node again later.
+
+    * 'serial': the device reports a serial number no other visible device of
+      the same model shares -> works in any USB port.
+    * 'port':   identical devices without usable serial -> only the physical
+      USB port tells them apart.
+    * 'name':   fall back to the PipeWire node name (built-in / PCI cards).
+    Returns match dict, strategy and a plain-language explanation.
+    """
+    props = node_identity_props(node, graph)
+    kind = props["kind"]
+    serial = props.get("device.serial", "")
+    bus_path = props.get("device.bus-path", "")
+    vendor, product = props.get("device.vendor.id", ""), props.get("device.product.id", "")
+    bus = props.get("device.bus", "")
+    same_model: list[Node] = []
+    for other in graph.audio_devices():
+        if other.name.startswith("tfcz.") or other.media_class != node.media_class:
+            continue
+        op = node_identity_props(other, graph)
+        if (vendor and product and (op.get("device.vendor.id"), op.get("device.product.id")) == (vendor, product)) or (
+            not (vendor and product) and serial and op.get("device.serial") == serial
+        ):
+            same_model.append(other)
+    twins = [o for o in same_model if o.id != node.id]
+    serial_shared = any(node_identity_props(o, graph).get("device.serial", "") == serial for o in twins)
+    # A serial that is just vendor_product (no real serial part) repeats for identical devices.
+    serial_ok = bool(serial) and bus in ("usb", "bluetooth", "bluez5", "") and not serial_shared and (bus_path or bus)
+
+    if serial_ok and (twins or bus in ("usb", "bluetooth", "bluez5")):
+        return {
+            "match": {"device.serial": serial, "kind": kind},
+            "strategy": "serial",
+            "port": port_label(bus_path),
+            "text": "Recognised by its serial number. Any USB port works."
+            + ("" if twins else " Note: only one of this model is plugged in, so it is not certain the serial is unique. If a second identical one is added later, run Setup again."),
+        }
+    if bus_path and bus in ("usb", "bluetooth", "bluez5", "") and "usb" in bus_path:
+        why = (
+            "The two identical devices report no distinguishing serial number, so the computer can only tell them apart by the USB port."
+            if twins
+            else "This device reports no usable serial number, so it is recognised by the USB port it is plugged into."
+        )
+        return {
+            "match": {"device.bus-path": bus_path, "kind": kind},
+            "strategy": "port",
+            "port": port_label(bus_path),
+            "text": f"{why} Keep it in {port_label(bus_path)}; label the plug and the port.",
+        }
+    return {
+        "match": {},
+        "strategy": "name",
+        "port": port_label(bus_path),
+        "text": "Recognised by its fixed name in the audio system (built-in or PCI hardware).",
+    }

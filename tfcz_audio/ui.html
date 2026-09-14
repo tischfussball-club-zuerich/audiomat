@@ -3,112 +3,212 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tfcz-audio</title>
+<title>TFCZ Audio</title>
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #f5f5f4; --card: #ffffff; --text: #1c1917; --muted: #78716c; --line: #e7e5e4;
-    --accent: #2563eb; --ok: #16a34a; --bad: #dc2626; --warn: #d97706;
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px;
+    --bg: #f4f4f5; --card: #ffffff; --text: #18181b; --muted: #71717a; --line: #e4e4e7; --soft: #f4f4f5;
+    --accent: #2563eb; --ok: #16a34a; --ok-soft: #dcfce7; --bad: #dc2626; --bad-soft: #fee2e2; --warn: #d97706; --warn-soft: #fef3c7;
+    --obs: #7c3aed; --obs-soft: #ede9fe; --info-soft: #dbeafe;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px;
   }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #1c1917; --card: #292524; --text: #f5f5f4; --muted: #a8a29e; --line: #44403c; }
+    :root { --bg: #18181b; --card: #27272a; --text: #fafafa; --muted: #a1a1aa; --line: #3f3f46; --soft: #3f3f46;
+            --ok-soft: #14532d; --bad-soft: #7f1d1d; --warn-soft: #78350f; --obs-soft: #4c1d95; --info-soft: #1e3a8a; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); padding: 16px; max-width: 1100px; margin-inline: auto; }
+  body { margin: 0; background: var(--bg); color: var(--text); padding: 16px; max-width: 1000px; margin-inline: auto; line-height: 1.4; }
   header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  h1 { font-size: 20px; margin: 0; }
-  h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); vertical-align: middle; }
-  th { border-top: 0; color: var(--muted); font-weight: 600; font-size: 12px; }
-  tr:first-child td { border-top: 0; }
-  .name { font-weight: 600; }
-  .sub { color: var(--muted); font-size: 12px; }
-  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: middle; }
-  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
-  input[type=range] { width: 100%; min-width: 140px; accent-color: var(--accent); }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 17px; margin: 0 0 4px; }
+  h3 { font-size: 15px; margin: 16px 0 6px; }
+  .hint { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; font-weight: 600; font-size: 15px; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.off { background: var(--soft); color: var(--muted); }
+  .problem { border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; border: 1px solid transparent; }
+  .problem.error { background: var(--bad-soft); border-color: var(--bad); }
+  .problem.warning { background: var(--warn-soft); border-color: var(--warn); }
+  .problem.info { background: var(--info-soft); border-color: transparent; }
+  .problem .t { font-weight: 600; display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .problem dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; font-size: 14px; }
+  .problem dt { color: var(--muted); }
+  .problem dd { margin: 0; }
+  .obsline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--soft); }
+  .obsline .big { font-size: 17px; font-weight: 600; }
+  .meter { position: relative; height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; flex: 1; min-width: 120px; }
+  .meter > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ok); transition: width .12s linear; }
+  .meter.obs > i { background: var(--obs); }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { font-family: inherit; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 13px; margin-top: 8px; }
+  .legend span::before { content: ""; display: inline-block; width: 22px; height: 0; border-top: 3px solid var(--ok); margin-right: 6px; vertical-align: middle; }
+  .legend .off::before { border-top: 3px dashed var(--muted); }
+  .legend .miss::before { border-top: 3px dashed var(--bad); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--card); transition: box-shadow .2s; }
+  .card.selected { box-shadow: 0 0 0 3px var(--accent); }
+  .card.off { opacity: .75; }
+  .card .title { font-weight: 600; margin-bottom: 2px; }
+  .card .path { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .card .path b { color: var(--text); font-weight: 500; }
   .vol { display: flex; gap: 10px; align-items: center; }
-  .vol output { width: 80px; white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+  input[type=range] { flex: 1; accent-color: var(--accent); height: 28px; }
+  .vol output { width: 52px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin: -4px 62px 8px 0; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-weight: 600; }
+  .switch .track { width: 44px; height: 24px; border-radius: 12px; background: var(--muted); position: relative; transition: background .15s; }
+  .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .switch.on .track { background: var(--ok); }
+  .switch.on .track::after { left: 23px; }
+  .card .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+  .card .state { font-size: 13px; color: var(--muted); }
+  .card .state.bad { color: var(--bad); font-weight: 600; }
   button, select, input[type=text], input[type=number], input[type=password] {
-    font: inherit; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); padding: 6px 10px;
+    font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--soft); color: var(--text); padding: 8px 12px;
   }
   button { cursor: pointer; }
+  button.big { padding: 12px 18px; font-weight: 600; font-size: 15px; }
   button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button.muted { background: var(--bad); color: #fff; border-color: var(--bad); }
   button.danger { color: var(--bad); }
   button:disabled { opacity: .5; cursor: default; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   .grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
   select { max-width: 100%; }
-  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px; background: var(--text); color: var(--bg); opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+  details > summary { cursor: pointer; font-weight: 600; font-size: 17px; list-style: none; }
+  details > summary::before { content: "▸ "; color: var(--muted); }
+  details[open] > summary::before { content: "▾ "; }
+  details .inner { margin-top: 12px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: middle; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px; background: var(--text); color: var(--bg); opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; z-index: 10; }
   #toast.show { opacity: 1; }
   #toast.error { background: var(--bad); color: #fff; }
-  details summary { cursor: pointer; color: var(--muted); }
-  .missing { color: var(--bad); }
-  @media (max-width: 700px) {
-    table, thead, tbody, tr, td, th { display: block; }
-    thead { display: none; }
-    tr { border-top: 1px solid var(--line); padding: 8px 0; }
-    td { border: 0; padding: 4px 0; }
-  }
+  code { font-size: 12px; }
+  /* wizard */
+  #wizard { border: 2px solid var(--accent); }
+  .steps { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .steps span { padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 13px; }
+  .steps span.cur { background: var(--accent); color: #fff; }
+  .steps span.done { background: var(--ok-soft); color: var(--ok); }
+  .choice { display: flex; gap: 12px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
+  .choice.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+  .choice.taken { opacity: .5; cursor: default; }
+  .choice .ic { font-size: 26px; }
+  .choice .body { flex: 1; min-width: 0; }
+  .choice .nm { font-weight: 600; }
+  .choice .sub { color: var(--muted); font-size: 13px; }
+  .choice .meter { max-width: 200px; }
+  .wizbtns { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0; }
+  .summary b { font-weight: 600; }
+  @media (max-width: 600px) { body { padding: 10px; } section { padding: 12px; } .summary, .problem dl { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 <header>
   <div>
-    <h1>tfcz-audio</h1>
-    <div class="sub" id="summary">connecting…</div>
+    <h1>TFCZ Audio</h1>
+    <div class="hint" style="margin:0">Two headsets talk to each other, hear the game, and go out to OBS.</div>
   </div>
   <div class="row">
-    <span id="micstate"><span class="dot"></span>OBS mic</span>
-    <details id="tokenbox"><summary>API token</summary>
-      <input type="password" id="token" placeholder="Bearer token" autocomplete="off">
-    </details>
+    <button id="open-wizard">Set up devices</button>
+    <span id="overall" class="pill off">Connecting…</span>
   </div>
 </header>
 
-<section>
-  <h2>Routes</h2>
-  <table id="routes"><thead><tr>
-    <th>Route</th><th style="width:34%">Volume</th><th>Mute</th><th>State</th><th></th>
-  </tr></thead><tbody></tbody></table>
-  <div class="row" style="margin-top:12px">
-    <button id="save-defaults" title="Write the current volumes and mutes into the config as the new defaults">Save current as defaults</button>
-    <button id="reset" title="Back to the config values">Reset to config</button>
+<div id="problems"></div>
+
+<section id="wizard" hidden>
+  <h2 id="wiz-title">Set up your devices</h2>
+  <div class="steps" id="wiz-steps"></div>
+  <div id="wiz-body"></div>
+  <div class="wizbtns">
+    <button id="wiz-cancel">Cancel</button>
+    <div class="row">
+      <button id="wiz-back">Back</button>
+      <button id="wiz-next" class="primary">Next</button>
+    </div>
   </div>
 </section>
 
 <section>
-  <h2>Presets</h2>
+  <h2>How the sound flows</h2>
+  <p class="hint">Left: where sound comes in. Right: where it goes out. Every arrow is one connection you can adjust below. Click an arrow to jump to its control. Green bars show live sound.</p>
+  <div id="diagram"></div>
+  <div class="legend"><span>Sound flows</span><span class="off">Turned off</span><span class="miss">Device missing</span></div>
+  <div class="obsline">
+    <span style="font-size:22px">📡</span>
+    <div style="flex:1;min-width:200px">
+      <div class="big" id="obs-text">Checking the OBS microphone…</div>
+      <div class="hint" style="margin:0">This is what OBS records as "TFCZ OBS Mic". If this bar moves, your viewers can hear it.</div>
+    </div>
+    <div class="meter obs" style="max-width:260px"><i id="obs-meter"></i></div>
+  </div>
+</section>
+
+<section>
+  <h2>Volume controls</h2>
+  <p class="hint">One card per arrow. 100% is the normal level. Switch a connection off instead of dragging it to 0%.</p>
+  <div class="cards" id="cards"></div>
+</section>
+
+<section id="presets-section">
+  <h2>Quick settings</h2>
+  <p class="hint">Apply several volumes at once. Hover a button to see what it changes.</p>
   <div class="row" id="presets"></div>
 </section>
 
 <section>
-  <h2>Devices</h2>
-  <p class="sub">Map each alias to a PipeWire device. Only devices matching how the alias is used (source or sink) are listed. Saving restarts the affected routes only.</p>
-  <div class="grid" id="devices"></div>
-  <div class="row" style="margin-top:12px">
-    <input type="text" id="new-alias" placeholder="new alias, e.g. headset_c_out" pattern="[a-z0-9_]+" style="width:220px">
-    <select id="new-alias-node"></select>
-    <button id="add-alias">Add alias</button>
-    <button class="primary" id="save-devices">Save devices</button>
-  </div>
-</section>
+  <details id="advanced">
+    <summary>Advanced: names, devices, connections, defaults</summary>
+    <div class="inner">
+      <p class="hint">Changes here are written to the config file and applied immediately. Only connections that use a changed device restart briefly.</p>
 
-<section>
-  <h2>Add or edit route</h2>
-  <div class="row">
-    <input type="text" id="r-name" placeholder="name (a-z0-9_-)" style="width:160px">
-    <select id="r-from"></select>
-    <span>→</span>
-    <select id="r-to"></select>
-    <input type="number" id="r-volume" min="0" max="1.5" step="0.05" value="1" style="width:80px" title="volume">
-    <input type="text" id="r-desc" placeholder="description" style="flex:1;min-width:160px">
-    <button class="primary" id="r-save">Save route</button>
-  </div>
-  <p class="sub">Use an existing name to change that route. Volumes: 1.0 = 0 dB, 0.5 ≈ −18 dB, max 1.5. Config file: <code id="cfgpath"></code></p>
+      <h3>Names</h3>
+      <p class="hint">What the people and sources are called on this page.</p>
+      <div class="grid" id="labels"></div>
+      <div class="row" style="margin-top:8px"><button class="primary" id="save-labels">Save names</button></div>
+
+      <h3>Devices</h3>
+      <p class="hint">Which real device is behind each name, and how it is recognised again after a restart or replug. Only devices that are currently plugged in are listed.</p>
+      <div class="grid" id="devices"></div>
+      <div class="row" style="margin-top:10px">
+        <input type="text" id="new-alias" placeholder="new name, e.g. headset_c_out" pattern="[a-z0-9_]+" style="width:230px">
+        <select id="new-alias-node"></select>
+        <button id="add-alias">Add device</button>
+        <button class="primary" id="save-devices">Save devices</button>
+      </div>
+
+      <h3>Connections</h3>
+      <p class="hint">Add a new arrow, or type the name of an existing one to change where it goes. Delete arrows with the ✕ on their card.</p>
+      <div class="row">
+        <input type="text" id="r-name" placeholder="name (a-z 0-9 _ -)" style="width:170px">
+        <select id="r-from"></select>
+        <span>→</span>
+        <select id="r-to"></select>
+        <input type="number" id="r-volume" min="0" max="150" step="5" value="100" style="width:80px" title="volume in %"><span class="hint" style="margin:0">%</span>
+        <input type="text" id="r-desc" placeholder="description (optional)" style="flex:1;min-width:160px">
+        <button class="primary" id="r-save">Save connection</button>
+      </div>
+
+      <h3>Defaults</h3>
+      <div class="row">
+        <button id="save-defaults" title="The current volumes and on/off switches become the values used after a restart">Save current volumes as defaults</button>
+        <button id="reset" title="Go back to the saved defaults">Reset to defaults</button>
+      </div>
+
+      <h3>Access</h3>
+      <div class="row">
+        <label class="hint" style="margin:0" for="token">API token (only needed if one is set in the config)</label>
+        <input type="password" id="token" placeholder="token" autocomplete="off">
+      </div>
+      <p class="hint">Config file: <code id="cfgpath"></code></p>
+    </div>
+  </details>
 </section>
 
 <div id="toast"></div>
@@ -116,11 +216,13 @@
 <script>
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
-  const state = { status: null, config: null, devices: [], dragging: new Set(), pending: new Map() };
+  const state = { status: null, config: null, devices: [], hardware: [], levels: {}, levelsAvailable: false,
+                  dragging: new Set(), pending: new Map(), selected: null, failures: 0, wiz: null };
   const tokenInput = $('#token');
   try { tokenInput.value = localStorage.getItem('tfcz-token') || ''; } catch (e) {}
   tokenInput.addEventListener('change', () => { try { localStorage.setItem('tfcz-token', tokenInput.value); } catch (e) {} refresh(true); });
 
+  // ------------------------------------------------------------ helpers
   async function api(method, path, body) {
     const headers = { 'Content-Type': 'application/json' };
     if (tokenInput.value) headers['Authorization'] = 'Bearer ' + tokenInput.value;
@@ -130,7 +232,6 @@
     if (!res.ok) throw new Error(data.error || (res.status + ' ' + res.statusText));
     return data;
   }
-
   let toastTimer;
   function toast(msg, isError) {
     const t = $('#toast');
@@ -138,84 +239,251 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', isError ? 6000 : 2500);
   }
   const fail = e => toast(e.message || String(e), true);
-  const db = v => v <= 0 ? '−∞ dB' : (60 * Math.log10(v)).toFixed(1).replace('-', '−') + ' dB';
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const pct = v => Math.round(v * 100) + '%';
+  function human(alias) {
+    if (alias === 'obs_mic') return 'OBS stream';
+    const names = (state.config && state.config.names) || {};
+    if (names[alias]) return names[alias];
+    return alias.replace(/_/g, ' ').replace(/\bmic\b/, 'microphone').replace(/\bout\b/, 'headphones').replace(/^./, c => c.toUpperCase());
+  }
+  const isGame = alias => /hdmi|game|tv|pc|console|play/.test(alias) || ((state.status && state.status.devices[alias] || {}).friendly || '').includes('HDMI');
+  const icon = (alias, kind) => alias === 'obs_mic' ? '📡' : isGame(alias) ? '🎮' : kind === 'in' ? '🎤' : '🎧';
+  const levelWidth = lvl => (!lvl || !lvl.active) ? 0 : Math.max(0, Math.min(1, (lvl.db + 60) / 60)) * 100;
+  const identityShort = dev => !dev || !dev.identity ? '' : dev.identity.strategy === 'port' ? 'must stay in ' + (dev.identity.port || 'its USB port') : dev.identity.strategy === 'serial' ? 'any USB port' : '';
 
-  // ---------------------------------------------------------------- routes
-  function renderRoutes() {
-    const tbody = $('#routes tbody');
-    const routes = state.status.routes;
-    const names = Object.keys(routes);
-    const existing = [...tbody.children].map(tr => tr.dataset.name);
-    if (existing.join() !== names.join()) {
-      tbody.innerHTML = names.map(n => `
-        <tr data-name="${esc(n)}">
-          <td><div class="name">${esc(n)}</div><div class="sub route-path"></div></td>
-          <td><div class="vol"><input type="range" min="0" max="1.5" step="0.01"><output></output></div></td>
-          <td><button class="mute"></button></td>
-          <td class="state"></td>
-          <td><button class="danger del" title="delete route">✕</button></td>
-        </tr>`).join('');
-      for (const tr of tbody.children) bindRow(tr);
+  // ---------------------------------------------------------- overall
+  function renderOverall() {
+    const st = state.status;
+    const pill = $('#overall');
+    const box = $('#problems');
+    const problems = st.problems || [];
+    const errors = problems.filter(p => p.level === 'error');
+    const warnings = problems.filter(p => p.level === 'warning');
+    if (!errors.length && !warnings.length) { pill.className = 'pill ok'; pill.textContent = '✓ Everything is working'; }
+    else if (errors.length) { pill.className = 'pill bad'; pill.textContent = '✗ ' + errors.length + (errors.length === 1 ? ' problem' : ' problems'); }
+    else { pill.className = 'pill warn'; pill.textContent = '! ' + warnings.length + (warnings.length === 1 ? ' thing to check' : ' things to check'); }
+    box.innerHTML = problems.map(p => `
+      <div class="problem ${esc(p.level)}">
+        <div class="t"><span>${p.level === 'error' ? '✗' : p.level === 'warning' ? '!' : 'ℹ'} ${esc(p.title)}</span>
+          ${p.fixable ? `<button data-fix="${esc(p.what)}">Fix</button>` : ''}</div>
+        <dl>${p.why ? `<dt>Why</dt><dd>${esc(p.why)}</dd>` : ''}${p.effect ? `<dt>Effect</dt><dd>${esc(p.effect)}</dd>` : ''}${p.fix ? `<dt>What to do</dt><dd>${esc(p.fix)}</dd>` : ''}</dl>
+      </div>`).join('');
+    box.querySelectorAll('button[data-fix]').forEach(b => b.addEventListener('click', () =>
+      api('POST', `/fix/device/${encodeURIComponent(b.dataset.fix)}`).then(() => { toast('fixed'); refresh(false); }, fail)));
+  }
+  function renderUnreachable() {
+    $('#overall').className = 'pill bad'; $('#overall').textContent = '✗ Router not reachable';
+    $('#problems').innerHTML = '<div class="problem error"><div class="t">Cannot reach the audio router</div><dl><dt>Why</dt><dd>The service is restarting or stopped. The audio itself may still be flowing; only this page cannot talk to it.</dd><dt>What to do</dt><dd>Wait a few seconds, this page reconnects by itself. If it stays like this: <code>systemctl --user restart tfcz-audio</code></dd></dl></div>';
+  }
+
+  // ---------------------------------------------------------- diagram
+  function endpoints() {
+    const routes = state.config.routes;
+    const ins = [], outs = [];
+    for (const r of Object.values(routes)) {
+      if (!ins.includes(r.from)) ins.push(r.from);
+      if (r.to !== 'obs_mic' && !outs.includes(r.to)) outs.push(r.to);
     }
-    for (const tr of tbody.children) {
-      const r = routes[tr.dataset.name];
-      const cfgRoute = (state.config && state.config.routes[tr.dataset.name]) || {};
-      tr.querySelector('.route-path').textContent = (r.description ? r.description + ' · ' : '') + (cfgRoute.from || r.from) + ' → ' + (cfgRoute.to || r.to);
-      const slider = tr.querySelector('input[type=range]');
-      if (!state.dragging.has(tr.dataset.name)) { slider.value = r.volume; tr.querySelector('output').textContent = db(r.volume); }
-      const mute = tr.querySelector('.mute');
-      mute.textContent = r.mute ? 'Muted' : 'On';
-      mute.className = 'mute' + (r.mute ? ' muted' : '');
-      const dots = [
-        [r.running ? 'ok' : 'bad', r.running ? 'loopback running' : 'loopback not running'],
-        [r.source_present ? 'ok' : 'bad', 'source ' + (r.source_present ? 'present' : 'missing')],
-        [r.sink_present ? 'ok' : 'bad', 'sink ' + (r.sink_present ? 'present' : 'missing')],
-        [r.connected ? 'ok' : 'warn', r.connected ? 'linked' : 'not linked'],
-      ];
-      tr.querySelector('.state').innerHTML = dots.map(([c, t]) => `<span class="dot ${c}" title="${esc(t)}"></span>`).join('') +
-        `<span class="sub">${r.connected ? 'linked' : (r.running ? 'waiting for device' : 'stopped')}</span>`;
+    outs.push('obs_mic');
+    return { ins, outs };
+  }
+  function renderDiagram() {
+    const { ins, outs } = endpoints();
+    const routes = state.status.routes, cfg = state.config, devs = state.status.devices;
+    if (!Object.keys(routes).length) {
+      $('#diagram').innerHTML = '<p class="hint">No connections yet. Click <b>Set up devices</b> at the top to connect your headsets in three steps.</p>';
+      return;
+    }
+    const W = 900, colW = 280, nodeH = 74, gap = 16, top = 34, obsH = 90;
+    const rows = Math.max(ins.length, outs.length);
+    const H = top + rows * (nodeH + gap) + (obsH - nodeH) + 10;
+    const pos = {};
+    ins.forEach((a, i) => pos['in:' + a] = { x: 10, y: top + i * (nodeH + gap), w: colW, h: nodeH });
+    outs.forEach((a, i) => pos['out:' + a] = { x: W - colW - 10, y: top + i * (nodeH + gap), w: colW, h: a === 'obs_mic' ? obsH : nodeH });
+    const present = alias => alias === 'obs_mic' ? state.status.virtual_mic.present : (devs[alias] || {}).present !== false;
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="audio flow diagram">
+      <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker></defs>
+      <text x="10" y="18" font-size="13" fill="var(--muted)" font-weight="600">SOUND COMES IN FROM</text>
+      <text x="${W - 10}" y="18" font-size="13" fill="var(--muted)" font-weight="600" text-anchor="end">SOUND GOES OUT TO</text>`;
+
+    Object.keys(routes).forEach((name, idx) => {
+      const r = routes[name], c = cfg.routes[name];
+      const a = pos['in:' + c.from], b = pos['out:' + c.to];
+      if (!a || !b) return;
+      const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
+      const missing = !present(c.from) || !present(c.to);
+      const off = r.mute || r.volume === 0;
+      const flowing = !missing && !off;
+      const color = missing ? 'var(--bad)' : flowing ? (c.to === 'obs_mic' ? 'var(--obs)' : 'var(--ok)') : 'var(--muted)';
+      const width = flowing ? 2 + 4 * Math.min(1.5, r.volume) : 2;
+      const dash = flowing ? '' : 'stroke-dasharray="8 6"';
+      const t = idx % 2 ? 0.66 : 0.34;
+      const mx = (x1 + x2) / 2;
+      const lx = (1 - t) ** 3 * x1 + 3 * (1 - t) ** 2 * t * mx + 3 * (1 - t) * t * t * mx + t ** 3 * x2;
+      const ly = (1 - t) ** 3 * y1 + 3 * (1 - t) ** 2 * t * y1 + 3 * (1 - t) * t * t * y2 + t ** 3 * y2;
+      const label = missing ? 'missing' : r.mute ? 'off' : pct(r.volume);
+      const sel = state.selected === name;
+      svg += `<g class="route" data-route="${esc(name)}" style="cursor:pointer" opacity="${sel || !state.selected ? 1 : 0.35}">
+        <path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="transparent" stroke-width="18"/>
+        <path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="${width}" ${dash} marker-end="url(#arr)" stroke-linecap="round"/>
+        <rect x="${lx - 30}" y="${ly - 12}" width="60" height="24" rx="12" fill="var(--card)" stroke="${color}" stroke-width="${sel ? 3 : 1.5}"/>
+        <text x="${lx}" y="${ly + 5}" font-size="13" font-weight="600" text-anchor="middle" fill="${color}">${esc(label)}</text>
+      </g>`;
+    });
+
+    const box = (key, alias, kind) => {
+      const p = pos[key], ok = present(alias), isObs = alias === 'obs_mic';
+      const lvl = state.levels[isObs ? 'obs' : alias];
+      const lw = levelWidth(lvl);
+      const dev = devs[alias];
+      const status = !ok ? 'not connected' : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (state.levelsAvailable ? 'no signal' : 'connected'));
+      const sub2 = isObs ? 'what your viewers hear' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
+      const stroke = !ok ? 'var(--bad)' : isObs ? 'var(--obs)' : 'var(--line)';
+      const fill = isObs ? 'var(--obs-soft)' : 'var(--card)';
+      return `<g>
+        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${!ok || isObs ? 2.5 : 1.5}" ${!ok ? 'stroke-dasharray="6 4"' : ''}/>
+        <text x="${p.x + 14}" y="${p.y + 30}" font-size="22">${icon(alias, kind)}</text>
+        <text x="${p.x + 48}" y="${p.y + 24}" font-size="15" font-weight="600" fill="${!ok ? 'var(--bad)' : 'var(--text)'}">${esc(human(alias))}</text>
+        <text x="${p.x + 48}" y="${p.y + 41}" font-size="12" fill="${!ok ? 'var(--bad)' : 'var(--muted)'}">${esc(status)}</text>
+        <text x="${p.x + 48}" y="${p.y + 55}" font-size="11" fill="var(--muted)">${esc(sub2.slice(0, 44))}</text>
+        ${ok ? `<rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${p.w - 62}" height="6" rx="3" fill="var(--line)"/>
+        <rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${(p.w - 62) * lw / 100}" height="6" rx="3" fill="${isObs ? 'var(--obs)' : 'var(--ok)'}"/>` : ''}
+      </g>`;
+    };
+    ins.forEach(a => svg += box('in:' + a, a, 'in'));
+    outs.forEach(a => svg += box('out:' + a, a, 'out'));
+    svg += '</svg>';
+    $('#diagram').innerHTML = svg;
+    $('#diagram').querySelectorAll('g.route').forEach(g => g.addEventListener('click', () => selectRoute(g.dataset.route, true)));
+  }
+  function selectRoute(name, scroll) {
+    state.selected = state.selected === name ? null : name;
+    renderDiagram(); renderCards();
+    if (scroll && state.selected) {
+      const card = document.querySelector(`.card[data-name="${name}"]`);
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
   }
 
-  function bindRow(tr) {
-    const name = tr.dataset.name;
-    const slider = tr.querySelector('input[type=range]');
-    const out = tr.querySelector('output');
+  // ------------------------------------------------------------ OBS line
+  function renderObs() {
+    const vm = state.status.virtual_mic;
+    const lvl = state.levels.obs;
+    const text = $('#obs-text');
+    const anyToObs = Object.entries(state.status.routes).some(([n, r]) => state.config.routes[n].to === 'obs_mic' && !r.mute && r.volume > 0 && r.source_present);
+    if (!vm.present) { text.textContent = '✗ The OBS microphone is missing. OBS gets no sound right now.'; text.style.color = 'var(--bad)'; }
+    else if (!Object.keys(state.status.routes).length) { text.textContent = 'Nothing set up yet. Use "Set up devices" above.'; text.style.color = 'var(--muted)'; }
+    else if (!anyToObs) { text.textContent = '✗ Nothing is connected to OBS. Switch on an arrow to the OBS stream.'; text.style.color = 'var(--bad)'; }
+    else if (lvl && lvl.signal) { text.textContent = '✓ Sound is reaching OBS right now'; text.style.color = 'var(--ok)'; }
+    else if (lvl && lvl.active) { text.textContent = '✓ Ready. Quiet at the moment: nobody is talking.'; text.style.color = 'var(--text)'; }
+    else if (state.levelsAvailable) { text.textContent = '? OBS microphone exists but no sound data arrives. Check the microphones on the left.'; text.style.color = 'var(--warn)'; }
+    else { text.textContent = '✓ The OBS microphone is available. Microphones are connected to it.'; text.style.color = 'var(--ok)'; }
+    $('#obs-meter').style.width = levelWidth(lvl) + '%';
+  }
+
+  // -------------------------------------------------------------- cards
+  function renderCards() {
+    const box = $('#cards');
+    const routes = state.status.routes, cfg = state.config;
+    const names = Object.keys(routes);
+    const existing = [...box.children].map(c => c.dataset.name);
+    if (existing.join() !== names.join()) {
+      box.innerHTML = names.map(n => `
+        <div class="card" data-name="${esc(n)}">
+          <div class="title"></div>
+          <div class="path"></div>
+          <div class="vol"><input type="range" min="0" max="150" step="1"><output></output></div>
+          <div class="scale"><span>off</span><span>quiet</span><span>normal</span><span>loud</span></div>
+          <div class="foot"><label class="switch"><span class="track"></span><span class="lbl"></span></label><span class="state"></span><button class="danger del" title="delete this connection">✕</button></div>
+        </div>`).join('') || '<p class="hint">No connections yet.</p>';
+      for (const card of box.querySelectorAll('.card')) bindCard(card);
+    }
+    for (const card of box.querySelectorAll('.card')) {
+      const name = card.dataset.name, r = routes[name], c = cfg.routes[name] || {};
+      card.className = 'card' + (state.selected === name ? ' selected' : '') + (r.mute ? ' off' : '');
+      card.querySelector('.title').textContent = c.description || r.label || (human(c.from) + ' → ' + human(c.to));
+      card.querySelector('.path').innerHTML = `${icon(c.from, 'in')} <b>${esc(human(c.from))}</b> → ${icon(c.to, 'out')} <b>${esc(human(c.to))}</b>`;
+      const slider = card.querySelector('input[type=range]');
+      if (!state.dragging.has(name)) { slider.value = Math.round(r.volume * 100); card.querySelector('output').textContent = pct(r.volume); }
+      slider.disabled = r.mute;
+      const sw = card.querySelector('.switch');
+      sw.className = 'switch' + (r.mute ? '' : ' on');
+      sw.querySelector('.lbl').textContent = r.mute ? 'Off' : 'On';
+      const st = card.querySelector('.state');
+      const missing = !r.source_present ? human(c.from) : !r.sink_present ? human(c.to) : null;
+      if (missing) { st.textContent = missing + ' missing'; st.className = 'state bad'; }
+      else if (!r.running) { st.textContent = 'restarting…'; st.className = 'state bad'; }
+      else if (r.mute) { st.textContent = 'switched off'; st.className = 'state'; }
+      else if (r.connected) { st.textContent = 'sound flows'; st.className = 'state'; }
+      else { st.textContent = 'connecting…'; st.className = 'state'; }
+    }
+  }
+  function bindCard(card) {
+    const name = card.dataset.name;
+    const slider = card.querySelector('input[type=range]');
+    const out = card.querySelector('output');
     slider.addEventListener('input', () => {
-      state.dragging.add(name); out.textContent = db(parseFloat(slider.value));
-      // throttle live updates while dragging
+      state.dragging.add(name); out.textContent = slider.value + '%';
       if (!state.pending.has(name)) state.pending.set(name, setTimeout(() => { state.pending.delete(name); sendVolume(name, slider.value); }, 150));
     });
-    const done = () => { sendVolume(name, slider.value); setTimeout(() => state.dragging.delete(name), 400); };
+    const done = () => { sendVolume(name, slider.value); setTimeout(() => state.dragging.delete(name), 500); };
     slider.addEventListener('change', done);
     slider.addEventListener('pointerup', done);
-    tr.querySelector('.mute').addEventListener('click', () => api('POST', `/routes/${encodeURIComponent(name)}/toggle`).then(refresh, fail));
-    tr.querySelector('.del').addEventListener('click', () => {
-      if (!confirm(`Delete route "${name}"? Its loopback stops immediately and the config file is rewritten.`)) return;
-      api('DELETE', `/config/routes/${encodeURIComponent(name)}`).then(() => { toast('route deleted'); refresh(true); }, fail);
+    card.querySelector('.switch').addEventListener('click', e => { e.preventDefault(); api('POST', `/routes/${encodeURIComponent(name)}/toggle`).then(() => refresh(false), fail); });
+    card.querySelector('.del').addEventListener('click', () => {
+      const c = state.config.routes[name];
+      if (!confirm(`Delete the connection ${human(c.from)} → ${human(c.to)}?\nThe sound on this path stops immediately. You can add it again under Advanced.`)) return;
+      api('DELETE', `/config/routes/${encodeURIComponent(name)}`).then(() => { toast('connection deleted'); refresh(true); }, fail);
     });
+    card.addEventListener('click', e => { if (e.target.closest('input,button,label')) return; selectRoute(name, false); });
   }
-  function sendVolume(name, value) {
-    api('PUT', `/routes/${encodeURIComponent(name)}`, { volume: parseFloat(value) }).catch(fail);
-  }
+  const sendVolume = (name, value) => api('PUT', `/routes/${encodeURIComponent(name)}`, { volume: parseInt(value, 10) / 100 }).then(() => refresh(false), fail);
 
-  // --------------------------------------------------------------- presets
+  // ------------------------------------------------------------- presets
   function renderPresets() {
     const box = $('#presets');
-    const presets = state.config ? state.config.presets : {};
+    const presets = state.config.presets || {};
     const names = Object.keys(presets);
-    box.innerHTML = names.length ? '' : '<span class="sub">No presets defined in the config.</span>';
+    $('#presets-section').style.display = names.length ? '' : 'none';
+    box.innerHTML = '';
     for (const p of names) {
       const b = document.createElement('button');
-      b.textContent = p;
-      b.title = Object.entries(presets[p]).map(([r, v]) => `${r}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n');
-      b.addEventListener('click', () => api('POST', `/presets/${encodeURIComponent(p)}`).then(() => { toast('preset ' + p); refresh(); }, fail));
+      b.className = 'big';
+      b.textContent = p.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+      b.title = Object.entries(presets[p]).map(([r, v]) => {
+        const c = state.config.routes[r]; const label = c ? human(c.from) + ' → ' + human(c.to) : r;
+        if (typeof v === 'object') return `${label}: ${'mute' in v ? (v.mute ? 'off' : 'on') : ''}${'volume' in v ? ' ' + pct(v.volume) : ''}`.trim();
+        return `${label}: ${pct(v)}`;
+      }).join('\n');
+      b.addEventListener('click', () => api('POST', `/presets/${encodeURIComponent(p)}`).then(() => { toast('applied: ' + b.textContent); refresh(false); }, fail));
       box.appendChild(b);
     }
   }
 
-  // --------------------------------------------------------------- devices
+  // ------------------------------------------------------ names (labels)
+  function labelGroups() {
+    const groups = [];
+    for (const alias of Object.keys(state.config.devices)) {
+      const m = alias.match(/^(.*)_(mic|out)$/);
+      const key = m ? m[1] : alias;
+      if (!groups.includes(key)) groups.push(key);
+    }
+    return groups;
+  }
+  function renderLabels() {
+    const grid = $('#labels');
+    const labels = state.config.labels || {};
+    grid.innerHTML = labelGroups().map(k => `<label for="lbl-${esc(k)}">${esc(k)}</label><input type="text" id="lbl-${esc(k)}" data-label="${esc(k)}" value="${esc(labels[k] || '')}" placeholder="${esc(human(k + (state.config.devices[k] ? '' : '_mic')).replace(/ microphone$/, ''))}">`).join('');
+  }
+  $('#save-labels').addEventListener('click', () => {
+    const labels = {};
+    $('#labels').querySelectorAll('input[data-label]').forEach(i => { if (i.value.trim()) labels[i.dataset.label] = i.value.trim(); });
+    api('PUT', '/config/labels', labels).then(() => { toast('names saved'); refresh(true); }, fail);
+  });
+
+  // ------------------------------------------------------------- devices
   const SOURCE_CLASSES = ['Audio/Source', 'Audio/Source/Virtual', 'Audio/Duplex'];
   const SINK_CLASSES = ['Audio/Sink', 'Audio/Duplex'];
   function aliasUsage() {
@@ -228,62 +496,188 @@
   }
   function deviceOptions(kind, current) {
     const allowed = kind === 'from' ? SOURCE_CLASSES : kind === 'to' ? SINK_CLASSES : null;
-    const nodes = state.devices.filter(d => !d.name.startsWith('tfcz.') && (!allowed || allowed.includes(d.media_class)));
-    let opts = nodes.map(d => `<option value="${esc(d.name)}" ${d.name === current ? 'selected' : ''}>${esc(d.description || d.name)} — ${esc(d.name)}</option>`);
-    if (current && !nodes.some(d => d.name === current)) opts.unshift(`<option value="${esc(current)}" selected class="missing">(missing) ${esc(current)}</option>`);
+    const nodes = state.devices.filter(d => !d.virtual && (!allowed || allowed.includes(d.media_class)));
+    const opts = nodes.map(d => `<option value="${esc(d.name)}" ${d.name === current ? 'selected' : ''}>${esc(d.friendly || d.description || d.name)}${d.port ? ' — ' + esc(d.port) : ''}</option>`);
+    if (current && !nodes.some(d => d.name === current)) opts.unshift(`<option value="${esc(current)}" selected>(not connected) ${esc(current)}</option>`);
+    if (!current) opts.unshift('<option value="" selected>(not connected right now)</option>');
+    if (!opts.length) opts.push('<option value="">(no device found)</option>');
     return opts.join('');
   }
   function renderDevices() {
     const grid = $('#devices');
     const usage = aliasUsage();
+    const devs = state.status.devices || {};
     grid.innerHTML = '';
-    for (const [alias, node] of Object.entries(state.config.devices)) {
+    for (const alias of Object.keys(state.config.devices)) {
       const use = usage[alias]; const kind = use && use.size === 1 ? [...use][0] : null;
-      const present = state.devices.some(d => d.name === node);
+      const d = devs[alias] || {};
       grid.insertAdjacentHTML('beforeend',
-        `<label><span class="dot ${present ? 'ok' : 'bad'}"></span>${esc(alias)} <span class="sub">${kind === 'from' ? 'source' : kind === 'to' ? 'sink' : ''}</span></label>
-         <div class="row"><select data-alias="${esc(alias)}" style="flex:1">${deviceOptions(kind, node)}</select>
-         <button class="danger" data-remove="${esc(alias)}" title="remove alias" ${use ? 'disabled' : ''}>✕</button></div>`);
+        `<label title="${esc(d.node || '')}"><span class="dot ${d.present ? 'ok' : 'bad'}"></span>${esc(human(alias))} <span class="hint" style="margin:0;display:inline">${kind === 'from' ? '(input)' : kind === 'to' ? '(output)' : ''}</span></label>
+         <div><div class="row"><select data-alias="${esc(alias)}" style="flex:1">${deviceOptions(kind, d.node)}</select>
+         <button class="danger" data-remove="${esc(alias)}" title="${use ? 'in use by a connection' : 'remove'}" ${use ? 'disabled' : ''}>✕</button></div>
+         <div class="hint" style="margin:2px 0 0">${esc(d.identity ? d.identity.text : '')}</div></div>`);
     }
     grid.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', () => {
       delete state.config.devices[b.dataset.remove]; renderDevices(); renderRouteForm();
     }));
-    $('#new-alias-node').innerHTML = deviceOptions(null, null);
+    $('#new-alias-node').innerHTML = deviceOptions(null, null).replace('<option value="" selected>(not connected right now)</option>', '');
   }
   $('#add-alias').addEventListener('click', () => {
     const alias = $('#new-alias').value.trim(); const node = $('#new-alias-node').value;
-    if (!/^[a-z0-9_]+$/.test(alias)) return toast('alias: lowercase letters, digits, underscore', true);
+    if (!/^[a-z0-9_]+$/.test(alias)) return toast('name: lowercase letters, digits, underscore', true);
     if (!node) return toast('pick a device', true);
     state.config.devices[alias] = node; $('#new-alias').value = ''; renderDevices(); renderRouteForm();
   });
   $('#save-devices').addEventListener('click', () => {
     const devices = {};
-    $('#devices').querySelectorAll('select[data-alias]').forEach(s => devices[s.dataset.alias] = s.value);
+    const devs = state.status.devices || {};
+    $('#devices').querySelectorAll('select[data-alias]').forEach(s => {
+      const alias = s.dataset.alias;
+      if (!s.value) { if (state.config.devices[alias]) devices[alias] = state.config.devices[alias]; return; }
+      devices[alias] = (devs[alias] && devs[alias].node === s.value) ? state.config.devices[alias] : { node: s.value };
+    });
     api('PUT', '/config/devices', devices).then(() => { toast('devices saved'); refresh(true); }, fail);
   });
 
-  // ------------------------------------------------------------ route form
+  // ---------------------------------------------------------- route form
   function renderRouteForm() {
     const aliases = Object.keys(state.config.devices);
     const usage = aliasUsage();
-    const opt = (a, sel) => `<option value="${esc(a)}" ${a === sel ? 'selected' : ''}>${esc(a)}</option>`;
+    const opt = (a, sel, label) => `<option value="${esc(a)}" ${a === sel ? 'selected' : ''}>${esc(label || human(a))}</option>`;
     const from = $('#r-from'), to = $('#r-to');
     const fsel = from.value, tsel = to.value;
     const fromAliases = aliases.filter(a => !usage[a] || usage[a].has('from') || !usage[a].has('to'));
     const toAliases = aliases.filter(a => !usage[a] || usage[a].has('to') || !usage[a].has('from'));
     from.innerHTML = fromAliases.map(a => opt(a, fsel)).join('');
-    to.innerHTML = `<option value="obs_mic" ${tsel === 'obs_mic' ? 'selected' : ''}>obs_mic (virtual OBS microphone)</option>` + toAliases.map(a => opt(a, tsel)).join('');
+    to.innerHTML = opt('obs_mic', tsel, 'OBS stream (what viewers hear)') + toAliases.map(a => opt(a, tsel)).join('');
   }
   $('#r-save').addEventListener('click', () => {
     const name = $('#r-name').value.trim();
-    if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) return toast('route name: a-z, 0-9, _ or -', true);
-    const body = { from: $('#r-from').value, to: $('#r-to').value, volume: parseFloat($('#r-volume').value || '1'), description: $('#r-desc').value.trim() };
-    api('PUT', `/config/routes/${encodeURIComponent(name)}`, body).then(() => { toast('route saved'); $('#r-name').value = ''; $('#r-desc').value = ''; refresh(true); }, fail);
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) return toast('name: lowercase letters, digits, _ or -', true);
+    const body = { from: $('#r-from').value, to: $('#r-to').value, volume: parseFloat($('#r-volume').value || '100') / 100, description: $('#r-desc').value.trim() };
+    api('PUT', `/config/routes/${encodeURIComponent(name)}`, body).then(() => { toast('connection saved'); $('#r-name').value = ''; $('#r-desc').value = ''; refresh(true); }, fail);
   });
   $('#save-defaults').addEventListener('click', () => api('POST', '/config/save-defaults').then(() => { toast('saved as defaults'); refresh(true); }, fail));
-  $('#reset').addEventListener('click', () => api('POST', '/reset').then(() => { toast('reset to config'); refresh(); }, fail));
+  $('#reset').addEventListener('click', () => api('POST', '/reset').then(() => { toast('back to defaults'); refresh(false); }, fail));
 
-  // ----------------------------------------------------------------- loop
+  // -------------------------------------------------------------- wizard
+  const STEPS = ['Person A', 'Person B', 'Game sound', 'Check & connect'];
+  function openWizard() {
+    const labels = (state.config && state.config.labels) || {};
+    state.wiz = { step: 0, a: null, b: null, game: null, noGame: false,
+                  nameA: labels.headset_a || '', nameB: labels.headset_b || '', nameGame: labels.game_sound || '' };
+    $('#wizard').hidden = false;
+    loadHardware().then(renderWizard);
+    $('#wizard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function closeWizard() { state.wiz = null; $('#wizard').hidden = true; }
+  async function loadHardware() {
+    try {
+      const hw = await api('GET', '/hardware');
+      state.hardware = hw.devices || [];
+      const nodes = [];
+      for (const g of state.hardware) { for (const n of g.inputs) nodes.push({ name: n.name, kind: 'input' }); }
+      if (nodes.length) api('POST', '/meters/watch', { nodes }).catch(() => {});
+    } catch (e) { fail(e); }
+  }
+  const hwById = id => state.hardware.find(g => g.id === id);
+  function headsetChoice(g, selected, taken, showMeter) {
+    const lvl = g.inputs.length ? state.levels[g.inputs[0].name] : null;
+    const assigned = [...g.inputs, ...g.outputs].map(n => n.assigned_label).find(Boolean);
+    const idText = g.identity && g.identity.strategy === 'port' ? `Recognised by ${g.port}. Identical headsets can only be told apart by the port, so keep it there.` :
+                   g.identity && g.identity.strategy === 'serial' ? 'Has its own serial number: any USB port works.' : '';
+    return `<div class="choice ${selected ? 'sel' : ''} ${taken ? 'taken' : ''}" data-id="${esc(g.id)}">
+      <span class="ic">${g.hdmi_capture ? '🎮' : g.headset ? '🎧' : g.inputs.length ? '🎤' : '🔈'}</span>
+      <div class="body">
+        <div class="nm">${esc(g.name)} ${assigned ? `<span class="hint" style="display:inline;margin:0">(currently: ${esc(assigned)})</span>` : ''}</div>
+        <div class="sub">${esc([g.bus, g.port, g.inputs.length && g.outputs.length ? (g.speakers ? 'microphone + speakers' : 'microphone + headphones') : g.inputs.length ? 'microphone only' : (g.speakers ? 'speakers' : 'headphones only')].filter(Boolean).join(' · '))}</div>
+        ${idText ? `<div class="sub">${esc(idText)}</div>` : ''}
+        ${taken ? '<div class="sub">already chosen for the other person</div>' : ''}
+      </div>
+      ${showMeter && g.inputs.length ? `<div class="meter"><i style="width:${levelWidth(lvl)}%"></i></div>` : ''}
+    </div>`;
+  }
+  function renderWizard() {
+    const w = state.wiz; if (!w) return;
+    $('#wiz-steps').innerHTML = STEPS.map((s, i) => `<span class="${i === w.step ? 'cur' : i < w.step ? 'done' : ''}">${i + 1}. ${s}</span>`).join('');
+    const body = $('#wiz-body');
+    const headsets = state.hardware.filter(g => g.headset || (g.inputs.length && g.outputs.length && !g.hdmi_capture));
+    if (w.step === 0 || w.step === 1) {
+      const who = w.step === 0 ? 'A' : 'B';
+      const other = w.step === 0 ? w.b : w.a;
+      const cur = w.step === 0 ? w.a : w.b;
+      body.innerHTML = `
+        <p class="hint">Which headset does person ${who} wear? <b>Speak into it</b>: the bar of the right headset moves. Give the person a name so the page can talk about "${who === 'A' ? 'Anna' : 'Ben'}" instead of "headset ${who}".</p>
+        <div class="row" style="margin-bottom:10px"><label>Name:</label><input type="text" id="wiz-name" value="${esc(who === 'A' ? w.nameA : w.nameB)}" placeholder="e.g. ${who === 'A' ? 'Anna' : 'Ben'}" style="width:200px"></div>
+        ${headsets.length ? headsets.map(g => headsetChoice(g, cur === g.id, other === g.id, true)).join('') :
+          '<div class="problem warning"><div class="t">No headset found</div><dl><dt>Why</dt><dd>No plugged-in device has both a microphone and headphones.</dd><dt>What to do</dt><dd>Plug the USB headset in and wait a few seconds; this list updates by itself.</dd></dl></div>'}`;
+      body.querySelectorAll('.choice:not(.taken)').forEach(el => el.addEventListener('click', () => { if (w.step === 0) w.a = el.dataset.id; else w.b = el.dataset.id; renderWizard(); }));
+      $('#wiz-name').addEventListener('input', e => { if (who === 'A') w.nameA = e.target.value; else w.nameB = e.target.value; });
+      $('#wiz-next').disabled = !cur;
+      $('#wiz-next').textContent = 'Next';
+    } else if (w.step === 2) {
+      const used = new Set([w.a, w.b]);
+      const inputs = state.hardware.filter(g => g.inputs.length && !used.has(g.id));
+      body.innerHTML = `
+        <p class="hint">Where does the game sound come from? Usually one of the HDMI capture inputs. <b>Start the game</b>: the bar of the right input moves. Both persons will hear it in their headphones.</p>
+        <div class="row" style="margin-bottom:10px"><label>Name:</label><input type="text" id="wiz-game-name" value="${esc(w.nameGame)}" placeholder="e.g. PlayStation" style="width:200px"></div>
+        <div class="choice ${w.noGame ? 'sel' : ''}" data-id="__none__"><span class="ic">🚫</span><div class="body"><div class="nm">No game sound</div><div class="sub">Only the two headsets talk to each other and go to OBS.</div></div></div>
+        ${inputs.map(g => headsetChoice(g, w.game === g.id && !w.noGame, false, true)).join('')}`;
+      body.querySelectorAll('.choice').forEach(el => el.addEventListener('click', () => {
+        if (el.dataset.id === '__none__') { w.noGame = true; w.game = null; } else { w.noGame = false; w.game = el.dataset.id; }
+        renderWizard();
+      }));
+      $('#wiz-game-name').addEventListener('input', e => w.nameGame = e.target.value);
+      $('#wiz-next').disabled = !(w.noGame || w.game);
+      $('#wiz-next').textContent = 'Next';
+    } else {
+      const A = hwById(w.a), B = hwById(w.b), G = w.game ? hwById(w.game) : null;
+      const nA = w.nameA.trim() || 'Person A', nB = w.nameB.trim() || 'Person B', nG = w.nameGame.trim() || 'Game sound';
+      const ident = g => !g ? '' : g.identity.strategy === 'port' ? `recognised by ${g.port} (identical headsets have no serial number). <b>Keep it in ${g.port}</b>; put a sticker on the plug and the port.` :
+                          g.identity.strategy === 'serial' ? 'recognised by its serial number, any USB port works.' : 'recognised by its fixed name.';
+      const warnings = [];
+      if (A && B && A.identity.strategy === 'port' && B.identity.strategy === 'port') warnings.push(`${nA}'s and ${nB}'s headsets are the same model without serial numbers. If you ever swap their USB ports, the names swap too. Label the ports now.`);
+      if (A && A.speakers || B && B.speakers) warnings.push('One of the chosen outputs looks like loudspeakers, not headphones. A microphone routed to loudspeakers causes echo.');
+      if (G && !G.hdmi_capture) warnings.push(`${nG} is not an HDMI capture input. If it is a microphone, it will be heard in both headsets.`);
+      body.innerHTML = `
+        <p class="hint">This is what will be set up. Check the names, then press Connect.</p>
+        <div class="summary">
+          <b>${esc(nA)}</b><span>${esc(A ? A.name : '?')} — ${ident(A)}</span>
+          <b>${esc(nB)}</b><span>${esc(B ? B.name : '?')} — ${ident(B)}</span>
+          <b>${esc(nG)}</b><span>${G ? esc(G.name) + ' — ' + ident(G) : 'none'}</span>
+        </div>
+        <h3>Sound will flow like this</h3>
+        <ul style="margin:0 0 8px;padding-left:20px">
+          <li>${esc(nA)} hears ${esc(nB)}${G ? ' and the ' + esc(nG) : ''}.</li>
+          <li>${esc(nB)} hears ${esc(nA)}${G ? ' and the ' + esc(nG) : ''}.</li>
+          <li>OBS (your viewers) hears ${esc(nA)} and ${esc(nB)}.${G ? ' The ' + esc(nG) + ' is not sent to OBS by this tool; OBS captures it from the video source.' : ''}</li>
+          <li>Nobody hears their own voice (you can add that later under Advanced).</li>
+        </ul>
+        ${warnings.map(t => `<div class="problem warning"><div class="t">! Good to know</div><dl><dd>${t}</dd></dl></div>`).join('')}
+        <p class="hint">Existing connections are replaced by this standard layout. Volumes of connections that keep their name are kept.</p>`;
+      $('#wiz-next').disabled = !(A && B);
+      $('#wiz-next').textContent = 'Connect everything';
+    }
+    $('#wiz-back').disabled = w.step === 0;
+  }
+  $('#open-wizard').addEventListener('click', openWizard);
+  $('#wiz-cancel').addEventListener('click', closeWizard);
+  $('#wiz-back').addEventListener('click', () => { if (state.wiz && state.wiz.step > 0) { state.wiz.step--; renderWizard(); } });
+  $('#wiz-next').addEventListener('click', async () => {
+    const w = state.wiz; if (!w) return;
+    if (w.step < 3) { w.step++; renderWizard(); return; }
+    const A = hwById(w.a), B = hwById(w.b), G = w.game ? hwById(w.game) : null;
+    const body = {
+      headset_a: { mic: A.inputs[0].name, out: A.outputs[0].name, label: w.nameA.trim() || 'Person A' },
+      headset_b: { mic: B.inputs[0].name, out: B.outputs[0].name, label: w.nameB.trim() || 'Person B' },
+      game: G ? G.inputs[0].name : null, game_label: w.nameGame.trim() || 'Game sound', game_volume: 0.6,
+    };
+    $('#wiz-next').disabled = true;
+    try { await api('POST', '/setup', body); toast('connected!'); closeWizard(); refresh(true); }
+    catch (e) { fail(e); $('#wiz-next').disabled = false; }
+  });
+
+  // ---------------------------------------------------------------- loop
   let lastConfig = '';
   async function refresh(withConfig) {
     try {
@@ -292,21 +686,34 @@
       if (withConfig || !state.config) {
         const cfg = await api('GET', '/config');
         const serialized = JSON.stringify(cfg);
-        if (serialized !== lastConfig) { lastConfig = serialized; state.config = cfg; renderPresets(); renderDevices(); renderRouteForm(); $('#cfgpath').textContent = cfg.path || '(none)'; }
+        if (serialized !== lastConfig) { lastConfig = serialized; state.config = cfg; renderPresets(); renderLabels(); renderRouteForm(); $('#cfgpath').textContent = cfg.path || '(none)'; }
       }
-      renderRoutes();
-      const vm = status.virtual_mic;
-      $('#micstate').innerHTML = `<span class="dot ${vm.present ? 'ok' : 'bad'}"></span>${esc(vm.description)} ${vm.present ? 'available in OBS' : 'missing'}`;
-      const missing = Object.values(status.devices).filter(d => !d.present).length;
-      $('#summary').textContent = `${Object.keys(status.routes).length} routes · ${missing ? missing + ' device(s) missing' : 'all devices present'}`;
+      state.failures = 0;
+      renderOverall(); renderDiagram(); renderCards(); renderObs(); renderDevices();
+      if (state.wiz && (Date.now() % 4000) < 2100) loadHardware().then(renderWizard);
+      if (!state.wiz && !state.autoOpened && (!Object.keys(status.routes).length || location.hash === '#setup')) { state.autoOpened = true; openWizard(); }
     } catch (e) {
-      $('#summary').textContent = 'error: ' + e.message;
-      if (/token/i.test(e.message)) $('#tokenbox').open = true;
+      state.failures++;
+      if (state.failures >= 2) renderUnreachable();
+      if (/token/i.test(e.message)) { $('#advanced').open = true; toast('API token required (see Advanced → Access)', true); }
     }
+  }
+  async function pollLevels() {
+    if (!state.status || !state.config) return;
+    try {
+      const data = await api('GET', '/levels');
+      state.levels = data.levels || {}; state.levelsAvailable = data.available;
+      renderObs(); renderDiagram();
+      if (state.wiz) document.querySelectorAll('#wiz-body .choice').forEach(el => {
+        const g = hwById(el.dataset.id); const bar = el.querySelector('.meter > i');
+        if (g && bar && g.inputs.length) bar.style.width = levelWidth(state.levels[g.inputs[0].name]) + '%';
+      });
+    } catch (e) { /* the 2 s status poll reports connectivity */ }
   }
   refresh(true);
   setInterval(() => refresh(false), 2000);
   setInterval(() => refresh(true), 15000);
+  setInterval(pollLevels, 300);
 })();
 </script>
 </body>

@@ -165,7 +165,7 @@ class ConfigApiTests(ApiTestCase):
                 self.assertEqual(resp.status, 200)
                 self.assertIn("text/html", resp.headers["Content-Type"])
                 body = resp.read().decode()
-        self.assertIn("<title>tfcz-audio</title>", body)
+        self.assertIn("<title>TFCZ Audio</title>", body)
         self.assertIn("/config/devices", body)
 
     def test_get_config(self):
@@ -194,7 +194,7 @@ class ConfigApiTests(ApiTestCase):
         devices = dict(body["devices"], hdmi="alsa_input.hdmi2")
         code, body = self.call("PUT", "/config/devices", devices)
         self.assertEqual(code, 200, body)
-        self.assertEqual(body["routes"]["hdmi_to_a"]["from"], "alsa_input.hdmi2")
+        self.assertEqual(body["routes"]["hdmi_to_a"]["from_node"], "alsa_input.hdmi2")
         self.call("PUT", "/routes/hdmi_to_a", {"volume": 0.11})
         code, body = self.call("POST", "/config/save-defaults")
         self.assertEqual(code, 200)

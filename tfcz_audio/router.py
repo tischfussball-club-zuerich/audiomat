@@ -1,6 +1,6 @@
 """The routing matrix: owns one pw-loopback per route plus the virtual OBS mic,
-keeps desired volume/mute per route and re-applies it whenever a loopback
-(re)appears in the graph."""
+resolves configured devices to live PipeWire nodes, keeps desired
+volume/mute per route and re-applies it whenever a loopback (re)appears."""
 
 from __future__ import annotations
 
@@ -10,15 +10,27 @@ import os
 import threading
 import time
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any, Callable
 
-from .config import MAX_VOLUME, OBS_MIC, Config, RouteConfig
-from .pw import Backend, Graph, LoopbackSpec, Process, PwError, cubic_to_db
+from .config import MAX_VOLUME, OBS_MIC, Config, DeviceSpec, RouteConfig, human
+from .pw import (
+    Backend,
+    Graph,
+    LoopbackSpec,
+    Node,
+    Process,
+    PwError,
+    cubic_to_db,
+    describe_node,
+    identity_for,
+    physical_devices,
+    resolve_match,
+)
 
 log = logging.getLogger("tfcz.router")
 
 VIRTUAL = "__virtual__"
+UNRESOLVED_PREFIX = "tfcz.unresolved."
 
 
 class RouterError(Exception):
@@ -39,8 +51,38 @@ class RouteState:
     mute: bool
 
 
-def route_spec(cfg: Config, route: RouteConfig) -> LoopbackSpec:
-    sink = cfg.virtual.obs_mix_name if route.sink == OBS_MIC else route.sink
+@dataclass
+class Resolved:
+    node: str | None  # node.name to target, None if nothing matches right now
+    present: bool
+    ambiguous: bool = False
+    candidates: int = 0
+
+
+def resolve_devices(cfg: Config, graph: Graph) -> dict[str, Resolved]:
+    out: dict[str, Resolved] = {}
+    for alias, spec in cfg.devices.items():
+        if spec.is_static:
+            out[alias] = Resolved(spec.node, graph.by_name(spec.node) is not None)
+            continue
+        nodes = resolve_match(spec.match, graph)
+        if nodes:
+            out[alias] = Resolved(nodes[0].name, True, ambiguous=len(nodes) > 1, candidates=len(nodes))
+        else:
+            out[alias] = Resolved(None, False)
+    return out
+
+
+def _target(cfg: Config, ref: str, resolved: dict[str, Resolved]) -> str:
+    if ref == OBS_MIC:
+        return cfg.virtual.obs_mix_name
+    if ref in cfg.devices:
+        node = resolved.get(ref, Resolved(None, False)).node
+        return node or f"{UNRESOLVED_PREFIX}{ref}"
+    return ref  # raw node name
+
+
+def route_spec(cfg: Config, route: RouteConfig, resolved: dict[str, Resolved]) -> LoopbackSpec:
     common = {
         "node.latency": cfg.audio.latency,
         "node.dont-fallback": True,
@@ -49,7 +91,7 @@ def route_spec(cfg: Config, route: RouteConfig) -> LoopbackSpec:
     capture = {
         "node.name": route.in_node,
         "node.description": f"TFCZ {route.name} (capture)",
-        "target.object": route.source,
+        "target.object": _target(cfg, route.source_ref, resolved),
         **common,
     }
     if route.capture_sink:
@@ -57,7 +99,7 @@ def route_spec(cfg: Config, route: RouteConfig) -> LoopbackSpec:
     playback = {
         "node.name": route.out_node,
         "node.description": f"TFCZ {route.name} (playback)",
-        "target.object": sink,
+        "target.object": _target(cfg, route.sink_ref, resolved),
         **common,
     }
     return LoopbackSpec(name=f"tfcz.{route.name}", capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
@@ -98,14 +140,16 @@ class Router:
         self._sleep = sleep
         self._clock = clock
         self._lock = threading.RLock()
-        self.desired: dict[str, RouteState] = {
-            name: RouteState(r.volume, r.mute) for name, r in cfg.routes.items()
-        }
+        self.desired: dict[str, RouteState] = {name: RouteState(r.volume, r.mute) for name, r in cfg.routes.items()}
         self.procs: dict[str, Process] = {}
+        self.resolved: dict[str, Resolved] = {}
+        self._spec_used: dict[str, LoopbackSpec] = {}
         self._applied: dict[str, tuple[int, float, bool]] = {}
         self._failures: dict[str, int] = {}
         self._retry_at: dict[str, float] = {}
+        self._spawned_at: dict[str, float] = {}
         self._started = False
+        self.last_error: str = ""
         self._load_state()
 
     # ------------------------------------------------------------------ state
@@ -143,9 +187,29 @@ class Router:
 
     # -------------------------------------------------------------- lifecycle
 
+    def _graph_or_empty(self) -> Graph:
+        try:
+            return self.backend.graph()
+        except PwError as exc:
+            log.warning("pw-dump failed: %s", exc)
+            self.last_error = f"cannot talk to PipeWire: {exc}"
+            return Graph()
+
+    def _refresh_resolution(self, graph: Graph) -> None:
+        new = resolve_devices(self.cfg, graph)
+        for alias, res in new.items():
+            old = self.resolved.get(alias)
+            if old is None or old.node != res.node:
+                if res.node:
+                    log.info("device %s -> %s", alias, res.node)
+                elif old is not None and old.node:
+                    log.warning("device %s (%s) is gone", alias, old.node)
+        self.resolved = new
+
     def start(self) -> None:
         with self._lock:
             self._started = True
+            self._refresh_resolution(self._graph_or_empty())
             self._spawn(VIRTUAL)
             self._wait_for_node(self.cfg.virtual.obs_mix_name)
             for name in self.cfg.routes:
@@ -161,6 +225,7 @@ class Router:
 
     def _terminate(self, name: str) -> None:
         proc = self.procs.pop(name, None)
+        self._spec_used.pop(name, None)
         if proc is None:
             return
         try:
@@ -174,67 +239,25 @@ class Router:
         self._applied.pop(name, None)
         log.info("stopped loopback %s", name)
 
-    def reload(self, new_cfg: Config) -> dict[str, Any]:
-        """Switch to a new config at runtime. Only loopbacks whose spec
-        actually changed are restarted; runtime volumes of unchanged routes
-        are kept unless their config default changed."""
-        with self._lock:
-            old_specs = {n: route_spec(self.cfg, r) for n, r in self.cfg.routes.items()}
-            new_specs = {n: route_spec(new_cfg, r) for n, r in new_cfg.routes.items()}
-            virtual_changed = virtual_spec(self.cfg) != virtual_spec(new_cfg)
-
-            desired: dict[str, RouteState] = {}
-            for name, route in new_cfg.routes.items():
-                old = self.cfg.routes.get(name)
-                if old is not None and name in self.desired and (old.volume, old.mute) == (route.volume, route.mute):
-                    desired[name] = self.desired[name]
-                else:
-                    desired[name] = RouteState(route.volume, route.mute)
-
-            for name in list(self.procs):
-                if name == VIRTUAL:
-                    if virtual_changed:
-                        self._terminate(name)
-                    continue
-                if name not in new_specs or old_specs.get(name) != new_specs[name]:
-                    self._terminate(name)
-
-            new_cfg.path = new_cfg.path or self.cfg.path
-            self.cfg = new_cfg
-            self.desired = desired
-            for stale in set(self._failures) - set(new_cfg.routes) - {VIRTUAL}:
-                self._failures.pop(stale, None)
-                self._retry_at.pop(stale, None)
-            self._save_state()
-
-            if self._started:
-                if VIRTUAL not in self.procs:
-                    self._spawn(VIRTUAL)
-                    self._wait_for_node(self.cfg.virtual.obs_mix_name)
-                for name in self.cfg.routes:
-                    if name not in self.procs:
-                        self._spawn(name)
-                self.reconcile()
-            log.info("config reloaded: %d routes, %d presets", len(self.cfg.routes), len(self.cfg.presets))
-            return self.status()
-
     def _spec(self, name: str) -> LoopbackSpec:
         if name == VIRTUAL:
             return virtual_spec(self.cfg)
-        return route_spec(self.cfg, self.cfg.routes[name])
+        return route_spec(self.cfg, self.cfg.routes[name], self.resolved)
 
     def _spawn(self, name: str) -> bool:
+        spec = self._spec(name)
         try:
-            self.procs[name] = self.backend.spawn_loopback(self._spec(name))
+            self.procs[name] = self.backend.spawn_loopback(spec)
         except PwError as exc:
             self._failures[name] = self._failures.get(name, 0) + 1
             delay = min(30.0, 2.0 ** self._failures[name])
             self._retry_at[name] = self._clock() + delay
             log.error("spawn %s failed (%s); retry in %.0fs", name, exc, delay)
             return False
-        self._failures.pop(name, None)
+        self._spec_used[name] = spec
         self._retry_at.pop(name, None)
         self._applied.pop(name, None)
+        self._spawned_at[name] = self._clock()
         return True
 
     def _wait_for_node(self, node_name: str) -> bool:
@@ -251,14 +274,32 @@ class Router:
             self._sleep(0.25)
 
     def reconcile(self) -> None:
-        """One supervisor pass: respawn dead loopbacks, apply pending volumes."""
+        """One supervisor pass: re-resolve devices, respawn dead or outdated
+        loopbacks, apply pending volumes. Never raises."""
         with self._lock:
             if not self._started:
                 return
             now = self._clock()
+            try:
+                graph = self.backend.graph()
+                self.last_error = ""
+            except PwError as exc:
+                log.warning("pw-dump failed: %s", exc)
+                self.last_error = f"cannot talk to PipeWire: {exc}"
+                graph = None
+            if graph is not None:
+                self._refresh_resolution(graph)
+
             for name in [VIRTUAL, *self.cfg.routes]:
                 proc = self.procs.get(name)
                 if proc is not None and proc.poll() is None:
+                    if self._failures.get(name) and now - self._spawned_at.get(name, now) > 30.0:
+                        self._failures.pop(name, None)  # healthy for a while: forget crash history
+                    # device resolved to a different node (replug, other port, first appearance)?
+                    if graph is not None and name != VIRTUAL and self._spec_used.get(name) != self._spec(name):
+                        log.info("route %s: target changed, restarting loopback", name)
+                        self._terminate(name)
+                        self._spawn(name)
                     continue
                 if proc is not None:
                     err = ""
@@ -270,26 +311,83 @@ class Router:
                             err = ""
                     log.warning("loopback %s exited with %s %s", name, proc.poll(), err)
                     self.procs.pop(name, None)
+                    self._spec_used.pop(name, None)
                     self._failures[name] = self._failures.get(name, 0) + 1
                     self._retry_at[name] = now + min(30.0, 2.0 ** self._failures[name])
+                    self.last_error = f"{name} stopped unexpectedly, restarting"
                     continue
                 if self._retry_at.get(name, 0.0) <= now:
                     self._spawn(name)
-            try:
-                graph = self.backend.graph()
-            except PwError as exc:
-                log.warning("pw-dump failed: %s", exc)
+            if graph is None:
                 return
             for name in self.cfg.routes:
                 self._apply(name, graph)
 
-    def run_forever(self, stop: threading.Event, interval: float = 1.0) -> None:
+    def run_forever(
+        self,
+        stop: threading.Event,
+        interval: float = 1.0,
+        on_tick: list[Callable[[], None]] | None = None,
+    ) -> None:
+        """Supervisor loop. Every callback runs in its own try/except so a
+        failure in one subsystem (meters, watchdog) never stops the others."""
         while not stop.is_set():
             try:
                 self.reconcile()
             except Exception:  # noqa: BLE001
                 log.exception("supervisor pass failed")
+            for cb in on_tick or []:
+                try:
+                    cb()
+                except Exception:  # noqa: BLE001
+                    log.exception("tick callback %s failed", getattr(cb, "__name__", cb))
             stop.wait(interval)
+
+    def reload(self, new_cfg: Config) -> dict[str, Any]:
+        """Switch to a new config at runtime. Only loopbacks whose spec
+        actually changed are restarted; runtime volumes of unchanged routes
+        are kept unless their config default changed."""
+        with self._lock:
+            graph = self._graph_or_empty()
+            new_resolved = resolve_devices(new_cfg, graph)
+            new_specs = {n: route_spec(new_cfg, r, new_resolved) for n, r in new_cfg.routes.items()}
+            virtual_changed = virtual_spec(self.cfg) != virtual_spec(new_cfg)
+
+            desired: dict[str, RouteState] = {}
+            for name, route in new_cfg.routes.items():
+                old = self.cfg.routes.get(name)
+                if old is not None and name in self.desired and (old.volume, old.mute) == (route.volume, route.mute):
+                    desired[name] = self.desired[name]
+                else:
+                    desired[name] = RouteState(route.volume, route.mute)
+
+            for name in list(self.procs):
+                if name == VIRTUAL:
+                    if virtual_changed:
+                        self._terminate(name)
+                    continue
+                if name not in new_specs or self._spec_used.get(name) != new_specs[name]:
+                    self._terminate(name)
+
+            new_cfg.path = new_cfg.path or self.cfg.path
+            self.cfg = new_cfg
+            self.desired = desired
+            self.resolved = new_resolved
+            for stale in set(self._failures) - set(new_cfg.routes) - {VIRTUAL}:
+                self._failures.pop(stale, None)
+                self._retry_at.pop(stale, None)
+            self._save_state()
+
+            if self._started:
+                if VIRTUAL not in self.procs:
+                    self._spawn(VIRTUAL)
+                    self._wait_for_node(self.cfg.virtual.obs_mix_name)
+                for name in self.cfg.routes:
+                    if name not in self.procs:
+                        self._spawn(name)
+                self.reconcile()
+            log.info("config reloaded: %d routes, %d presets", len(self.cfg.routes), len(self.cfg.presets))
+            return self.status()
 
     # ---------------------------------------------------------------- control
 
@@ -366,63 +464,280 @@ class Router:
                 self._apply(name, graph)
             return self.status(graph)
 
+    def fix_device(self, alias: str) -> dict[str, Any]:
+        """Unmute a device and raise its system volume if it is at zero."""
+        if alias not in self.cfg.devices:
+            raise UnknownRoute(alias)
+        graph = self._graph_or_empty()
+        node = self._device_node(alias, graph)
+        if node is None:
+            raise RouterError(f"{human(self.cfg, alias)} is not connected")
+        if node.mute:
+            self.backend.set_mute(node.id, False)
+        if node.volume is not None and node.volume < 0.05:
+            self.backend.set_volume(node.id, 1.0)
+        return self.status()
+
     # ----------------------------------------------------------------- status
 
-    def _graph_or_empty(self) -> Graph:
-        try:
-            return self.backend.graph()
-        except PwError as exc:
-            log.warning("pw-dump failed: %s", exc)
-            return Graph()
+    def _device_node(self, alias: str, graph: Graph) -> Node | None:
+        res = self.resolved.get(alias)
+        if res is None or res.node is None:
+            return None
+        return graph.by_name(res.node)
+
+    def _ref_node(self, ref: str, graph: Graph) -> Node | None:
+        if ref == OBS_MIC:
+            return graph.by_name(self.cfg.virtual.obs_mix_name)
+        if ref in self.cfg.devices:
+            return self._device_node(ref, graph)
+        return graph.by_name(ref)
+
+    def resolved_nodes(self) -> dict[str, str | None]:
+        return {alias: res.node for alias, res in self.resolved.items()}
+
+    def _label(self, alias: str) -> str:
+        return human(self.cfg, alias)
+
+    def _route_label(self, route: RouteConfig) -> str:
+        return f"{self._label(route.source_ref)} → {self._label(route.sink_ref)}"
 
     def route_status(self, name: str, graph: Graph | None = None) -> dict[str, Any]:
         route = self._route(name)
         graph = graph or self._graph_or_empty()
         want = self.desired[name]
-        sink_name = self.cfg.virtual.obs_mix_name if route.sink == OBS_MIC else route.sink
-        src = graph.by_name(route.source)
-        dst = graph.by_name(sink_name)
+        src = self._ref_node(route.source_ref, graph)
+        dst = self._ref_node(route.sink_ref, graph)
         cap = graph.by_name(route.in_node)
         play = graph.by_name(route.out_node)
         proc = self.procs.get(name)
         return {
             "name": name,
             "description": route.description,
-            "from": route.source,
-            "to": route.sink,
+            "label": self._route_label(route),
+            "from": route.source_ref,
+            "to": route.sink_ref,
+            "from_node": src.name if src else None,
+            "to_node": dst.name if dst else None,
             "volume": want.volume,
             "volume_db": cubic_to_db(want.volume),
             "mute": want.mute,
-            "actual": {
-                "volume": play.volume if play else None,
-                "mute": play.mute if play else None,
-            },
+            "actual": {"volume": play.volume if play else None, "mute": play.mute if play else None},
             "running": proc is not None and proc.poll() is None,
             "source_present": src is not None,
             "sink_present": dst is not None,
-            "connected": bool(
-                cap and play and graph.has_input_link(cap.id) and graph.has_output_link(play.id)
-            ),
+            "connected": bool(cap and play and graph.has_input_link(cap.id) and graph.has_output_link(play.id)),
         }
+
+    def device_status(self, alias: str, graph: Graph) -> dict[str, Any]:
+        spec: DeviceSpec = self.cfg.devices[alias]
+        res = self.resolved.get(alias, Resolved(None, False))
+        node = graph.by_name(res.node) if res.node else None
+        info = describe_node(node, graph) if node else None
+        if spec.is_static:
+            how = {"strategy": "name", "text": "Recognised by its fixed name in the audio system.", "port": info["port"] if info else ""}
+        else:
+            key = "device.serial" if "device.serial" in spec.match else "device.bus-path" if "device.bus-path" in spec.match else "match"
+            how = {
+                "strategy": {"device.serial": "serial", "device.bus-path": "port"}.get(key, "match"),
+                "port": (info["port"] if info else "") or (self._port_from_match(spec.match)),
+                "text": (
+                    "Recognised by its serial number. Any USB port works."
+                    if key == "device.serial"
+                    else f"Recognised by the USB port it is plugged into ({self._port_from_match(spec.match)}). It must stay in that port."
+                    if key == "device.bus-path"
+                    else "Recognised by matching hardware properties."
+                ),
+            }
+        return {
+            "label": self._label(alias),
+            "node": res.node,
+            "present": res.present,
+            "ambiguous": res.ambiguous,
+            "friendly": info["friendly"] if info else None,
+            "bus": info["bus"] if info else None,
+            "identity": how,
+            "match": spec.match,
+        }
+
+    @staticmethod
+    def _port_from_match(match: dict[str, str]) -> str:
+        from .pw import port_label
+
+        return port_label(match.get("device.bus-path", ""))
 
     def status(self, graph: Graph | None = None) -> dict[str, Any]:
         graph = graph or self._graph_or_empty()
         vproc = self.procs.get(VIRTUAL)
-        devices = {}
-        for key, node_name in self.cfg.devices.items():
-            devices[key] = {"node": node_name, "present": graph.by_name(node_name) is not None}
+        problems = self.problems(graph)
         return {
-            "ok": True,
+            "ok": not any(p["level"] == "error" for p in problems),
+            "problems": problems,
             "virtual_mic": {
                 "node": self.cfg.virtual.obs_mic_name,
                 "description": self.cfg.virtual.obs_mic_description,
                 "running": vproc is not None and vproc.poll() is None,
                 "present": graph.by_name(self.cfg.virtual.obs_mic_name) is not None,
             },
-            "devices": devices,
+            "devices": {alias: self.device_status(alias, graph) for alias in self.cfg.devices},
+            "labels": dict(self.cfg.labels),
             "routes": {name: self.route_status(name, graph) for name in self.cfg.routes},
             "presets": sorted(self.cfg.presets),
         }
+
+    # --------------------------------------------------------------- problems
+
+    def problems(self, graph: Graph | None = None) -> list[dict[str, Any]]:
+        """Plain-language list of what is wrong or risky right now.
+        Each entry: level (error|warning|info), code, what, title, why, effect, fix."""
+        graph = graph or self._graph_or_empty()
+        out: list[dict[str, Any]] = []
+        cfg = self.cfg
+
+        def add(level: str, code: str, what: str, title: str, why: str = "", effect: str = "", fix: str = "", **extra: Any) -> None:
+            out.append({"level": level, "code": code, "what": what, "title": title, "why": why, "effect": effect, "fix": fix, **extra})
+
+        if not graph.nodes:
+            add("error", "no_audio_system", "daemon", "The computer's audio system is not reachable",
+                self.last_error or "PipeWire did not answer.",
+                "Nothing can be routed until it is back.",
+                "Log out and in again, or run: systemctl --user restart pipewire wireplumber")
+            return out
+
+        if graph.by_name(cfg.virtual.obs_mic_name) is None:
+            add("error", "obs_mic_missing", "obs_mic", "The OBS microphone does not exist right now",
+                "The virtual microphone is created by this router and it is currently being recreated.",
+                "OBS records silence until it is back (a few seconds).",
+                "Nothing to do unless it stays like this for a minute; then restart: systemctl --user restart tfcz-audio")
+
+        if not cfg.routes:
+            add("warning", "no_routes", "routes", "No connections set up yet", "", "No sound goes anywhere.",
+                "Use Setup to connect your headsets.")
+
+        physical = physical_devices(graph)
+        used_aliases = {a for r in cfg.routes.values() for a in (r.source_ref, r.sink_ref) if a in cfg.devices}
+        for alias in sorted(used_aliases):
+            spec = cfg.devices[alias]
+            res = self.resolved.get(alias, Resolved(None, False))
+            node = graph.by_name(res.node) if res.node else None
+            routes_using = [self._route_label(r) for r in cfg.routes.values() if alias in (r.source_ref, r.sink_ref)]
+            label = self._label(alias)
+            if node is None:
+                why = "The computer does not see this device: it may be unplugged, switched off, or it was replaced by another model."
+                fix = "Plug it in or switch it on; it reconnects by itself. If it is a new device, assign it under Setup."
+                if "device.bus-path" in spec.match:
+                    port = self._port_from_match(spec.match)
+                    twin = self._same_model_elsewhere(spec, physical)
+                    if twin:
+                        why = f"{label} is recognised by its USB port ({port}), and a device of that kind is now in {twin} instead."
+                        fix = f"Move it back to {port}, or run Setup again to accept the new port."
+                    else:
+                        why = f"{label} is recognised by its USB port ({port}) and nothing is plugged in there."
+                        fix = f"Plug it into {port}. Identical headsets without serial numbers can only be told apart by the port."
+                add("error", "device_missing", alias, f"{label} is not connected", why,
+                    "These connections are silent: " + ", ".join(routes_using), fix, routes=routes_using)
+                continue
+            if res.ambiguous:
+                add("warning", "device_ambiguous", alias, f"More than one device matches {label}",
+                    f"{res.candidates} connected devices look the same to the computer.",
+                    "The router picked one of them; it may be the wrong one.",
+                    "Run Setup again while both devices are plugged in so they get told apart by USB port.")
+            if node.mute:
+                add("warning", "device_muted", alias, f"{label} is muted by the system",
+                    "The device itself is muted in the computer's sound settings; this is separate from the switches on this page.",
+                    "Everything from or to it is silent even though the arrows look fine.",
+                    "Click Fix, or unmute it in the sound settings.", fixable=True)
+            elif node.volume is not None and node.volume < 0.05:
+                add("warning", "device_silent", alias, f"{label} is turned all the way down by the system",
+                    "The device's own volume in the computer's sound settings is at 0.",
+                    "Everything from or to it is nearly silent.",
+                    "Click Fix to set it to 100 %, or raise it in the sound settings.", fixable=True)
+
+        # routes to OBS
+        obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref == OBS_MIC]
+        live_obs = [n for n, _ in obs_routes if not self.desired[n].mute and self.desired[n].volume > 0]
+        if cfg.routes and not obs_routes:
+            add("warning", "obs_unconnected", "obs_mic", "Nothing is connected to the OBS stream",
+                "No arrow points to the OBS stream.", "Your viewers hear no microphones.",
+                "Add a connection from each headset microphone to the OBS stream, or run Setup.")
+        elif obs_routes and not live_obs:
+            add("warning", "obs_all_off", "obs_mic", "All connections to the OBS stream are switched off",
+                "Every arrow to OBS is off or at 0 %.", "Your viewers hear no microphones.",
+                "Switch on at least one microphone → OBS stream connection.")
+
+        # risky combinations
+        dev_of_node = {n["name"]: g for g in physical for n in g["inputs"] + g["outputs"]}
+        for name, route in cfg.routes.items():
+            proc = self.procs.get(name)
+            if proc is None or proc.poll() is not None:
+                add("warning", "route_restarting", name, f"Connection {self._route_label(route)} is restarting",
+                    "Its helper process stopped and is being started again automatically.",
+                    "A short interruption on this path.", "Nothing to do; if it repeats, check the log.")
+            if route.sink_ref == OBS_MIC:
+                continue
+            src_node = self._ref_node(route.source_ref, graph)
+            dst_node = self._ref_node(route.sink_ref, graph)
+            if dst_node is not None:
+                info = describe_node(dst_node, graph)
+                if info["speakers"] and src_node is not None and not describe_node(src_node, graph)["hdmi_capture"]:
+                    add("warning", "feedback_risk", name, f"{self._route_label(route)} sends a microphone to loudspeakers",
+                        "The output looks like loudspeakers (TV/monitor/built-in), not headphones. The microphone can pick the sound up again.",
+                        "Echo or a loud howling feedback tone is likely.",
+                        "Use headphones as the output, or switch this connection off.")
+                if info["bus"] == "Bluetooth":
+                    add("info", "bluetooth_delay", name, f"{self._label(route.sink_ref)} is a Bluetooth device",
+                        "Bluetooth audio arrives about 0.15 to 0.3 seconds late.",
+                        "Fine for talking to each other; distracting if someone hears their own voice through it.",
+                        "Prefer a USB headset for anyone who needs to hear themselves.")
+            if src_node is not None and dst_node is not None:
+                g1, g2 = dev_of_node.get(src_node.name), dev_of_node.get(dst_node.name)
+                if g1 is not None and g1 is g2:
+                    add("info", "sidetone", name, f"{self._route_label(route)}: this person hears their own voice",
+                        "Microphone and headphones belong to the same headset.", "Some people like the sidetone, others find it distracting.",
+                        "Switch it off or turn it down if it bothers them.")
+
+        # identity hints: port-bound devices are worth knowing about
+        for alias in sorted(used_aliases):
+            spec = cfg.devices[alias]
+            if "device.bus-path" in spec.match and self.resolved.get(alias, Resolved(None, False)).present:
+                add("info", "port_bound", alias, f"{self._label(alias)} must stay in {self._port_from_match(spec.match)}",
+                    "It is recognised by its USB port because identical devices report no serial number.",
+                    "If it is moved to another port it counts as missing.", "Label the plug and the port.")
+
+        if self.last_error and not any(p["level"] == "error" for p in out):
+            add("warning", "daemon", "daemon", self.last_error)
+        order = {"error": 0, "warning": 1, "info": 2}
+        out.sort(key=lambda p: order.get(p["level"], 9))
+        return out
+
+    def _same_model_elsewhere(self, spec: DeviceSpec, physical: list[dict[str, Any]]) -> str:
+        """If a port-bound device is missing, look for the same kind of hardware
+        in another port (the user probably moved the plug). Returns port label."""
+        want_kind = spec.match.get("kind")
+        for g in physical:
+            nodes = g["inputs"] if want_kind == "input" else g["outputs"] if want_kind == "output" else g["inputs"] + g["outputs"]
+            if not nodes or not g.get("port"):
+                continue
+            if g["identity"].get("strategy") == "port" and g["port"] != self._port_from_match(spec.match) and not self._port_in_use(g["port"]):
+                return g["port"]
+        return ""
+
+    def _port_in_use(self, port: str) -> bool:
+        from .pw import port_label
+
+        return any(port_label(s.match.get("device.bus-path", "")) == port for s in self.cfg.devices.values())
+
+    # ----------------------------------------------------------------- lists
+
+    def hardware(self) -> list[dict[str, Any]]:
+        graph = self._graph_or_empty()
+        groups = physical_devices(graph)
+        assigned = {res.node: alias for alias, res in self.resolved.items() if res.node}
+        for g in groups:
+            for n in g["inputs"] + g["outputs"]:
+                n["assigned_to"] = assigned.get(n["name"])
+                n["assigned_label"] = self._label(assigned[n["name"]]) if n["name"] in assigned else None
+        return groups
 
     def list_presets(self) -> dict[str, Any]:
         return {
@@ -431,4 +746,12 @@ class Router:
         }
 
     def devices(self) -> list[dict[str, Any]]:
-        return [n.to_dict() for n in self._graph_or_empty().audio_devices()]
+        graph = self._graph_or_empty()
+        return [describe_node(n, graph) for n in graph.audio_devices()]
+
+    def identity_of_node(self, node_name: str) -> dict[str, Any]:
+        graph = self._graph_or_empty()
+        node = graph.by_name(node_name)
+        if node is None:
+            raise RouterError(f"{node_name} is not connected")
+        return identity_for(node, graph)

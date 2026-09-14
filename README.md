@@ -72,29 +72,72 @@ loginctl enable-linger $USER
 ## Web UI
 
 Open <http://127.0.0.1:8787/> on the streaming PC (or from the LAN if you
-change `listen` and set a `token`). The page shows every route with a
-live volume slider, dB readout and mute button, the preset buttons, and
-whether each device is present and linked. It also edits the config:
+change `listen` and set a `token`). The page is written for people who do
+not care about audio plumbing:
 
-* **Devices**: assign each alias to one of the PipeWire devices currently
-  present (filtered to sources or sinks depending on how the alias is
-  used), add new aliases, and save. Only routes using a changed device are
-  restarted.
-* **Routes**: add a route from two aliases (or to `obs_mic`), change an
-  existing one by reusing its name, or delete one.
-* **Save current as defaults** writes the current volumes and mutes into
-  the config as the new startup values.
+* **Status** at the top: "Everything is working", or a list of problems in
+  plain language, each with *why*, *effect* and *what to do*. Problems the
+  daemon can fix itself (a device muted in the system) get a **Fix** button.
+* **How the sound flows**: a diagram with inputs on the left, outputs on the
+  right and one arrow per connection. Arrow thickness is the volume, dashed
+  means off, red means a device is missing. Live green bars show sound
+  arriving; the OBS box tells you in words whether sound is reaching OBS.
+* **Volume controls**: one card per arrow with a percent slider and an
+  On/Off switch.
+* **Quick settings**: the presets as big buttons.
+* **Set up devices**: a three-step wizard. Pick person A's headset (speak
+  into it, the right bar moves), person B's headset, and the game sound
+  input, give them names, and press Connect. It builds the standard layout:
+  A hears B and the game, B hears A and the game, OBS hears A and B.
+* **Advanced** (collapsed): names, device assignment, adding or deleting
+  connections, defaults and the API token.
 
 Every UI change rewrites `config.toml` (comments in the file are not kept)
 and hot-reloads the daemon. Hand edits to the file still work; restart the
 service afterwards.
 
+## Telling identical headsets apart
+
+Two headsets of the same model are the classic trap: after a reboot the
+audio system may list them in a different order and A becomes B. The
+setup wizard therefore stores *how to recognise* each device, not its
+position in a list:
+
+* **Serial number** if the headset reports one that no other visible device
+  shares. It is then recognised in any USB port.
+* **USB port** if the headsets are identical and report no serial. No
+  software can tell such devices apart in any other way, so the wizard says
+  which port each headset must stay in. Label the plugs and ports.
+* **Fixed name** for PCI and built-in hardware, which never moves.
+
+The daemon re-resolves devices every second. Unplugging and replugging,
+or a reboot, restores the same assignment. A port-bound headset that is
+plugged into another port is reported as missing together with the port
+it was found in and the port it belongs to.
+
+In the config this looks like:
+
+```toml
+[devices]
+headset_a_mic = { match = { "device.bus-path" = "pci-0000:00:14.0-usb-0:1:1.0", kind = "input" } }
+headset_b_out = { match = { "device.serial" = "Jabra_Speak_510_A1B2C3", kind = "output" } }
+game_sound    = "alsa_input.pci-0000_03_00.0.analog-stereo"   # plain node name
+
+[labels]
+headset_a  = "Anna"
+headset_b  = "Ben"
+game_sound = "PlayStation"
+```
+
+## Configuration
 ## Configuration
 
 `~/.config/tfcz-audio/config.toml`, see the annotated
 [example](config/tfcz-audio.example.toml).
 
-* `[devices]` maps friendly aliases to PipeWire `node.name` values.
+* `[devices]` maps aliases to devices: a PipeWire `node.name`, or
+  `{ match = { ... } }` with hardware properties (see above).
+* `[labels]` gives aliases or alias prefixes human names for the UI.
 * `[routes.<name>]` has `from`, `to`, `volume` (default 1.0), `mute`,
   `description`. `to = "obs_mic"` targets the virtual OBS microphone.
   `capture_sink = true` captures a sink's monitor instead of a source
@@ -155,7 +198,13 @@ client can drive it.
 | POST | `/presets/{p}` | apply a preset |
 | POST | `/reset` | all routes back to config values |
 | GET | `/devices` | audio sources/sinks currently in PipeWire |
-| GET | `/` | web UI |
+| GET | `/` | web UI (`/#setup` opens the wizard) |
+| GET | `/levels` | live signal levels per device and for the OBS mic |
+| GET | `/hardware` | plugged-in hardware grouped by device, with identity strategy |
+| POST | `/setup` | `{headset_a: {mic, out, label}, headset_b: {...}, game, game_label}`: build the standard layout |
+| POST | `/fix/device/{alias}` | unmute a device / raise its system volume |
+| PUT | `/config/labels` | replace the names |
+| POST | `/meters/watch` | `{nodes: [{name, kind}]}`: meter extra devices for two minutes |
 | GET | `/config` | current config as JSON (token hidden) |
 | PUT | `/config/devices` | replace the alias -> node mapping, save, hot-reload |
 | PUT / DELETE | `/config/routes/{r}` | create or update (`from`, `to`, `volume`, `mute`, `description`) or delete a route |
@@ -175,17 +224,28 @@ With `token` set, send `Authorization: Bearer <token>` or `?token=<token>`.
 
 ## How it works
 
-* On start the daemon spawns one `pw-loopback` for the virtual mic (an
+* On start the daemon terminates helper processes left over from a crashed
+  previous instance, then spawns one `pw-loopback` for the virtual mic (an
   `Audio/Sink` mix bus feeding an `Audio/Source/Virtual` node) and one per
-  route, each with `target.object` set to the configured node names and
+  route, each targeting the resolved node names with
   `node.dont-fallback = true` so a missing headset leaves the route silent
   instead of falling back to the default device.
 * Volume and mute are applied to the route's playback stream with `wpctl`;
   the graph is read with `pw-dump`.
-* A supervisor pass runs every second: restarts loopbacks that died (with
-  backoff), and re-applies desired volumes once a node exists.
+* A supervisor pass runs every second: re-resolves devices, restarts
+  loopbacks that died (with backoff, forgetting crash history after 30 s
+  of health), restarts a loopback whose device resolved to a different
+  node, and re-applies desired volumes once a node exists.
+* Level meters are separate `pw-record` processes per device plus one on
+  the OBS mic. They are read-only observers; a failing meter is restarted
+  and never affects routing.
+* Under systemd the unit is `Type=notify` with a 30 s watchdog: the daemon
+  reports READY and pings from the supervisor loop, so a hung process is
+  killed and restarted. `Restart=always` and `StartLimitIntervalSec=0`
+  mean systemd never gives up. If the API port is taken, routing still
+  starts and the bind is retried every second.
 * WirePlumber relinks the streams itself when a USB device disappears and
-  comes back.
+  comes back; the daemon only steps in when a device resolves differently.
 
 ## Troubleshooting
 

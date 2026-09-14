@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 
 from tfcz_audio.config import OBS_MIC
-from tfcz_audio.router import VIRTUAL, Router, RouterError, UnknownPreset, UnknownRoute, route_spec, virtual_spec
+from tfcz_audio.pw import Graph
+from tfcz_audio.router import VIRTUAL, Router, RouterError, UnknownPreset, UnknownRoute, resolve_devices, route_spec, virtual_spec
 
 from .helpers import fake_backend, minimal_config
 
@@ -19,7 +20,7 @@ def make_router(cfg=None, backend=None):
 class SpecTests(unittest.TestCase):
     def test_route_spec_targets(self):
         cfg = minimal_config()
-        spec = route_spec(cfg, cfg.routes["a_to_b"])
+        spec = route_spec(cfg, cfg.routes["a_to_b"], resolve_devices(cfg, Graph()))
         self.assertEqual(spec.capture_props["target.object"], "alsa_input.a")
         self.assertEqual(spec.playback_props["target.object"], "alsa_output.b")
         self.assertTrue(spec.capture_props["node.dont-fallback"])
@@ -27,7 +28,7 @@ class SpecTests(unittest.TestCase):
 
     def test_obs_route_targets_mix_bus(self):
         cfg = minimal_config()
-        spec = route_spec(cfg, cfg.routes["a_to_obs"])
+        spec = route_spec(cfg, cfg.routes["a_to_obs"], resolve_devices(cfg, Graph()))
         self.assertEqual(spec.playback_props["target.object"], cfg.virtual.obs_mix_name)
 
     def test_virtual_spec(self):
@@ -39,7 +40,7 @@ class SpecTests(unittest.TestCase):
 
     def test_capture_sink_flag(self):
         cfg = minimal_config('[routes.mon]\nfrom = "a_out"\nto = "b_out"\ncapture_sink = true\n')
-        spec = route_spec(cfg, cfg.routes["mon"])
+        spec = route_spec(cfg, cfg.routes["mon"], resolve_devices(cfg, Graph()))
         self.assertTrue(spec.capture_props["stream.capture.sink"])
 
 

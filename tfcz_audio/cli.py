@@ -18,8 +18,10 @@ from typing import Any
 from . import __version__
 from .api import serve
 from .config import Config, ConfigError, default_config_paths, find_config, load
-from .pw import PipeWireBackend, PwError, cubic_to_db
+from .meters import FakeMeterManager, MeterManager
+from .pw import PipeWireBackend, PwError, cubic_to_db, kill_stale_helpers
 from .router import Router
+from .sdnotify import Notifier
 
 log = logging.getLogger("tfcz")
 
@@ -42,6 +44,44 @@ def _load_config(args: argparse.Namespace) -> Config:
 # ---------------------------------------------------------------------- run
 
 
+def _populate_fake(backend: Any, cfg: Config) -> None:
+    """Build a believable fake graph: the config's devices grouped into
+    headsets, plus unassigned hardware so the setup wizard has choices."""
+    groups: dict[str, dict[str, str]] = {}
+    singles: list[tuple[str, str]] = []
+    for alias, spec in cfg.devices.items():
+        node = spec.node or (spec.match.get("device.serial") or spec.match.get("device.bus-path") or alias)
+        if alias.endswith(("_mic", "_out")):
+            base, kind = alias.rsplit("_", 1)
+            groups.setdefault(base, {})[kind] = node
+        else:
+            singles.append((alias, node))
+    # two IDENTICAL headsets (same model, no serial) in different USB ports,
+    # exactly the hard case: they can only be told apart by the port.
+    for i, (base, parts) in enumerate(groups.items()):
+        backend.add_physical(
+            "Logitech USB Headset", "usb", parts.get("mic"), parts.get("out"), form_factor="headset",
+            extra={"device.serial": "Logitech_Logitech_USB_Headset", "device.bus-path": f"pci-0000:00:14.0-usb-0:{i + 1}:1.0",
+                   "device.vendor.id": "046d", "device.product.id": "0a44"},
+        )
+    for alias, node in singles:
+        if "output" in node:
+            backend.add_physical(alias.replace("_", " ").title(), "usb", None, node)
+        else:
+            backend.add_physical("HWS", "pci", node, None, extra={"alsa.card_name": "HWS", "api.alsa.card": "1"})
+    # extra hardware that is not assigned yet: a headset WITH a serial number
+    backend.add_physical("Jabra Speak 510", "usb", "alsa_input.usb-Jabra_Speak_510_A1B2C3-00.mono-fallback",
+                         "alsa_output.usb-Jabra_Speak_510_A1B2C3-00.analog-stereo", form_factor="headset",
+                         extra={"device.serial": "Jabra_Speak_510_A1B2C3", "device.bus-path": "pci-0000:00:14.0-usb-0:4:1.0",
+                                "device.vendor.id": "0b0e", "device.product.id": "0412"})
+    for n in (2, 3, 4):
+        backend.add_physical("HWS", "pci", f"alsa_input.pci-0000_03_00.0.hws-{n}", None,
+                             extra={"alsa.card_name": "HWS", "api.alsa.card": str(n)})
+    backend.add_physical("Built-in Audio", "pci", "alsa_input.pci-0000_00_1f.3.analog-stereo",
+                         "alsa_output.pci-0000_00_1f.3.analog-stereo", form_factor="internal")
+    backend.add_physical("HDMI Monitor", "pci", None, "alsa_output.pci-0000_01_00.1.hdmi-stereo")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = _load_config(args)
     if args.no_state:
@@ -50,8 +90,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         from .pw import FakeBackend
 
         backend = FakeBackend()
-        for alias, node in cfg.devices.items():
-            backend.add_device(node, "Audio/Sink" if "output" in node or alias.endswith("_out") else "Audio/Source", alias)
+        _populate_fake(backend, cfg)
         log.warning("running against a FAKE in-memory PipeWire (demo/UI development only)")
     else:
         backend = PipeWireBackend(dry_run=args.dry_run)
@@ -65,16 +104,60 @@ def cmd_run(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, _signal)
     signal.signal(signal.SIGINT, _signal)
 
+    notifier = Notifier()
     log.info("tfcz-audio %s starting with %s", __version__, cfg.path)
+    if not args.fake and not args.dry_run:
+        kill_stale_helpers()  # leftovers from a crashed previous instance
     router.start()
-    server = serve(router, cfg.api.listen, cfg.api.port, cfg.api.token)
-    http_thread = threading.Thread(target=server.serve_forever, name="http", daemon=True)
-    http_thread.start()
+
+    if args.fake:
+        meters = FakeMeterManager(lambda: router.cfg, lambda: router.desired, router.resolved_nodes)
+    elif args.no_meters or args.dry_run:
+        meters = None
+    else:
+        meters = MeterManager(lambda: router.cfg, resolved_getter=router.resolved_nodes)
+
+    # The HTTP server is optional for the audio: if the port is taken we keep
+    # routing and retry binding from the supervisor loop.
+    server_box: dict[str, Any] = {"server": None}
+
+    def ensure_http() -> None:
+        if server_box["server"] is not None:
+            return
+        try:
+            server = serve(router, cfg.api.listen, cfg.api.port, cfg.api.token, meters)
+        except OSError as exc:
+            log.error("cannot bind API on %s:%d (%s); routing continues, retrying", cfg.api.listen, cfg.api.port, exc)
+            return
+        threading.Thread(target=server.serve_forever, name="http", daemon=True).start()
+        server_box["server"] = server
+
+    def heartbeat() -> None:
+        notifier.watchdog()
+        problems = router.problems()
+        notifier.status("OK: all routes linked" if not problems else f"{len(problems)} problem(s): {problems[0]['text']}")
+
+    ticks = [ensure_http, heartbeat]
+    if meters is not None:
+        ticks.insert(1, meters.reconcile)
+
+    ensure_http()
+    if meters is not None:
+        meters.reconcile()
+    notifier.ready("routes started")
+    interval = args.interval
+    wd = notifier.watchdog_interval
+    if wd is not None:
+        interval = min(interval, wd)
     try:
-        router.run_forever(stop, interval=args.interval)
+        router.run_forever(stop, interval=interval, on_tick=ticks)
     finally:
-        server.shutdown()
-        server.server_close()
+        notifier.stopping()
+        if server_box["server"] is not None:
+            server_box["server"].shutdown()
+            server_box["server"].server_close()
+        if meters is not None:
+            meters.stop()
         router.stop()
         log.info("stopped")
     return 0
@@ -260,6 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("run", help="run the daemon (foreground)")
     s.add_argument("--dry-run", action="store_true", help="log commands instead of executing them")
     s.add_argument("--fake", action="store_true", help="use an in-memory fake PipeWire (UI demo, no audio)")
+    s.add_argument("--no-meters", action="store_true", help="disable the pw-record level meters")
     s.add_argument("--no-state", action="store_true", help="do not persist or restore volumes")
     s.add_argument("--node-wait", type=float, default=5.0, help="seconds to wait for spawned nodes")
     s.add_argument("--interval", type=float, default=1.0, help="supervisor poll interval in seconds")

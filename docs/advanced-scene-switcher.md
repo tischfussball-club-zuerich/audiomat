@@ -21,7 +21,7 @@ Useful URLs (all `POST`, no body needed):
 | Purpose | URL |
 |---|---|
 | Apply preset | `/presets/<name>` |
-| Set one route | `/routes/hdmi_to_a/volume/0.3` |
+| Set one route | `/routes/game_to_a/volume/0.3` (route names as shown under Advanced, e.g. `hdmi_to_a` in the example config) |
 | Set in dB | `/routes/hdmi_to_a/volume_db/-12` |
 | Mute / unmute / toggle | `/routes/a_to_obs/mute`, `/unmute`, `/toggle` |
 | Set several fields | `/routes/hdmi_to_a?volume=0.3&mute=false` |

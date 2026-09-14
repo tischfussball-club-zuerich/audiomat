@@ -77,9 +77,10 @@ class ApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address: tuple[str, int], router: Router, token: str = ""):
+    def __init__(self, address: tuple[str, int], router: Router, token: str = "", meters: Any = None):
         self.router = router
         self.token = token
+        self.meters = meters
         super().__init__(address, Handler)
 
 
@@ -205,6 +206,32 @@ class Handler(BaseHTTPRequestHandler):
             return ok, router.status()
         if seg == ["devices"] and read:
             return ok, {"ok": True, "devices": router.devices()}
+        if seg == ["hardware"] and read:
+            return ok, {"ok": True, "devices": router.hardware()}
+        if len(seg) == 2 and seg[0] == "identity" and read:
+            return ok, {"ok": True, **router.identity_of_node(seg[1])}
+        if seg == ["setup"] and write:
+            return ok, edit.setup(router, {k: v for k, v in params.items() if k != "token"})
+        if seg == ["meters", "watch"] and write:
+            meters = self.server.meters
+            nodes = params.get("nodes") or []
+            if not isinstance(nodes, list):
+                raise BadRequest("nodes must be a list of {name, kind}")
+            watched = meters.watch(nodes) if meters is not None and hasattr(meters, "watch") else []
+            return ok, {"ok": True, "watching": watched, "available": meters is not None}
+        if len(seg) == 3 and seg[0] == "fix" and seg[1] == "device" and write:
+            return ok, router.fix_device(seg[2])
+        if seg == ["levels"] and read:
+            meters = self.server.meters
+            levels = meters.levels() if meters is not None else {}
+            obs = levels.get("obs", {})
+            return ok, {
+                "ok": True,
+                "available": meters is not None,
+                "levels": levels,
+                "obs_signal": bool(obs.get("signal")),
+                "obs_active": bool(obs.get("active")),
+            }
         if seg == ["reset"] and write:
             return ok, router.reset_to_config()
 
@@ -243,6 +270,8 @@ class Handler(BaseHTTPRequestHandler):
                 return ok, {"ok": True, **edit.public_config(router.cfg)}
             if seg[1:] == ["devices"] and method == "PUT":
                 return ok, edit.set_devices(router, body)
+            if seg[1:] == ["labels"] and method == "PUT":
+                return ok, edit.set_labels(router, body)
             if seg[1:] == ["save-defaults"] and write:
                 return ok, edit.save_current_as_defaults(router)
             if len(seg) == 3 and seg[1] == "routes":
@@ -261,7 +290,7 @@ class Handler(BaseHTTPRequestHandler):
         return HTTPStatus.METHOD_NOT_ALLOWED, {"ok": False, "error": "method not allowed"}
 
 
-def serve(router: Router, listen: str, port: int, token: str = "") -> ApiServer:
-    server = ApiServer((listen, port), router, token)
+def serve(router: Router, listen: str, port: int, token: str = "", meters: Any = None) -> ApiServer:
+    server = ApiServer((listen, port), router, token, meters)
     log.info("API listening on http://%s:%d/", *server.server_address[:2])
     return server

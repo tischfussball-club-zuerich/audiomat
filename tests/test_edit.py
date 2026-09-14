@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from tfcz_audio import edit
-from tfcz_audio.config import ConfigError, dumps, load, parse, save, to_dict
+from tfcz_audio.config import ConfigError, DeviceSpec, dumps, load, parse, save, to_dict
 from tfcz_audio.router import UnknownRoute
 
 from .helpers import MINIMAL, example_config, fake_backend, minimal_config
@@ -53,8 +53,7 @@ class ReloadTests(unittest.TestCase):
         router.set_route("hdmi_to_a", volume=0.4)
         before = dict(router.procs)
         new = minimal_config()
-        new.devices["b_out"] = "alsa_output.b2"
-        new.routes["a_to_b"].sink = "alsa_output.b2"
+        new.devices["b_out"] = DeviceSpec("b_out", node="alsa_output.b2")
         backend.add_device("alsa_output.b2", "Audio/Sink")
         router.reload(new)
         self.assertIsNot(router.procs["a_to_b"], before["a_to_b"], "changed route restarted")
@@ -103,25 +102,30 @@ class EditTests(unittest.TestCase):
     def reloaded(self):
         return load(self.path)
 
+    def device_values(self, **override):
+        values = {a: s.to_value() for a, s in self.router.cfg.devices.items()}
+        values.update(override)
+        return values
+
     def test_set_devices_writes_file_and_reloads(self):
         self.backend.add_device("alsa_input.hdmi2", "Audio/Source")
-        devices = dict(self.cfg.devices, hdmi="alsa_input.hdmi2")
-        status = edit.set_devices(self.router, devices)
-        self.assertEqual(self.reloaded().devices["hdmi"], "alsa_input.hdmi2")
-        self.assertEqual(self.router.cfg.routes["hdmi_to_a"].source, "alsa_input.hdmi2")
-        self.assertEqual(status["routes"]["hdmi_to_a"]["from"], "alsa_input.hdmi2")
+        status = edit.set_devices(self.router, self.device_values(hdmi="alsa_input.hdmi2"))
+        self.assertEqual(self.reloaded().devices["hdmi"].node, "alsa_input.hdmi2")
+        self.assertEqual(self.router.resolved["hdmi"].node, "alsa_input.hdmi2")
+        self.assertEqual(status["routes"]["hdmi_to_a"]["from_node"], "alsa_input.hdmi2")
 
     def test_set_devices_refuses_removing_used_alias(self):
-        devices = dict(self.cfg.devices)
+        devices = self.device_values()
         del devices["hdmi"]
         with self.assertRaises(ConfigError):
             edit.set_devices(self.router, devices)
         self.assertIn("hdmi", self.reloaded().devices)
 
     def test_set_devices_can_add_unused_alias_and_remove_it(self):
-        edit.set_devices(self.router, dict(self.cfg.devices, spare="alsa_output.x"))
+        original = self.device_values()
+        edit.set_devices(self.router, self.device_values(spare="alsa_output.x"))
         self.assertIn("spare", self.reloaded().devices)
-        edit.set_devices(self.router, dict(self.cfg.devices))
+        edit.set_devices(self.router, original)
         self.assertNotIn("spare", self.reloaded().devices)
 
     def test_upsert_and_delete_route(self):

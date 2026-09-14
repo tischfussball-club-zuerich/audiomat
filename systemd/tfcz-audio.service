@@ -8,14 +8,23 @@
 Description=TFCZ audio router (PipeWire intercom, HDMI feed, OBS virtual mic)
 After=pipewire.service wireplumber.service
 Wants=pipewire.service wireplumber.service
+# never give up restarting, no matter how often it fails
+StartLimitIntervalSec=0
 
 [Service]
-Type=simple
+Type=notify
 ExecStart=%h/.local/bin/tfcz-audio run
-Restart=on-failure
+# the daemon pings the watchdog every few seconds from its supervisor loop;
+# a hung process is killed and restarted by systemd
+WatchdogSec=30
+NotifyAccess=main
+Restart=always
 RestartSec=2
-# pw-loopback children are killed together with the daemon
+TimeoutStopSec=10
+# pw-loopback / pw-record children die together with the daemon
 KillMode=control-group
+# routing must keep working when the daemon is starved; it only talks to PipeWire
+Nice=-5
 
 [Install]
 WantedBy=default.target
