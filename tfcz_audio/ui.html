@@ -653,6 +653,10 @@
       $('#wiz-next').textContent = 'Next';
     } else {
       const A = hwById(w.a), B = hwById(w.b), G = w.game ? hwById(w.game) : null;
+      if (!A || !B || (w.game && !G)) {
+        toast('A chosen device was unplugged. Please pick again.', true);
+        w.step = !A ? 0 : !B ? 1 : 2; renderWizard(); return;
+      }
       const nA = w.nameA.trim() || 'Person A', nB = w.nameB.trim() || 'Person B', nG = w.nameGame.trim() || 'Game sound';
       const ident = g => !g ? '' : g.identity.strategy === 'port' ? `recognised by ${g.port} (identical headsets have no serial number). <b>Keep it in ${g.port}</b>; put a sticker on the plug and the port.` :
                           g.identity.strategy === 'serial' ? 'recognised by its serial number, any USB port works.' : 'recognised by its fixed name.';
@@ -688,6 +692,9 @@
     const w = state.wiz; if (!w) return;
     if (w.step < 3) { w.step++; renderWizard(); return; }
     const A = hwById(w.a), B = hwById(w.b), G = w.game ? hwById(w.game) : null;
+    if (!A || !B || !A.inputs.length || !A.outputs.length || !B.inputs.length || !B.outputs.length || (w.game && (!G || !G.inputs.length))) {
+      toast('A chosen device is no longer available. Please pick again.', true); w.step = 0; renderWizard(); return;
+    }
     const body = {
       headset_a: { mic: A.inputs[0].name, out: A.outputs[0].name, label: w.nameA.trim() || 'Person A' },
       headset_b: { mic: B.inputs[0].name, out: B.outputs[0].name, label: w.nameB.trim() || 'Person B' },
