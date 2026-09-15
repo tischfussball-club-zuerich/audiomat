@@ -241,16 +241,26 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         router.run_forever(stop, interval=args.interval, on_tick=ticks)
     finally:
-        notifier.stopping()
-        if server_box["server"] is not None:
-            server_box["server"].shutdown()
-            server_box["server"].server_close()
-        # all helpers in parallel, one shared deadline each: well inside TimeoutStopSec
-        if meters is not None:
-            meters.stop(deadline=3.0)
-        router.stop(deadline=5.0)
+        # every shutdown step is isolated: whatever fails, the helpers still get terminated
+        for step_name, step in (
+            ("notify", notifier.stopping),
+            ("http", lambda: _shutdown_http(server_box)),
+            ("meters", lambda: meters.stop(deadline=3.0) if meters is not None else None),
+            ("router", lambda: router.stop(deadline=5.0)),
+        ):
+            try:
+                step()
+            except Exception:  # noqa: BLE001
+                log.exception("shutdown step %s failed", step_name)
         log.info("stopped")
     return 0
+
+
+def _shutdown_http(server_box: dict[str, Any]) -> None:
+    server = server_box.get("server")
+    if server is not None:
+        server.shutdown()
+        server.server_close()
 
 
 # ------------------------------------------------------------------- doctor

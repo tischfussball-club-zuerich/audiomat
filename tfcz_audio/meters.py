@@ -403,7 +403,7 @@ class FakeMeterManager:
     def reconcile(self) -> None:
         pass
 
-    def stop(self) -> None:
+    def stop(self, deadline: float = 0.0) -> None:
         pass
 
     def _input_level(self, key: str, now: float) -> float:

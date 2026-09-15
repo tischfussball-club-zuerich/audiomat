@@ -232,3 +232,47 @@ class HostPinningTests(ApiTestCase):
     def test_negative_length(self):
         code, _ = self.call("POST", "/routes/a_to_b/mute", raw=b"", headers={"Content-Length": "-5"})
         self.assertIn(code, (400,))
+
+
+class ShutdownTests(unittest.TestCase):
+    def test_fake_meter_manager_stop_signature(self):
+        mm = meters.FakeMeterManager(lambda: minimal_config(), lambda: {})
+        mm.stop(deadline=3.0)
+        mm.stop()
+
+    def test_fake_daemon_starts_and_exits_cleanly(self):
+        """End-to-end: `run --fake` on a starter config, SIGTERM, exit code 0, no traceback."""
+        import os
+        import signal
+        import socket
+
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp) / "starter.toml"
+            cfg.write_text(f"[api]\nport = {port}\n")
+            env = dict(os.environ, XDG_RUNTIME_DIR=tmp, XDG_STATE_HOME=tmp)
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "tfcz_audio", "-c", str(cfg), "run", "--fake", "--node-wait", "0.2"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, cwd=str(Path(__file__).resolve().parents[1]),
+            )
+            try:
+                deadline = time.monotonic() + 15
+                ready = False
+                while time.monotonic() < deadline:
+                    with socket.socket() as probe:
+                        probe.settimeout(0.2)
+                        if probe.connect_ex(("127.0.0.1", port)) == 0:
+                            ready = True
+                            break
+                    time.sleep(0.1)
+                self.assertTrue(ready, "daemon did not open its port")
+                proc.send_signal(signal.SIGTERM)
+                out = proc.communicate(timeout=15)[0].decode()
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+            self.assertEqual(proc.returncode, 0, out[-2000:])
+            self.assertNotIn("Traceback", out)
+            self.assertIn("stopped", out)
