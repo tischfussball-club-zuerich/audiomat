@@ -360,3 +360,88 @@ class SecondReviewTests(unittest.TestCase):
         self.assertEqual(router.cfg.routes["a_to_b"].description, "Anna talks to Ben")
         self.assertEqual(router.cfg.routes["game_to_b"].description, "Switch for Ben")
         self.assertTrue(st["routes"]["game_to_b"]["connected"])
+
+
+class SystemEdgeTests(unittest.TestCase):
+    def test_tool_output_decodes_regardless_of_locale(self):
+        import os
+
+        from tfcz_audio.pw import PipeWireBackend
+
+        env = dict(os.environ, LC_ALL="C", LANG="C", PYTHONIOENCODING="utf-8")
+        b = PipeWireBackend()
+        # run through the same _run as pw-dump; a non-ASCII device description must not raise
+        out = b._run([sys.executable, "-c", "import sys; sys.stdout.buffer.write('Kopfh\\u00f6rer \\u00e9\\n'.encode('utf-8'))"])
+        self.assertIn("Kopfhörer", out)
+        out = b._run([sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\xff\\xfe bad bytes\\n')"])
+        self.assertIn("bad bytes", out)
+
+    def test_fallback_to_wrong_source_is_muted_for_safety(self):
+        router, backend = make_router()
+        router.start()
+        g = backend.graph()
+        # headset A unplugged, WirePlumber (ignoring dont-fallback) links the capture stream to the OBS mic: a loop
+        backend.remove_node("alsa_input.a")
+        backend.link("tfcz.obsmic", "tfcz.a_to_obs.in")
+        router.reconcile()
+        st = router.route_status("a_to_obs")
+        self.assertIn(st["misrouted_to"][0], ("tfcz.obsmic", "TFCZ OBS Mic"))
+        self.assertTrue(st["safety_muted"])
+        self.assertFalse(st["connected"])
+        self.assertTrue(backend.graph().by_name("tfcz.a_to_obs.out").mute, "stream muted at the sink side")
+        self.assertFalse(router.desired["a_to_obs"].mute, "the user's own setting is untouched")
+        codes = {p["code"]: p for p in router.problems()}
+        self.assertIn("misrouted", codes)
+        self.assertIn("feed the OBS microphone", codes["misrouted"]["effect"])
+        # device comes back and the wrong link goes away: safety mute lifted
+        g = backend.graph()
+        cap = g.by_name("tfcz.a_to_obs.in")
+        g.links = [l for l in g.links if l.input_node != cap.id]
+        backend.add_device("alsa_input.a", "Audio/Source")
+        router.reconcile()  # resolves again and respawns / relinks
+        router.reconcile()
+        self.assertFalse(router.route_status("a_to_obs")["safety_muted"])
+        self.assertFalse(backend.graph().by_name("tfcz.a_to_obs.out").mute)
+
+    def test_virtual_nodes_are_kept_at_unity(self):
+        router, backend = make_router()
+        router.start()
+        clock = [100.0]
+        router._clock = lambda: clock[0]
+        mic = backend.graph().by_name("tfcz.obsmic")
+        mic.mute, mic.volume = True, 0.2
+        router.reconcile()
+        mic = backend.graph().by_name("tfcz.obsmic")
+        self.assertEqual((mic.mute, mic.volume), (False, 1.0))
+        # not fought every tick
+        mic.mute = True
+        backend.calls.clear()
+        router.reconcile()
+        self.assertFalse(any(c[0] == "set_mute" and c[1] == mic.id for c in backend.calls))
+        clock[0] += 6
+        router.reconcile()
+        self.assertFalse(backend.graph().by_name("tfcz.obsmic").mute)
+
+    def test_config_rejects_routing_our_own_nodes(self):
+        import tomllib
+
+        from tfcz_audio.config import ConfigError, parse
+
+        from .helpers import MINIMAL
+
+        with self.assertRaises(ConfigError):
+            parse(tomllib.loads(MINIMAL + '[routes.loop]\nfrom = "tfcz.obsmic"\nto = "a_out"\n'))
+        with self.assertRaises(ConfigError):
+            parse(tomllib.loads(MINIMAL + '[routes.loop2]\nfrom = "a_mic"\nto = "tfcz.obsmix"\n'))
+
+    def test_graph_parse_failure_behaves_like_unreachable(self):
+        from tfcz_audio.pw import PwError
+
+        router, backend = make_router()
+        router.start()
+        backend.graph = lambda: (_ for _ in ()).throw(ValueError("garbage"))
+        router.reconcile()  # must not raise
+        self.assertIn("cannot read", router.last_error)
+        code, _ = (200, None)
+        st = router.status()  # empty graph -> problems, no exception
+        self.assertEqual(st["problems"][0]["code"], "no_audio_system")

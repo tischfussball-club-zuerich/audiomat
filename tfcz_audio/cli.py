@@ -272,7 +272,7 @@ def _tool(name: str) -> bool:
 
 def _run(cmd: list[str], timeout: float = 5) -> tuple[int, str]:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        r = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
         return r.returncode, (r.stdout + r.stderr).strip()
     except (OSError, subprocess.SubprocessError) as exc:
         return 127, str(exc)
@@ -332,6 +332,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             bad("cannot talk to the user systemd instance", "Run from a logged-in desktop session (or ssh with a running session and XDG_RUNTIME_DIR set).")
         else:
             bad("WirePlumber is not active", "systemctl --user enable --now wireplumber")
+    if _tool("pw-cli"):
+        rc, out = _run(["pw-cli", "--version"])
+        import re as _re
+
+        m = _re.search(r"(\d+)\.(\d+)\.(\d+)", out.replace("Compiled with libpipewire", ""))
+        if rc == 0 and m:
+            ver = tuple(int(x) for x in m.groups())
+            if ver >= (0, 3, 60):
+                ok(f"PipeWire {'.'.join(map(str, ver))}")
+            else:
+                bad(f"PipeWire {'.'.join(map(str, ver))} is too old (need 0.3.60+, Ubuntu 22.10+)",
+                    "upgrade to Ubuntu 24.04 or install PipeWire >= 0.3.60 (the pipewire-upstream PPA on 22.04)")
     if _tool("pw-record"):
         rc, out = _run(["pw-record", "--help"])
         if "--raw" in out:

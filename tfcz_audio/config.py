@@ -229,6 +229,8 @@ def parse(data: dict) -> Config:
             raise ConfigError(f"{where}: missing key {exc}") from None
         if src == OBS_MIC:
             raise ConfigError(f"{where}: '{OBS_MIC}' can only be used as 'to'")
+        if str(src).startswith("tfcz.") or (dst != OBS_MIC and str(dst).startswith("tfcz.")):
+            raise ConfigError(f"{where}: the router's own nodes (tfcz.*) cannot be routed; use '{OBS_MIC}' as the target for the OBS microphone")
         # static node names are known now; matcher-based devices resolve at runtime
         source = cfg.devices[src].node if src in cfg.devices else src
         sink = OBS_MIC if dst == OBS_MIC else (cfg.devices[dst].node if dst in cfg.devices else dst)

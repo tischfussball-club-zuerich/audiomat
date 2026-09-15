@@ -446,7 +446,9 @@ class PipeWireBackend:
     def _run(self, cmd: list[str], timeout: float = 5.0) -> str:
         log.debug("exec: %s", shlex.join(cmd))
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+            # explicit UTF-8: the systemd user environment may run with a C/POSIX locale, and device
+            # descriptions ("Kopfhörer") would otherwise raise UnicodeDecodeError
+            proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
         except FileNotFoundError as exc:
             raise PwError(f"{cmd[0]} not found; install pipewire-bin/wireplumber") from exc
         except subprocess.TimeoutExpired as exc:

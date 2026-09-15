@@ -292,11 +292,26 @@ so that it explains itself:
 | Helper writes a lot to stderr | drained in the background; a child can never block on a full pipe |
 | Level meter fails or PipeWire lacks `pw-record --raw` | meters disabled with a reason; routing unaffected |
 | Browser page from another site calls the API | rejected (cross-site guard); use a token for LAN access |
+| Stream linked to the wrong device (fallback, manual move) | muted for safety and reported; unmuted when the link is right again |
+| OBS mic or mix bus muted/turned down by another program | restored to unity within a second |
+| Non-ASCII device names under a C locale | tool output decoded as UTF-8 regardless of locale |
 
 ## Troubleshooting
 
 Start with `tfcz-audio doctor`. It checks everything the daemon needs and
 prints the fix for each failing line.
+
+* **Crackles or dropouts** when several USB devices are in use: each USB
+  device runs on its own clock and PipeWire resamples between them. Raise
+  `latency` in `[audio]` to `512/48000` (about 10 ms per hop) and restart
+  the service. Also check `pw-top` for xruns and that the helpers run with
+  realtime priority (`tfcz-audio doctor`).
+* **A connection shows "linked to the wrong device"**: the daemon muted it
+  on purpose. The audio system attached the stream to something other
+  than the chosen device, usually because the device was missing and the
+  stream fell back to a default, or because it was moved by hand in a
+  mixer app. Plug the device in; the mute lifts by itself when the link
+  is right again.
 
 
 * `tfcz-audio status` shows `linked no` for a route: one of its devices is

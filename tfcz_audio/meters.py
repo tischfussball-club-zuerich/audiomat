@@ -246,7 +246,7 @@ def pw_record_supports_raw() -> bool:
     global _RAW_SUPPORT  # noqa: PLW0603
     if _RAW_SUPPORT is None:
         try:
-            out = subprocess.run(["pw-record", "--help"], capture_output=True, text=True, timeout=5, check=False)
+            out = subprocess.run(["pw-record", "--help"], capture_output=True, encoding="utf-8", errors="replace", timeout=5, check=False)
             _RAW_SUPPORT = "--raw" in (out.stdout + out.stderr)
         except (OSError, subprocess.SubprocessError):
             _RAW_SUPPORT = False

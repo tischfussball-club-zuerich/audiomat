@@ -199,6 +199,8 @@ class Router:
         self._graph_fetch_lock = threading.Lock()  # concurrent cache misses share one pw-dump
         self._apply_retry_at: dict[str, float] = {}  # per-route backoff after a failed wpctl call
         self._drift_retry_at: dict[str, float] = {}  # per-route pause after correcting an external volume change
+        self._safety_muted: set[str] = set()  # routes muted because their stream is linked to the wrong device
+        self._virtual_fix_at = 0.0
         self.apply_budget = 4  # max wpctl-affected routes per supervisor pass; keeps a pass short
         self._state_timer: threading.Timer | None = None
         self._state_last_saved = 0.0
@@ -266,7 +268,12 @@ class Router:
             cached = self._graph_cache
             if cached is not None and self._clock() - cached[0] < self.graph_cache_ttl:
                 return cached[1]
-            graph = self.backend.graph()
+            try:
+                graph = self.backend.graph()
+            except PwError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a parse problem must behave like an unreachable PipeWire
+                raise PwError(f"cannot read the PipeWire graph: {exc}") from exc
             self._graph_cache = (self._clock(), graph)
             return graph
 
@@ -435,7 +442,68 @@ class Router:
                     self._spawn(name)
             if graph is None:
                 return
+            self._update_safety(graph)
+            self._enforce_virtual_levels(graph)
             self._apply_all(graph)
+
+    def _misrouted(self, name: str, graph: Graph) -> list[str]:
+        """Names of nodes a route's streams are linked to although they are not
+        the configured devices. Covers WirePlumber falling back to a default
+        device (dont-fallback ignored), remembered manual moves, and any
+        accidental loop through our own virtual nodes."""
+        route = self.cfg.routes[name]
+        src = self._ref_node(route.source_ref, graph)
+        dst = self._ref_node(route.sink_ref, graph)
+        cap = graph.by_name(route.in_node)
+        play = graph.by_name(route.out_node)
+        wrong: list[str] = []
+        if cap is not None:
+            for peer in graph.peers_of_input(cap.id) - ({src.id} if src else set()):
+                n = graph.nodes.get(peer)
+                if n is not None:
+                    wrong.append(n.description or n.name)
+        if play is not None:
+            for peer in graph.peers_of_output(play.id) - ({dst.id} if dst else set()):
+                n = graph.nodes.get(peer)
+                if n is not None:
+                    wrong.append(n.description or n.name)
+        return wrong
+
+    def _update_safety(self, graph: Graph) -> None:
+        """Mute (at the stream) any route whose audio would go to or come
+        from the wrong device. Wrong routing is worse than silence: it can
+        leak a microphone or build a feedback loop through the OBS mic."""
+        for name in self.cfg.routes:
+            wrong = self._misrouted(name, graph)
+            if wrong and name not in self._safety_muted:
+                log.error("route %s is linked to the wrong device(s) %s; muting it for safety", name, wrong)
+                self._safety_muted.add(name)
+                self._applied.pop(name, None)
+            elif not wrong and name in self._safety_muted:
+                log.info("route %s is linked correctly again; safety mute lifted", name)
+                self._safety_muted.discard(name)
+                self._applied.pop(name, None)
+        for stale in list(self._safety_muted - set(self.cfg.routes)):
+            self._safety_muted.discard(stale)
+
+    def _enforce_virtual_levels(self, graph: Graph) -> None:
+        """The OBS mic and its mix bus belong to the daemon: keep them at
+        unity and unmuted no matter what a mixer app or OBS did to them."""
+        now = self._clock()
+        if now < self._virtual_fix_at:
+            return
+        for node_name in (self.cfg.virtual.obs_mic_name, self.cfg.virtual.obs_mix_name):
+            node = graph.by_name(node_name)
+            if node is None:
+                continue
+            if node.mute or (node.volume is not None and abs(node.volume - 1.0) > 0.01):
+                log.warning("%s was changed externally (volume %.2f, mute %s); restoring unity", node_name, node.volume or 0, node.mute)
+                try:
+                    self.backend.set_volume(node.id, 1.0)
+                    self.backend.set_mute(node.id, False)
+                except PwError as exc:
+                    log.error("cannot restore %s: %s", node_name, exc)
+                self._virtual_fix_at = now + 5.0  # never fight another program every tick
 
     def _apply_all(self, graph: Graph) -> None:
         """Apply desired volumes with a per-pass budget of wpctl work, and give
@@ -477,10 +545,11 @@ class Router:
         want = self.desired.get(name)
         if want is None:
             return True
-        if self._applied.get(name) != (node.id, want.volume, want.mute):
+        mute = want.mute or name in self._safety_muted
+        if self._applied.get(name) != (node.id, want.volume, mute):
             return False
         # applied by us, but does the node still agree? (WirePlumber may restore an old value after us)
-        drift = (node.volume is not None and abs(node.volume - want.volume) > 0.005) or (node.mute is not None and bool(node.mute) != want.mute)
+        drift = (node.volume is not None and abs(node.volume - want.volume) > 0.005) or (node.mute is not None and bool(node.mute) != mute)
         if drift and self._clock() >= self._drift_retry_at.get(name, 0.0):
             log.info("route %s: volume drifted (node %.3f/%s, want %.3f/%s); re-applying", name, node.volume or 0, node.mute, want.volume, want.mute)
             self._applied.pop(name, None)
@@ -561,7 +630,8 @@ class Router:
         if node is None:
             return False
         want = self.desired[name]
-        key = (node.id, want.volume, want.mute)
+        mute = want.mute or name in self._safety_muted
+        key = (node.id, want.volume, mute)
         if self._applied.get(name) == key:
             return True
         now = self._clock()
@@ -569,7 +639,7 @@ class Router:
             return False  # wpctl failed recently; do not stall the supervisor on it again
         try:
             self.backend.set_volume(node.id, want.volume)
-            self.backend.set_mute(node.id, want.mute)
+            self.backend.set_mute(node.id, mute)
             cap = graph.by_name(route.in_node)
             if cap is not None and ((cap.volume is not None and abs(cap.volume - 1.0) > 0.01) or cap.mute):
                 # the capture side must always be neutral; only the playback side carries the route gain
@@ -688,17 +758,7 @@ class Router:
         # linked to the RIGHT devices? (a manual move in pavucontrol is remembered by WirePlumber)
         in_ok = bool(cap and src and graph.linked(src.id, cap.id))
         out_ok = bool(play and dst and graph.linked(play.id, dst.id))
-        wrong: list[str] = []
-        if cap and src and not in_ok:
-            for peer in graph.peers_of_input(cap.id):
-                n = graph.nodes.get(peer)
-                if n is not None:
-                    wrong.append(n.description or n.name)
-        if play and dst and not out_ok:
-            for peer in graph.peers_of_output(play.id):
-                n = graph.nodes.get(peer)
-                if n is not None:
-                    wrong.append(n.description or n.name)
+        wrong = self._misrouted(name, graph)
         return {
             "name": name,
             "description": route.description,
@@ -714,8 +774,9 @@ class Router:
             "running": proc is not None and proc.poll() is None,
             "source_present": src is not None,
             "sink_present": dst is not None,
-            "connected": in_ok and out_ok,
+            "connected": in_ok and out_ok and not wrong,
             "misrouted_to": wrong,
+            "safety_muted": name in self._safety_muted,
         }
 
     def device_status(self, alias: str, graph: Graph) -> dict[str, Any]:
@@ -884,11 +945,11 @@ class Router:
         # streams linked to the wrong device (remembered manual moves)
         for name, route in cfg.routes.items():
             st = self.route_status(name, graph)
-            if st["misrouted_to"] and st["source_present"] and st["sink_present"]:
+            if st["misrouted_to"]:
                 add("error", "misrouted", name, f"Connection {self._route_label(route)} is linked to the wrong device",
-                    "Something moved this stream by hand (e.g. in a mixer app) and the audio system remembered it: " + ", ".join(st["misrouted_to"]),
-                    "The sound goes somewhere else than the arrow shows.",
-                    "Restart the service to re-create the connection (systemctl --user restart tfcz-audio), then avoid moving 'TFCZ' streams in mixer apps.")
+                    "The audio system connected this stream to " + ", ".join(st["misrouted_to"]) + " instead of the chosen device (a remembered manual move in a mixer app, or a fallback because the device was missing).",
+                    "The router muted this connection for safety: wrong routing could leak a microphone or feed the OBS microphone back into itself.",
+                    "Plug the right device in / avoid moving 'TFCZ' streams in mixer apps; then restart the service if it does not recover by itself: systemctl --user restart tfcz-audio")
 
         # routes to OBS
         obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref == OBS_MIC]
