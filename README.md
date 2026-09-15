@@ -51,14 +51,15 @@ systemd **user** unit and writes an example config to
 `./uninstall.sh` removes everything except config and state, `./uninstall.sh
 --purge` removes those too. `pip install .` works too if you prefer a venv.
 
-Then:
+The installer checks the environment first (desktop session, PipeWire as
+the sound server, WirePlumber, tools), starts the service, verifies it is
+running and ends with `tfcz-audio doctor`, which lists every remaining
+problem with the command that fixes it. Then open the web UI and run the
+setup wizard; nothing needs to be edited by hand.
 
 ```
-tfcz-audio devices          # list PipeWire sources/sinks and their node names
-$EDITOR ~/.config/tfcz-audio/config.toml    # fill in [devices]
-tfcz-audio check            # validates config, flags missing devices
-systemctl --user start tfcz-audio
-tfcz-audio status
+tfcz-audio doctor           # tools, session, PipeWire, config, devices, service, linger
+tfcz-audio status           # routes and devices as the daemon sees them
 journalctl --user -u tfcz-audio -f
 ```
 
@@ -259,7 +260,34 @@ With `token` set, send `Authorization: Bearer <token>` or `?token=<token>`.
 * WirePlumber relinks the streams itself when a USB device disappears and
   comes back; the daemon only steps in when a device resolves differently.
 
+## What happens when things go wrong
+
+The daemon is written so that no single failure takes the audio down, and
+so that it explains itself:
+
+| Situation | Behaviour |
+|---|---|
+| A `pw-loopback` dies | restarted within 1 s, with backoff up to 30 s if it keeps dying; the UI shows "restarting" |
+| PipeWire restarts | all helpers die and are respawned; the OBS mic reappears; logged once per outage |
+| Headset unplugged | route stays silent (no fallback to another mic), UI shows "not connected"; replug relinks within 1 s |
+| Identical headset moved to another port | reported as missing with the port it was found in and the port it belongs to |
+| Device grabbed by another program (OBS ALSA source) | reported as "taken over by OBS" with the fix; arrows show "blocked" |
+| Device muted in the system | reported with a **Fix** button that unmutes it |
+| Config file unreadable | previous `.bak` is used; if none, daemon starts with no routes and the UI says so; Setup rewrites the file |
+| Config not writable / disk full | the UI shows the exact error and the path |
+| API port already in use | routing runs anyway; bind retried every second |
+| Second daemon started by hand | refuses with a hint (single-instance lock) |
+| Daemon hangs | systemd watchdog (30 s) kills and restarts it; `Restart=always`, never gives up |
+| Daemon crashes | systemd restarts it after 2 s; leftover helpers are cleaned up at start |
+| Helper writes a lot to stderr | drained in the background; a child can never block on a full pipe |
+| Level meter fails or PipeWire lacks `pw-record --raw` | meters disabled with a reason; routing unaffected |
+| Browser page from another site calls the API | rejected (cross-site guard); use a token for LAN access |
+
 ## Troubleshooting
+
+Start with `tfcz-audio doctor`. It checks everything the daemon needs and
+prints the fix for each failing line.
+
 
 * `tfcz-audio status` shows `linked no` for a route: one of its devices is
   missing (`[MISSING]` in the device list) or the node name changed. Compare
