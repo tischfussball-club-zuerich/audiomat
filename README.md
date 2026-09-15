@@ -63,12 +63,11 @@ tfcz-audio status           # routes and devices as the daemon sees them
 journalctl --user -u tfcz-audio -f
 ```
 
-If the machine should route audio without anyone logging in, enable
-lingering so the user session (and PipeWire) starts at boot:
-
-```
-loginctl enable-linger $USER
-```
+The installer also makes the router **start at boot without a login**: it
+enables lingering for your user (so your user services, including
+PipeWire and this daemon, start with the system) and adds you to the
+`audio` group (so PipeWire may open the sound devices before anyone logs
+in; takes effect after the next boot). Pass `--no-boot` to skip that.
 
 ## Web UI
 

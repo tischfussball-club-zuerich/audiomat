@@ -336,9 +336,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ok("service enabled at login")
         else:
             warn("service is not enabled", "./install.sh   (or: systemctl --user enable --now tfcz-audio)")
+        user = os.environ.get("USER", "")
         rc, out = _run(["loginctl", "show-user", str(os.getuid()), "-p", "Linger"])
-        if "Linger=no" in out:
-            warn("no lingering: audio routing starts only after login", f"loginctl enable-linger {os.environ.get('USER', '')}  (if the PC should route audio without login)")
+        if "Linger=yes" in out:
+            ok("starts at boot without login (lingering enabled)")
+        elif rc == 0:
+            bad("does not start at boot: lingering is off, so the router only runs after someone logs in",
+                f"loginctl enable-linger {user}   (sudo if refused). ./install.sh does this too.")
+        try:
+            import grp
+
+            groups = [g.gr_name for g in grp.getgrall() if user in g.gr_mem]
+            if "audio" in groups or grp.getgrgid(os.getgid()).gr_name == "audio":
+                ok("member of the 'audio' group (devices usable before login)")
+            else:
+                warn("not in the 'audio' group: before the first login PipeWire may not be allowed to open the sound devices",
+                     f"sudo usermod -aG audio {user}   (then reboot)")
+        except (KeyError, OSError):
+            pass
 
     print()
     if problems:

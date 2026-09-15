@@ -2,7 +2,8 @@
 # Install tfcz-audio for the current desktop user (do NOT run as root:
 # PipeWire is a per-user session service, and so is this daemon).
 #
-#   ./install.sh            install/upgrade, enable the user service
+#   ./install.sh            install/upgrade, enable the user service, start at boot
+#   ./install.sh --no-boot  same, but do not enable start-at-boot (lingering)
 #   ./uninstall.sh [--purge]   (or ./install.sh --uninstall)
 set -euo pipefail
 
@@ -17,6 +18,9 @@ if [[ $EUID -eq 0 ]]; then
   echo "run this as your normal desktop user, not root" >&2
   exit 1
 fi
+
+ENABLE_BOOT=1
+[[ ${1:-} == "--no-boot" ]] && ENABLE_BOOT=0
 
 if [[ ${1:-} == "--uninstall" ]]; then
   systemctl --user disable --now tfcz-audio 2>/dev/null || true
@@ -93,6 +97,35 @@ else
   journalctl --user -u tfcz-audio -n 20 --no-pager >&2 || true
   echo "    fix the problem above, then: systemctl --user restart tfcz-audio" >&2
 fi
+# --- start at boot, without anyone logging in ------------------------------
+# PipeWire and this daemon are per-user services. "Lingering" makes the user's
+# service manager (and with it PipeWire, WirePlumber and tfcz-audio) start at
+# boot instead of at login. Sound devices are then only reachable through the
+# 'audio' group, because the usual per-login device permissions are missing.
+if (( ENABLE_BOOT )); then
+  echo
+  echo "==> start at boot"
+  if loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q "Linger=yes"; then
+    echo "    lingering already enabled for $USER"
+  elif loginctl enable-linger "$USER" 2>/dev/null; then
+    echo "    lingering enabled: the audio router starts at boot, no login needed"
+  elif command -v sudo >/dev/null 2>&1 && sudo loginctl enable-linger "$USER"; then
+    echo "    lingering enabled (via sudo)"
+  else
+    echo "    could not enable lingering. Run:  sudo loginctl enable-linger $USER" >&2
+  fi
+  if id -nG "$USER" | tr ' ' '\n' | grep -qx audio; then
+    echo "    $USER is in the 'audio' group (devices usable before login)"
+  else
+    echo "    adding $USER to the 'audio' group so PipeWire can open the devices before anyone logs in"
+    if command -v sudo >/dev/null 2>&1 && sudo usermod -aG audio "$USER"; then
+      echo "    done. Takes effect at the next boot (or after logging out and in)."
+    else
+      echo "    could not add the group. Run:  sudo usermod -aG audio $USER" >&2
+    fi
+  fi
+fi
+
 PORT=$(grep -E '^port *= *[0-9]+' "$CONFIG" | head -1 | grep -oE '[0-9]+' || echo 8787)
 echo
 echo "==> checking the installation"
@@ -110,5 +143,4 @@ MSG
 fi
 cat <<MSG
     useful:  tfcz-audio doctor | tfcz-audio status | journalctl --user -u tfcz-audio -f
-    If the PC should route audio without anyone logged in:  loginctl enable-linger $USER
 MSG
