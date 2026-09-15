@@ -92,7 +92,7 @@ esac
 first_install=0
 if [[ ! -f $CONFIG ]]; then
   first_install=1
-  "$BIN" init-config "$CONFIG"
+  "$BIN" init-config "$CONFIG"   # starter config; the web UI wizard adds devices and connections
 fi
 systemctl --user enable tfcz-audio >/dev/null
 systemctl --user restart tfcz-audio
@@ -121,15 +121,23 @@ if (( ENABLE_BOOT )); then
   else
     echo "    could not enable lingering. Run:  sudo loginctl enable-linger $ME" >&2
   fi
-  if id -nG "$ME" | tr ' ' '\n' | grep -qx audio; then
-    echo "    $ME is in the 'audio' group (devices usable before login)"
+  # 'audio': device access before the first login. 'pipewire': realtime
+  # priority for the audio helpers (from /etc/security/limits.d/25-pw-rlimits.conf)
+  # when no desktop session grants it via rtkit.
+  missing_groups=()
+  for g in audio pipewire; do
+    getent group "$g" >/dev/null 2>&1 || continue
+    id -nG "$ME" | tr ' ' '\n' | grep -qx "$g" || missing_groups+=("$g")
+  done
+  if (( ${#missing_groups[@]} == 0 )); then
+    echo "    $ME is in the 'audio' and 'pipewire' groups (devices and realtime priority before login)"
   else
-    echo "    adding $ME to the 'audio' group so PipeWire can open the devices before anyone logs in"
+    echo "    adding $ME to the group(s): ${missing_groups[*]}  (device access / realtime priority before anyone logs in)"
     echo "    (sudo password may be asked)"
-    if command -v sudo >/dev/null 2>&1 && sudo usermod -aG audio "$ME"; then
+    if command -v sudo >/dev/null 2>&1 && sudo usermod -aG "$(IFS=,; echo "${missing_groups[*]}")" "$ME"; then
       echo "    done. Takes effect at the next boot (or after logging out and in)."
     else
-      echo "    could not add the group. Run:  sudo usermod -aG audio $ME" >&2
+      echo "    could not add the group(s). Run:  sudo usermod -aG $(IFS=,; echo "${missing_groups[*]}") $ME" >&2
     fi
   fi
 fi

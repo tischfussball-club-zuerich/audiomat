@@ -440,20 +440,28 @@ class Router:
         freshly spawned streams a short settle window so they are never audible
         at the wrong volume for a whole tick."""
         budget = self.apply_budget
-        pending = [n for n in self.cfg.routes if not self._is_applied(n, graph)]
-        fresh = [n for n in pending if self._clock() - self._spawned_at.get(n, -1e9) < 2.0]
+        now = self._clock()
+        # streams spawned in the last 2 s whose volume has not been applied yet:
+        # their nodes may not have appeared; poll briefly so they are never
+        # linked at the wrong volume for a whole tick
+        fresh = [
+            n for n in self.cfg.routes
+            if now - self._spawned_at.get(n, -1e9) < 2.0 and n in self.procs and self._applied.get(n) is None
+        ]
         if fresh:
-            # poll (bounded) for the new nodes, then apply right away
-            deadline = self._clock() + 0.6
-            while self._clock() < deadline:
+            deadline = now + 0.6
+            while True:
+                if all(graph.by_name(self.cfg.routes[n].out_node) is not None for n in fresh):
+                    break
+                if self._clock() >= deadline:
+                    break
+                self._sleep(0.1)
                 self._invalidate_graph()
                 try:
                     graph = self._fetch_graph()
                 except PwError:
                     return
-                if all(graph.by_name(self.cfg.routes[n].out_node) is not None for n in fresh):
-                    break
-                self._sleep(0.1)
+        pending = [n for n in self.cfg.routes if not self._is_applied(n, graph)]
         for name in fresh + [n for n in pending if n not in fresh]:
             if budget <= 0:
                 return

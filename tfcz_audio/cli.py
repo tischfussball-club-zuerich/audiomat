@@ -146,10 +146,8 @@ def cmd_run(args: argparse.Namespace) -> int:
             print(f"config error: {exc}", file=sys.stderr)
             raise SystemExit(2) from None
         path = default_config_paths()[0]
-        log.warning("%s -- writing the example config to %s so the service can start; use the web UI Setup to connect devices", exc, path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with resources.files("tfcz_audio").joinpath("example_config.toml").open("rb") as src, open(path, "wb") as dst:
-            shutil.copyfileobj(src, dst)
+        log.warning("%s -- writing a starter config to %s; open the web UI and run Setup to connect the devices", exc, path)
+        _write_starter(path)
     cfg, config_error = load_or_recover(path)
     if config_error:
         log.error("CONFIG PROBLEM: %s", config_error)
@@ -204,13 +202,14 @@ def cmd_run(args: argparse.Namespace) -> int:
         try:
             server = serve(router, cfg.api.listen, cfg.api.port, cfg.api.token, meters)
         except OSError as exc:
-            log.error("cannot bind API on %s:%d (%s); routing continues, retrying", cfg.api.listen, cfg.api.port, exc)
+            hint = " (use an IPv4 address such as 0.0.0.0 for LAN access)" if ":" in cfg.api.listen else ""
+            log.error("cannot bind API on %s:%d (%s)%s; routing continues, retrying", cfg.api.listen, cfg.api.port, exc, hint)
             return
         threading.Thread(target=server.serve_forever, name="http", daemon=True).start()
         server_box["server"] = server
 
     last_tick = {"t": time.monotonic()}
-    stall_limit = 20.0  # a supervisor pass longer than this counts as hung
+    stall_limit = 25.0  # a supervisor pass longer than this counts as hung (worst legit pass is ~15 s)
 
     def heartbeat() -> None:
         last_tick["t"] = time.monotonic()
@@ -388,6 +387,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             else:
                 warn("not in the 'audio' group: before the first login PipeWire may not be allowed to open the sound devices",
                      f"sudo usermod -aG audio {user}   (then reboot)")
+            if "pipewire" in groups:
+                ok("member of the 'pipewire' group (realtime priority for the audio helpers without a login)")
+            else:
+                warn("not in the 'pipewire' group: without a desktop login the audio helpers run without realtime priority (risk of crackles under load)",
+                     f"sudo usermod -aG pipewire {user}   (then reboot)")
         except (KeyError, OSError):
             pass
 
@@ -445,15 +449,43 @@ def cmd_devices(args: argparse.Namespace) -> int:
     return 0
 
 
+STARTER = """# tfcz-audio configuration. Devices and connections are added by the
+# setup wizard in the web UI (http://127.0.0.1:8787/), nothing to edit here.
+# For a fully annotated example: tfcz-audio init-config --example PATH
+
+[api]
+listen = "127.0.0.1"
+port = 8787
+token = ""
+
+[audio]
+latency = "256/48000"
+channels = 2
+
+[virtual]
+obs_mic_name = "tfcz.obsmic"
+obs_mic_description = "TFCZ OBS Mic"
+"""
+
+
+def _write_starter(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(STARTER)
+
+
 def cmd_init_config(args: argparse.Namespace) -> int:
     target = Path(args.path).expanduser() if args.path else default_config_paths()[0]
     if target.exists() and not args.force:
         print(f"{target} already exists (use --force to overwrite)", file=sys.stderr)
         return 1
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with resources.files("tfcz_audio").joinpath("example_config.toml").open("rb") as src, open(target, "wb") as dst:
-        shutil.copyfileobj(src, dst)
-    print(f"wrote {target}\nnext: run 'tfcz-audio devices' and fill in the [devices] node names")
+    if args.example:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with resources.files("tfcz_audio").joinpath("example_config.toml").open("rb") as src, open(target, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+        print(f"wrote example config to {target}\nnext: run 'tfcz-audio devices' and fill in the [devices] node names, or use the web UI Setup")
+    else:
+        _write_starter(target)
+        print(f"wrote {target}\nnext: start the service and open http://127.0.0.1:8787/ -- the setup wizard connects your devices")
     return 0
 
 
@@ -597,9 +629,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-p", "--props", dest="verbose_props", action="store_true", help="show ALSA card properties")
     s.set_defaults(func=cmd_devices)
 
-    s = sub.add_parser("init-config", help="write the example config")
+    s = sub.add_parser("init-config", help="write a starter config (the web UI wizard fills it)")
     s.add_argument("path", nargs="?")
     s.add_argument("--force", action="store_true")
+    s.add_argument("--example", action="store_true", help="write the fully annotated example instead")
     s.set_defaults(func=cmd_init_config)
 
     for name, func, helptext in (

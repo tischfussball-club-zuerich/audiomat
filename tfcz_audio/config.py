@@ -217,8 +217,6 @@ def parse(data: dict) -> Config:
         cfg.labels[str(key)] = value
 
     routes = _section(data, "routes")
-    if not routes:
-        raise ConfigError("no [routes.*] defined")
     for name, spec in routes.items():
         where = f"[routes.{name}]"
         if not ROUTE_NAME_RE.match(name):

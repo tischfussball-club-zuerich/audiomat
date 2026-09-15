@@ -46,9 +46,10 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             minimal_config('[routes."Bad Name"]\nfrom = "a_mic"\nto = "a_out"\n')
 
-    def test_requires_routes(self):
-        with self.assertRaises(ConfigError):
-            parse(tomllib.loads('[devices]\na = "x"\n'))
+    def test_routes_are_optional(self):
+        cfg = parse(tomllib.loads('[devices]\na = "x"\n'))
+        self.assertEqual(cfg.routes, {})
+        self.assertEqual(cfg.devices["a"].node, "x")
 
     def test_state_file_can_be_disabled(self):
         cfg = parse(tomllib.loads("state_file = false\n" + MINIMAL))

@@ -143,7 +143,12 @@ class CsrfTests(ApiTestCase):
         self.assertEqual(code, 200, "reads are harmless")
 
     def test_body_too_large(self):
-        code, body = self.call("PUT", "/routes/a_to_b", raw=b"x" * 1_000_001, headers={"Content-Type": "application/json"})
+        # the server answers 400 without reading the body; depending on timing the
+        # client sees the 400 or a reset while still sending -- both are rejections
+        try:
+            code, body = self.call("PUT", "/routes/a_to_b", raw=b"x" * 1_000_001, headers={"Content-Type": "application/json"})
+        except (urllib.error.URLError, ConnectionError):
+            return
         self.assertEqual(code, 400)
 
     def test_levels_reports_unavailable_meters(self):

@@ -51,6 +51,40 @@ class SettleAndBudgetTests(unittest.TestCase):
         self.assertIn(("spawn", "tfcz.hdmi_to_a"), backend.calls)
         self.assertIn(("set_mute", node.id, True), backend.calls)
 
+    def test_late_appearing_stream_is_settled_and_applied(self):
+        router, backend = make_router()
+        router.start()
+        router.set_route("hdmi_to_a", volume=0.3, mute=True)
+        # make spawns create their nodes only later, like real pw-loopback does
+        real_spawn = backend.spawn_loopback
+        deferred = []
+
+        def slow_spawn(spec):
+            proc = FakeProcess(on_exit=backend._on_exit)
+            deferred.append((proc, spec))
+            backend.processes[proc.pid] = (proc, spec)
+            return proc
+
+        def sleep_creates_nodes(_seconds):
+            while deferred:
+                proc, spec = deferred.pop()
+                backend.processes.pop(proc.pid, None)
+                real = real_spawn(spec)  # creates the nodes and links
+                backend.processes[proc.pid] = (proc, spec)
+                backend.processes.pop(real.pid, None)
+
+        backend.spawn_loopback = slow_spawn
+        router._sleep = sleep_creates_nodes
+        router.procs["hdmi_to_a"].crash()
+        clock = [100.0]
+        router._clock = lambda: clock[0]
+        router.reconcile()
+        clock[0] += 60
+        router.reconcile()  # respawn -> node absent -> settle poll -> node appears -> applied
+        node = backend.graph().by_name("tfcz.hdmi_to_a.out")
+        self.assertIsNotNone(node)
+        self.assertEqual((node.volume, node.mute), (0.3, True))
+
     def test_capture_stream_forced_neutral(self):
         router, backend = make_router()
         router.start()

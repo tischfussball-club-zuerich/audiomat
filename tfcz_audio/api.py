@@ -153,8 +153,8 @@ class Handler(BaseHTTPRequestHandler):
         """Pin the Host header so DNS rebinding cannot impersonate this daemon.
         When listening on all interfaces (LAN mode) the token is the guard."""
         listen = (self.server.listen_host or "").lower()
-        if listen in ("0.0.0.0", "::", ""):
-            return True
+        if listen not in ("127.0.0.1", "localhost", "::1"):
+            return True  # LAN listener: clients may use any hostname; the token is the guard
         host = (self.headers.get("Host") or "").lower()
         if host.startswith("["):
             hostname = host.split("]")[0].lstrip("[")

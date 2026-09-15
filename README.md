@@ -66,8 +66,14 @@ journalctl --user -u tfcz-audio -f
 The installer also makes the router **start at boot without a login**: it
 enables lingering for your user (so your user services, including
 PipeWire and this daemon, start with the system) and adds you to the
-`audio` group (so PipeWire may open the sound devices before anyone logs
-in; takes effect after the next boot). Pass `--no-boot` to skip that.
+`audio` group (device access before anyone logs in) and the `pipewire`
+group (realtime priority for the audio helpers when no desktop session
+grants it). Group changes take effect after the next boot. Pass
+`--no-boot` to skip that.
+
+A first install writes a minimal starter config with no devices; the web
+UI opens the setup wizard automatically. `tfcz-audio init-config
+--example PATH` writes the fully annotated example instead.
 
 ## Web UI
 

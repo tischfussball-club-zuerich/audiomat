@@ -439,21 +439,21 @@ class PipeWireBackend:
     def graph(self) -> Graph:
         if self.dry_run:
             return Graph()
-        return parse_dump(self._run(["pw-dump"]))
+        return parse_dump(self._run(["pw-dump"], timeout=4.0))
 
     def set_volume(self, node_id: int, volume: float) -> None:
         cmd = ["wpctl", "set-volume", str(node_id), f"{volume:.4f}"]
         if self.dry_run:
             log.info("dry-run: %s", shlex.join(cmd))
             return
-        self._run(cmd, timeout=3.0)
+        self._run(cmd, timeout=2.0)
 
     def set_mute(self, node_id: int, mute: bool) -> None:
         cmd = ["wpctl", "set-mute", str(node_id), "1" if mute else "0"]
         if self.dry_run:
             log.info("dry-run: %s", shlex.join(cmd))
             return
-        self._run(cmd, timeout=3.0)
+        self._run(cmd, timeout=2.0)
 
     def spawn_loopback(self, spec: LoopbackSpec) -> Process:
         cmd = spec.command()
