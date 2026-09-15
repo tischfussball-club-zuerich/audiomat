@@ -16,6 +16,7 @@ from .config import MAX_VOLUME, OBS_MIC, Config, DeviceSpec, RouteConfig, human
 from .pw import (
     Backend,
     Graph,
+    node_identity_props,
     LoopbackSpec,
     Node,
     Process,
@@ -95,8 +96,15 @@ def resolve_devices(cfg: Config, graph: Graph) -> dict[str, Resolved]:
             out[alias] = Resolved(spec.node, graph.by_name(spec.node) is not None)
             continue
         nodes = resolve_match(spec.match, graph)
+        candidates = len(nodes)
+        if len(nodes) > 1 and spec.prefer:
+            # several devices look the same (identical model, shared "serial"):
+            # fall back on what was recorded at setup time, e.g. the USB port
+            preferred = [n for n in nodes if all(node_identity_props(n, graph).get(k) == v for k, v in spec.prefer.items())]
+            if len(preferred) == 1:
+                nodes = preferred
         if nodes:
-            out[alias] = Resolved(nodes[0].name, True, ambiguous=len(nodes) > 1, candidates=len(nodes))
+            out[alias] = Resolved(nodes[0].name, True, ambiguous=len(nodes) > 1, candidates=candidates)
         else:
             out[alias] = Resolved(None, False)
     return out
@@ -196,11 +204,13 @@ class Router:
         self.last_error: str = ""
         self.config_error: str = ""  # set by the CLI when the config could not be loaded cleanly
         self._graph_cache: tuple[float, Graph] | None = None
+        self._graph_error: tuple[float, str] | None = None  # negative cache: do not re-run pw-dump for every caller while it fails
         self._graph_fetch_lock = threading.Lock()  # concurrent cache misses share one pw-dump
         self._apply_retry_at: dict[str, float] = {}  # per-route backoff after a failed wpctl call
         self._drift_retry_at: dict[str, float] = {}  # per-route pause after correcting an external volume change
         self._safety_muted: set[str] = set()  # routes muted because their stream is linked to the wrong device
         self._virtual_fix_at = 0.0
+        self._drift_count: dict[str, int] = {}  # consecutive external volume changes per route ("virtual" for the OBS nodes)
         self._unlinked_since: dict[str, float] = {}
         self._relink_at: dict[str, float] = {}
         self._relink_attempts: dict[str, int] = {}
@@ -209,6 +219,7 @@ class Router:
         self.max_pass_seconds = 6.0  # wall clock for volume/level work in one pass
         self.max_restarts_per_pass = 3  # recycles (terminate+spawn) per pass; terminating is the slow part
         self.relink_after = 8.0  # seconds a present-but-unlinked route may wait before its loopback is recycled
+        self.drift_alert_after = 5  # consecutive external volume changes before we report a conflict
         self.apply_budget = 4  # max wpctl-affected routes per supervisor pass; keeps a pass short
         self._state_timer: threading.Timer | None = None
         self._state_last_saved = 0.0
@@ -270,18 +281,26 @@ class Router:
         """Graph with a short cache so UI polling does not multiply pw-dump calls."""
         now = self._clock()
         cached = self._graph_cache
-        if cached is not None and now - cached[0] < self.graph_cache_ttl:
+        if cached is not None and 0.0 <= now - cached[0] < self.graph_cache_ttl:
             return cached[1]
+        failed = self._graph_error
+        if failed is not None and 0.0 <= now - failed[0] < 1.0:
+            # a failing pw-dump costs a full timeout; do not let every HTTP poll
+            # start its own while PipeWire is wedged
+            raise PwError(failed[1])
         with self._graph_fetch_lock:
             cached = self._graph_cache
-            if cached is not None and self._clock() - cached[0] < self.graph_cache_ttl:
+            if cached is not None and 0.0 <= self._clock() - cached[0] < self.graph_cache_ttl:
                 return cached[1]
             try:
                 graph = self.backend.graph()
-            except PwError:
+            except PwError as exc:
+                self._graph_error = (self._clock(), str(exc))
                 raise
             except Exception as exc:  # noqa: BLE001 - a parse problem must behave like an unreachable PipeWire
-                raise PwError(f"cannot read the PipeWire graph: {exc}") from exc
+                self._graph_error = (self._clock(), f"cannot read the PipeWire graph: {exc}")
+                raise PwError(self._graph_error[1]) from exc
+            self._graph_error = None
             self._graph_cache = (self._clock(), graph)
             return graph
 
@@ -439,7 +458,8 @@ class Router:
                     continue
                 if proc is not None:
                     err = str(getattr(proc, "stderr_tail", "") or "")[-300:]
-                    log.warning("loopback %s exited with %s %s", name, proc.poll(), err)
+                    # while PipeWire is unreachable every helper exits immediately; say it once
+                    (log.debug if graph is None else log.warning)("loopback %s exited with %s %s", name, proc.poll(), err)
                     self.procs.pop(name, None)
                     self._spec_used.pop(name, None)
                     if graph is None:
@@ -450,13 +470,16 @@ class Router:
                         self._retry_at[name] = now + min(30.0, 2.0 ** self._failures[name])
                     self.last_error = f"{name} stopped unexpectedly, restarting"
                     continue
+                if graph is None:
+                    continue  # no point starting helpers that cannot connect; _pipewire_recovered() retries at once
                 if self._retry_at.get(name, 0.0) <= now:
                     self._spawn(name)  # plain spawn is cheap (fork+exec); only recycling is budgeted
             if graph is None:
                 return
             pass_end = now + self.max_pass_seconds
-            self._update_safety(graph)
+            self._update_safety(graph, now)
             self._relink_watchdog(graph, now, restarts)
+            self._fix_default_sink(graph)
             self._enforce_virtual_levels(graph, pass_end)
             self._apply_all(graph, pass_end)
 
@@ -493,6 +516,14 @@ class Router:
             self._unlinked_since[name] = now
             restarts -= 1
             log.warning("route %s has not been linked to its devices for %.0fs; recycling its loopback (attempt %d/3)", name, now - since, attempts + 1)
+            if self._misrouted(name, graph):
+                # a target the session manager remembered for this stream beats our
+                # own property, and would survive the recycle; forget it first
+                for node in (cap, play):
+                    try:
+                        self.backend.clear_stream_target(node.id)
+                    except Exception:  # noqa: BLE001 - best effort, never fatal
+                        log.debug("could not clear the remembered target of %s", node.name)
             self._terminate(name)
             self._spawn(name)
 
@@ -519,11 +550,13 @@ class Router:
                     wrong.append(n.description or n.name)
         return wrong
 
-    def _update_safety(self, graph: Graph) -> None:
+    def _update_safety(self, graph: Graph, now: float = 0.0) -> None:
         """Mute (at the stream) any route whose audio would go to or come
         from the wrong device. Wrong routing is worse than silence: it can
         leak a microphone or build a feedback loop through the OBS mic."""
         for name in self.cfg.routes:
+            if self._spawned_at.get(name, -1e9) >= now:
+                continue  # just (re)started in this pass: the graph we hold predates it
             wrong = self._misrouted(name, graph)
             if wrong and name not in self._safety_muted:
                 log.error("route %s is linked to the wrong device(s) %s; muting it for safety", name, wrong)
@@ -535,6 +568,27 @@ class Router:
                 self._applied.pop(name, None)
         for stale in list(self._safety_muted - set(self.cfg.routes)):
             self._safety_muted.discard(stale)
+
+    def _fix_default_sink(self, graph: Graph) -> None:
+        """If the computer's default output became our mix bus (typically because
+        no headset was connected at the time), put it back on a real device.
+        Otherwise every notification sound and any app monitoring the default
+        output lands on the stream, and OBS monitoring can loop."""
+        if not graph.defaults.get("default.audio.sink", "").startswith("tfcz."):
+            return
+        real = [
+            n for n in graph.nodes.values()
+            if n.media_class == "Audio/Sink" and not n.name.startswith("tfcz.")
+        ]
+        if not real:
+            return  # nothing better exists yet; the problem list explains it
+        target = sorted(real, key=lambda n: n.name)[0]
+        log.warning("default output was %s; setting it back to %s", graph.defaults["default.audio.sink"], target.name)
+        try:
+            self.backend.set_default(target.id)
+            graph.defaults["default.audio.sink"] = target.name
+        except PwError as exc:
+            log.error("cannot change the default output: %s", exc)
 
     def _enforce_virtual_levels(self, graph: Graph, pass_end: float = float("inf")) -> None:
         """The OBS mic and its mix bus belong to the daemon: keep them at
@@ -549,13 +603,19 @@ class Router:
             if node is None:
                 continue
             if node.mute or (node.volume is not None and abs(node.volume - 1.0) > 0.01):
-                log.warning("%s was changed externally (volume %.2f, mute %s); restoring unity", node_name, node.volume or 0, node.mute)
+                count = self._drift_count.get("virtual", 0) + 1
+                self._drift_count["virtual"] = count
+                (log.warning if count == 1 else log.debug)(
+                    "%s was changed externally (volume %.2f, mute %s); restoring unity (%d)", node_name, node.volume or 0, node.mute, count
+                )
                 try:
                     self.backend.set_volume(node.id, 1.0)
                     self.backend.set_mute(node.id, False)
                 except PwError as exc:
                     log.error("cannot restore %s: %s", node_name, exc)
-                self._virtual_fix_at = now + 5.0  # never fight another program every tick
+                self._virtual_fix_at = now + (30.0 if count >= self.drift_alert_after else 5.0)
+            elif node_name == self.cfg.virtual.obs_mic_name:
+                self._drift_count.pop("virtual", None)
 
     def _apply_all(self, graph: Graph, pass_end: float = float("inf")) -> None:
         """Apply desired volumes with a per-pass budget of wpctl work, and give
@@ -584,10 +644,13 @@ class Router:
                 except PwError:
                     return
         pending = [n for n in self.cfg.routes if not self._is_applied(n, graph)]
+        # a fresh stream must never stay at the default level for a whole tick,
+        # so the budget always covers all of them
+        budget = max(budget, len(fresh))
         for name in fresh + [n for n in pending if n not in fresh]:
             if budget <= 0 or self._clock() >= pass_end:
                 return
-            if self._apply(name, graph):
+            if self._apply(name, graph, pass_end):
                 budget -= 1
 
     def _is_applied(self, name: str, graph: Graph) -> bool:
@@ -600,14 +663,29 @@ class Router:
         mute = want.mute or name in self._safety_muted
         if self._applied.get(name) != (node.id, want.volume, mute):
             return False
-        # applied by us, but does the node still agree? (WirePlumber may restore an old value after us)
+        # applied by us, but do the nodes still agree? (a mixer app or a restored
+        # value can change either side; the capture side must stay neutral)
+        cap = graph.by_name(self.cfg.routes[name].in_node)
         drift = (node.volume is not None and abs(node.volume - want.volume) > 0.005) or (node.mute is not None and bool(node.mute) != mute)
-        if drift and self._clock() >= self._drift_retry_at.get(name, 0.0):
-            log.info("route %s: volume drifted (node %.3f/%s, want %.3f/%s); re-applying", name, node.volume or 0, node.mute, want.volume, want.mute)
-            self._applied.pop(name, None)
-            self._drift_retry_at[name] = self._clock() + 5.0  # never fight another program every tick
-            return False
-        return True
+        if cap is not None and ((cap.volume is not None and abs(cap.volume - 1.0) > 0.01) or cap.mute):
+            drift = True
+        if not drift:
+            self._drift_count.pop(name, None)
+            return True
+        if self._clock() < self._drift_retry_at.get(name, 0.0):
+            return True  # correction is pending, do not spin on it
+        count = self._drift_count.get(name, 0) + 1
+        self._drift_count[name] = count
+        # Something outside keeps changing this stream. Correct it, but back off
+        # and report it instead of trading writes with the other program forever.
+        (log.info if count == 1 else log.debug)(
+            "route %s: volume drifted (node %.3f/%s, want %.3f/%s); re-applying (%d)", name, node.volume or 0, node.mute, want.volume, want.mute, count
+        )
+        if count == self.drift_alert_after:
+            log.warning("route %s: something keeps changing this volume; correcting less often now", name)
+        self._applied.pop(name, None)
+        self._drift_retry_at[name] = self._clock() + (30.0 if count >= self.drift_alert_after else 5.0)
+        return False
 
     def run_forever(
         self,
@@ -679,8 +757,11 @@ class Router:
 
     # ---------------------------------------------------------------- control
 
-    def _apply(self, name: str, graph: Graph) -> bool:
+    def _apply(self, name: str, graph: Graph, pass_end: float = float("inf")) -> bool:
         route = self.cfg.routes[name]
+        proc = self.procs.get(name)
+        if proc is None or proc.poll() is not None:
+            return False  # its nodes are about to disappear; ids could be reused by something else
         node = graph.by_name(route.out_node)
         if node is None:
             return False
@@ -694,9 +775,11 @@ class Router:
             return False  # wpctl failed recently; do not stall the supervisor on it again
         try:
             self.backend.set_volume(node.id, want.volume)
+            if self._clock() >= pass_end:
+                return False  # budget spent mid-route; the next pass finishes it
             self.backend.set_mute(node.id, mute)
             cap = graph.by_name(route.in_node)
-            if cap is not None and ((cap.volume is not None and abs(cap.volume - 1.0) > 0.01) or cap.mute):
+            if cap is not None and self._clock() < pass_end and ((cap.volume is not None and abs(cap.volume - 1.0) > 0.01) or cap.mute):
                 # the capture side must always be neutral; only the playback side carries the route gain
                 self.backend.set_volume(cap.id, 1.0)
                 self.backend.set_mute(cap.id, False)
@@ -918,6 +1001,12 @@ class Router:
                 "Log out and in again, or run: systemctl --user restart pipewire wireplumber")
             return out
 
+        if graph.nodes and not graph.has_default_metadata and "WirePlumber" not in graph.clients:
+            add("error", "no_session_manager", "daemon", "The audio session manager is not running",
+                "PipeWire answers, but WirePlumber (which connects streams to devices) is not there. Nothing gets linked, no matter what this router does.",
+                "All connections stay silent.",
+                "systemctl --user restart wireplumber   (then: systemctl --user restart tfcz-audio). If it keeps dying, check 'journalctl --user -u wireplumber' for an error in a configuration rule.")
+
         if graph.by_name(cfg.virtual.obs_mic_name) is None:
             add("error", "obs_mic_missing", "obs_mic", "The OBS microphone does not exist right now",
                 "The virtual microphone is created by this router and it is currently being recreated.",
@@ -1000,6 +1089,19 @@ class Router:
         # streams linked to the wrong device (remembered manual moves)
         for name, route in cfg.routes.items():
             st = self.route_status(name, graph)
+            unlinked_for = self._clock() - self._unlinked_since.get(name, self._clock())
+            if (
+                self._relink_attempts.get(name, 0) < 3
+                and not st["misrouted_to"]
+                and st["source_present"]
+                and st["sink_present"]
+                and not st["connected"]
+                and unlinked_for >= self.relink_after
+            ):
+                add("warning", "still_connecting", name, f"Connection {self._route_label(route)} is not connected yet",
+                    "Both devices are there, but the audio system has not linked the router's stream to them.",
+                    "This connection is silent in the meantime.",
+                    "The router retries by itself. If it stays like this, restart the audio system: systemctl --user restart wireplumber tfcz-audio")
             if self._relink_attempts.get(name, 0) >= 3 and not st["misrouted_to"] and st["source_present"] and st["sink_present"]:
                 add("error", "not_linking", name, f"Connection {self._route_label(route)} cannot be established",
                     "Both devices are present, but the audio system does not connect the router's stream to them, even after several retries.",
@@ -1009,7 +1111,19 @@ class Router:
                 add("error", "misrouted", name, f"Connection {self._route_label(route)} is linked to the wrong device",
                     "The audio system connected this stream to " + ", ".join(st["misrouted_to"]) + " instead of the chosen device (a remembered manual move in a mixer app, or a fallback because the device was missing).",
                     "The router muted this connection for safety: wrong routing could leak a microphone or feed the OBS microphone back into itself.",
-                    "Plug the right device in / avoid moving 'TFCZ' streams in mixer apps; then restart the service if it does not recover by itself: systemctl --user restart tfcz-audio")
+                    "The router forgets the remembered target and rebuilds the connection by itself. If it stays wrong: systemctl --user restart wireplumber, and as a last resort remove the remembered choices with 'rm ~/.local/state/wireplumber/restore-stream' followed by 'systemctl --user restart wireplumber tfcz-audio'.")
+
+        if self._drift_count.get("virtual", 0) >= self.drift_alert_after:
+            add("warning", "virtual_fought", "obs_mic", "Another program keeps changing the OBS microphone level",
+                "Something outside this router repeatedly mutes or turns down the OBS microphone (often a mixer app, or OBS itself with 'Monitor and Output' set on a source).",
+                "The level jumps around; the router puts it back, but you may hear the difference on the stream.",
+                "Find the program that does it (usually a sound settings or mixer window) and leave the 'TFCZ OBS Mic' alone; the router keeps it at 100 %.")
+        for name in sorted(n for n, c in self._drift_count.items() if n != "virtual" and c >= self.drift_alert_after):
+            if name in cfg.routes:
+                add("warning", "volume_fought", name, f"Another program keeps changing the volume of {self._route_label(cfg.routes[name])}",
+                    "Something outside this router repeatedly changes this connection's volume.",
+                    "The volume you set here does not stay put.",
+                    "Close mixer apps that touch 'TFCZ' streams. The router keeps correcting it, but less often now.")
 
         # routes to OBS
         obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref == OBS_MIC]

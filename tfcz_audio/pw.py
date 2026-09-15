@@ -17,6 +17,7 @@ import shlex
 import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -102,6 +103,8 @@ class Graph:
     links: list[Link] = field(default_factory=list)
     devices: dict[int, Device] = field(default_factory=dict)
     defaults: dict[str, str] = field(default_factory=dict)  # default.audio.sink / default.audio.source -> node.name
+    clients: set[str] = field(default_factory=set)  # application.name of connected clients
+    has_default_metadata: bool = False
 
     def linked(self, output_node: int, input_node: int) -> bool:
         return any(l.output_node == output_node and l.input_node == input_node for l in self.links)
@@ -343,8 +346,13 @@ def parse_dump(text: str) -> Graph:
                     api=str(props.get("device.api", "")),
                     props=props,
                 )
+            elif otype == "PipeWire:Interface:Client":
+                name = str((info.get("props") or {}).get("application.name", ""))
+                if name:
+                    graph.clients.add(name)
             elif otype == "PipeWire:Interface:Metadata":
                 if str((obj.get("props") or info.get("props") or {}).get("metadata.name", "")) == "default":
+                    graph.has_default_metadata = True
                     for entry in obj.get("metadata") or []:
                         if not isinstance(entry, dict):
                             continue
@@ -477,6 +485,30 @@ class PipeWireBackend:
             log.info("dry-run: %s", shlex.join(cmd))
             return
         self._run(cmd, timeout=2.0)
+
+    def set_default(self, node_id: int) -> None:
+        cmd = ["wpctl", "set-default", str(node_id)]
+        if self.dry_run:
+            log.info("dry-run: %s", shlex.join(cmd))
+            return
+        self._run(cmd, timeout=2.0)
+
+    def clear_stream_target(self, node_id: int) -> None:
+        """Forget a target the session manager remembered for this stream.
+
+        WirePlumber's restore-stream writes the target a user chose in a mixer
+        app into the 'default' metadata for that node; the metadata wins over
+        our target.object property, so a single accidental drag would otherwise
+        stick forever, across restarts."""
+        for key in ("target.object", "target.node"):
+            cmd = ["pw-metadata", "-d", str(node_id), key]
+            if self.dry_run:
+                log.info("dry-run: %s", shlex.join(cmd))
+                continue
+            try:
+                self._run(cmd, timeout=2.0)
+            except PwError as exc:
+                log.debug("clearing %s on node %d: %s", key, node_id, exc)
 
     def spawn_loopback(self, spec: LoopbackSpec) -> Process:
         cmd = spec.command()
@@ -655,6 +687,15 @@ class FakeBackend:
         self.calls.append(("set_mute", node_id, mute))
         self._graph.nodes[node_id].mute = mute
 
+    def set_default(self, node_id: int) -> None:
+        self.calls.append(("set_default", node_id))
+        node = self._graph.nodes[node_id]
+        key = "default.audio.sink" if node.media_class.startswith("Audio/Sink") else "default.audio.source"
+        self._graph.defaults[key] = node.name
+
+    def clear_stream_target(self, node_id: int) -> None:
+        self.calls.append(("clear_target", node_id))
+
     def spawn_loopback(self, spec: LoopbackSpec) -> FakeProcess:
         self.calls.append(("spawn", spec.name))
         proc = FakeProcess(on_exit=self._on_exit)
@@ -689,14 +730,24 @@ OWNED_MARKERS = ("tfcz.",)
 
 
 def is_owned_helper(argv: list[str]) -> bool:
-    """True for a pw-loopback/pw-record process that this daemon spawned
-    (identified by our node-name prefix in its arguments)."""
+    """True only for a pw-loopback/pw-record process that this daemon spawned.
+
+    Matches the exact shapes we produce (-n tfcz.… / node.name = "tfcz.…") so a
+    user's own experiment that merely mentions one of our nodes, for example
+    `pw-record --target tfcz.obsmic test.wav`, is never killed."""
     if not argv:
         return False
     exe = os.path.basename(argv[0])
     if exe not in OWNED_EXECUTABLES:
         return False
-    return any(marker in arg for arg in argv[1:] for marker in OWNED_MARKERS)
+    for i, arg in enumerate(argv[1:], start=1):
+        if arg == "-n" and i + 1 < len(argv) and argv[i + 1].startswith("tfcz."):
+            return True
+        if arg.startswith("-n") and arg[2:].startswith("tfcz."):
+            return True
+        if 'node.name = "tfcz.' in arg:
+            return True
+    return False
 
 
 def find_stale_helpers(proc_root: str = "/proc", exclude_pids: set[int] | None = None) -> list[int]:
@@ -726,7 +777,7 @@ def find_stale_helpers(proc_root: str = "/proc", exclude_pids: set[int] | None =
     return found
 
 
-def kill_stale_helpers(exclude_pids: set[int] | None = None) -> list[int]:
+def kill_stale_helpers(exclude_pids: set[int] | None = None, settle: float = 0.5) -> list[int]:
     killed: list[int] = []
     for pid in find_stale_helpers(exclude_pids=exclude_pids):
         try:
@@ -736,6 +787,13 @@ def kill_stale_helpers(exclude_pids: set[int] | None = None) -> list[int]:
             continue
     if killed:
         log.warning("terminated %d leftover helper process(es) from a previous run: %s", len(killed), killed)
+        # give the old nodes time to disappear so our own wait-for-node does not
+        # latch onto a dying one
+        deadline = time.monotonic() + settle
+        while time.monotonic() < deadline:
+            if not any(os.path.exists(f"/proc/{pid}") for pid in killed):
+                break
+            time.sleep(0.05)
     return killed
 
 
@@ -822,6 +880,9 @@ def identity_for(node: Node, graph: Graph) -> dict[str, Any]:
     if serial_ok and (twins or bus in ("usb", "bluetooth", "bluez5")):
         return {
             "match": {"device.serial": serial, "kind": kind},
+            # if another device of the same model shows up later and shares the
+            # serial, this is what tells them apart
+            "prefer": {"device.bus-path": bus_path} if bus_path else {},
             "strategy": "serial",
             "port": port_label(bus_path),
             "text": "Recognised by its serial number. Any USB port works."
@@ -839,8 +900,28 @@ def identity_for(node: Node, graph: Graph) -> dict[str, Any]:
             "port": port_label(bus_path),
             "text": f"{why} Keep it in {port_label(bus_path)}; label the plug and the port.",
         }
+    own_device = None
+    own_id = node.props.get("device.id")
+    if own_id is not None:
+        try:
+            own_device = graph.devices.get(int(own_id))
+        except (TypeError, ValueError):
+            own_device = None
+    if is_hdmi_capture(node, own_device):
+        return {
+            "match": {},
+            "prefer": {},
+            "strategy": "name",
+            "port": port_label(bus_path),
+            "text": (
+                "Recognised by its name in the audio system. Capture cards are numbered in the order the "
+                "system finds them, so the inputs can swap after a reboot unless the card order is pinned "
+                "(see docs/hdmi-capture.md)."
+            ),
+        }
     return {
         "match": {},
+        "prefer": {},
         "strategy": "name",
         "port": port_label(bus_path),
         "text": "Recognised by its fixed name in the audio system (built-in or PCI hardware).",

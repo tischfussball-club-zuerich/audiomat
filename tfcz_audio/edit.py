@@ -139,7 +139,10 @@ def _auto_identity(router: Router, node_name: str) -> Any:
     more stable than the node name, otherwise the node name itself."""
     ident = router.identity_of_node(node_name)
     if ident["strategy"] in ("serial", "port") and ident["match"]:
-        return {"match": ident["match"]}
+        value: dict[str, Any] = {"match": ident["match"]}
+        if ident.get("prefer"):
+            value["prefer"] = ident["prefer"]
+        return value
     return node_name
 
 

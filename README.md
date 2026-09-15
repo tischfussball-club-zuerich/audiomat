@@ -154,7 +154,10 @@ game_sound = "PlayStation"
 [example](config/tfcz-audio.example.toml).
 
 * `[devices]` maps aliases to devices: a PipeWire `node.name`, or
-  `{ match = { ... } }` with hardware properties (see above).
+  `{ match = { ... } }` with hardware properties (see above). An optional
+  `prefer = { ... }` picks between several devices that all match, which
+  is how two identical headsets that report the same serial keep their
+  identity.
 * `[labels]` gives aliases or alias prefixes human names for the UI.
 * `[routes.<name>]` has `from`, `to`, `volume` (default 1.0), `mute`,
   `description`. `to = "obs_mic"` targets the virtual OBS microphone.
@@ -183,6 +186,13 @@ see and tweak every route in `pavucontrol`, `qpwgraph` or `wpctl status` too.
    heard twice.
 3. Video from the VC42 stays a normal "Video Capture Device (V4L2)"
    source with its audio disabled; the audio comes through PipeWire.
+4. In OBS's Advanced Audio Properties, set the **monitoring device to a
+   specific headset, never "Default"**. The default output can briefly
+   become the router's own mix bus (for example while both headsets are
+   unplugged), and monitoring into it would feed the OBS microphone back
+   into itself. The daemon puts the default output back on a real device
+   when that happens, but choosing a fixed monitoring device avoids the
+   race entirely.
 
 ## CLI
 
@@ -296,7 +306,11 @@ so that it explains itself:
 | Level meter fails or PipeWire lacks `pw-record --raw` | meters disabled with a reason; routing unaffected |
 | Browser page from another site calls the API | rejected (cross-site guard); use a token for LAN access |
 | Stream linked to the wrong device (fallback, manual move) | muted for safety and reported; unmuted when the link is right again |
-| Devices present but the session manager does not connect the stream | the loopback is recycled after 8 s, up to 3 times, then reported |
+| Devices present but the session manager does not connect the stream | reported after 8 s; the loopback is recycled up to 3 times, then reported as an error |
+| A manual move in a mixer app is remembered by WirePlumber | the remembered target is cleared and the connection rebuilt |
+| WirePlumber not running at all | reported as "session manager is not running" with the restart command |
+| Default output becomes the router's mix bus | put back on a real device automatically |
+| Another program keeps changing a volume | corrected, then reported as a conflict instead of fighting every second |
 | OBS mic or mix bus muted/turned down by another program | restored to unity within a second |
 | Non-ASCII device names under a C locale | tool output decoded as UTF-8 regardless of locale |
 

@@ -50,6 +50,9 @@ class DeviceSpec:
     alias: str
     node: str = ""
     match: dict[str, str] = field(default_factory=dict)
+    # not required to match; used only to pick between several candidates that
+    # all match (two identical headsets sharing a model-wide "serial")
+    prefer: dict[str, str] = field(default_factory=dict)
 
     @property
     def is_static(self) -> bool:
@@ -58,7 +61,10 @@ class DeviceSpec:
     def to_value(self) -> Any:
         if self.is_static:
             return self.node
-        return {"match": dict(self.match)}
+        value: dict[str, Any] = {"match": dict(self.match)}
+        if self.prefer:
+            value["prefer"] = dict(self.prefer)
+        return value
 
 
 @dataclass
@@ -189,6 +195,14 @@ def parse(data: dict) -> Config:
         obs_mic_name=str(virt.get("obs_mic_name", cfg.virtual.obs_mic_name)),
         obs_mic_description=str(virt.get("obs_mic_description", cfg.virtual.obs_mic_description)),
     )
+    # The 'tfcz.' prefix is how the daemon tells its own nodes from hardware
+    # everywhere (cleanup of leftovers, device lists, loop detection).
+    for key in ("obs_mic_name", "obs_mix_name"):
+        value = getattr(cfg.virtual, key)
+        if not value.startswith("tfcz."):
+            raise ConfigError(f"[virtual] {key} must start with 'tfcz.' (got {value!r})")
+    if cfg.virtual.obs_mic_name == cfg.virtual.obs_mix_name:
+        raise ConfigError("[virtual] obs_mic_name and obs_mix_name must differ")
 
     devices = _section(data, "devices")
     for key, value in devices.items():
@@ -206,7 +220,16 @@ def parse(data: dict) -> Config:
                 match[mk] = str(mv)
             if match.get("kind") not in (None, "input", "output"):
                 raise ConfigError(f"[devices] {key}: match.kind must be 'input' or 'output'")
-            cfg.devices[key] = DeviceSpec(alias=key, match=match)
+            prefer = {}
+            raw_prefer = value.get("prefer")
+            if raw_prefer is not None:
+                if not isinstance(raw_prefer, dict):
+                    raise ConfigError(f"[devices] {key}: prefer must be a table")
+                for pk, pv in raw_prefer.items():
+                    if not isinstance(pk, str) or not isinstance(pv, (str, int, float, bool)):
+                        raise ConfigError(f"[devices] {key}: prefer values must be strings")
+                    prefer[pk] = str(pv)
+            cfg.devices[key] = DeviceSpec(alias=key, match=match, prefer=prefer)
         else:
             raise ConfigError(f"[devices] {key}: expected a node.name string or {{ match = {{ ... }} }}")
 
@@ -269,6 +292,8 @@ def parse(data: dict) -> Config:
                 entry = PresetEntry(volume=_volume(value, f"{where}.{rname}"))
             preset[rname] = entry
         cfg.presets[pname] = preset
+
+    _reject_cycles(cfg)
 
     state = data.get("state_file")
     if state is None:
@@ -438,6 +463,31 @@ def load_or_recover(path: Path) -> tuple[Config, str]:
     cfg.path = path
     cfg.state_file = default_state_file()
     return cfg, f"{primary}. Started with NO connections. Fix the file or run Setup in the web UI, which rewrites it."
+
+
+def _reject_cycles(cfg: Config) -> None:
+    """Refuse a configuration in which audio could flow in a circle.
+
+    Only reachable with `capture_sink` routes (capturing what a sink plays and
+    sending it on), but such a loop feeds itself and gets louder every pass."""
+    edges: dict[str, set[str]] = {}
+    for route in cfg.routes.values():
+        edges.setdefault(route.source_ref, set()).add(route.sink_ref)
+    state: dict[str, int] = {}
+
+    def walk(node: str, path: list[str]) -> None:
+        state[node] = 1
+        for nxt in sorted(edges.get(node, ())):
+            if state.get(nxt) == 1:
+                cycle = " -> ".join([*path, node, nxt])
+                raise ConfigError(f"[routes] these connections would feed each other in a circle: {cycle}")
+            if state.get(nxt) is None:
+                walk(nxt, [*path, node])
+        state[node] = 2
+
+    for start in sorted(edges):
+        if state.get(start) is None:
+            walk(start, [])
 
 
 def human(cfg: Config | None, alias: str) -> str:

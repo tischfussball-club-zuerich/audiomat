@@ -99,7 +99,53 @@ web UI shows everything working. If the headsets are "not connected"
 although plugged in, the user is not in the `audio` group yet (needs the
 reboot after `install.sh`), or lingering is off: `tfcz-audio doctor`.
 
-## 9. Advanced Scene Switcher
+## 9. Things that can only be seen on real hardware
+
+These are the assumptions the daemon makes about PipeWire that no test on
+a development machine can confirm. Each one takes a minute.
+
+**Who drives the audio clock.** With everything linked, run `pw-top`. The
+rows that are not indented are the drivers. If an `hws` (capture card) row
+is a driver, switch the HDMI source off and check that the headsets still
+hear each other and that the ERR column stays at zero. If it stalls, apply
+the priority rule in [hdmi-capture.md](hdmi-capture.md).
+
+**Realtime priority after a boot without login.**
+
+```
+ps -eLo pid,rtprio,comm | grep -E 'pw-loopback|pipewire'
+```
+
+The data threads must show a number, not `-`. If they do not, run
+`tfcz-audio doctor` and apply what it says about the `pipewire` group and
+`pam_limits`; otherwise expect crackles while OBS encodes.
+
+**A remembered manual move.** Open pavucontrol, move "TFCZ a_to_b
+(playback)" to another output once, then watch the web UI: it must report
+"linked to the wrong device", mute that connection, and repair itself
+within about ten seconds. Confirm with `pw-link -l | grep tfcz.a_to_b`.
+
+**Card order across reboots.** With both headsets plugged in, reboot three
+times and compare `tfcz-audio devices -p` for the capture inputs each
+time. If the numbering moves, pin it as described in
+[hdmi-capture.md](hdmi-capture.md).
+
+**No session manager.** `systemctl --user stop wireplumber` with the UI
+open: it must show "The audio session manager is not running" with the
+restart command. Then `systemctl --user start wireplumber` and everything
+must come back by itself.
+
+**Suspend and resume.** `systemctl suspend`, wake the machine: all arrows
+green within a few seconds, and no "wrong device" lines in
+`journalctl --user -u tfcz-audio`.
+
+**No fallback to the wrong microphone.** Unplug headset A and check that
+`pw-link -l` shows no link into `tfcz.a_to_b.in`. A link from another
+microphone would mean this PipeWire ignores `node.dont-fallback`; the
+daemon then mutes the route and says so, which is the safety net for
+exactly this case.
+
+## 10. Advanced Scene Switcher
 
 Create a macro with an HTTP action `POST http://127.0.0.1:8787/presets/game_off`.
 Good: the game arrows switch off in the UI when the macro fires.

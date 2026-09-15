@@ -37,6 +37,58 @@ Caveats:
   as of September 2026 its audio part is a separate, unmerged series.
   Once it lands, the DKMS module becomes unnecessary.
 
+## Pin the card order (important with four identical inputs)
+
+The four HDMI inputs are four ALSA cards created by the same driver. Card
+numbers are handed out in the order the kernel finds the hardware, and USB
+devices are probed asynchronously, so the numbers **can differ between
+boots**. Everything that identifies an input by name or number then points
+at a different HDMI port after a reboot: the game sound would come from
+the wrong console and nothing in the UI could notice, because the device
+exists and is linked.
+
+Pin the order once, in `/etc/modprobe.d/tfcz-audio-slots.conf`:
+
+```
+# built-in audio first, then the four capture inputs, in a fixed order
+options snd slots=snd_hda_intel,hws,hws,hws,hws
+```
+
+Adapt the first entry to the module your onboard audio uses (`lsmod | grep
+snd_` and `cat /proc/asound/modules` show it). Reboot, then check that
+`cat /proc/asound/cards` lists the same order twice in a row across
+reboots. `tfcz-audio doctor` reports how many capture inputs it sees.
+
+## Keep the capture card from driving the audio graph
+
+All connected devices end up in one PipeWire graph, and one node drives
+its clock. PipeWire prefers PCI devices over USB, so the capture card can
+become the driver. If the HDMI source is switched off and the card stops
+delivering samples, the headset intercom can stall with it.
+
+Check once with routes running:
+
+```
+pw-top        # the non-indented rows are the drivers
+```
+
+If an `hws` node is the driver, take it out of the running with a
+WirePlumber rule (`~/.config/wireplumber/wireplumber.conf.d/52-tfcz-hdmi-priority.conf`
+on 0.5, or the Lua equivalent from the next section on 0.4):
+
+```
+monitor.alsa.rules = [
+  {
+    matches = [ { alsa.card_name = "~.*HWS.*" } ]
+    actions = { update-props = { priority.driver = 100 priority.session = 100 } }
+  }
+]
+```
+
+Lower numbers lose the election; the USB headsets (driver priority around
+1000 for sinks) then drive the graph. Restart WirePlumber and check
+`pw-top` again.
+
 ## Stable node names for the four inputs
 
 The four inputs are four ALSA cards on the same PCI device, so PipeWire

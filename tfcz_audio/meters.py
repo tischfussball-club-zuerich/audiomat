@@ -145,13 +145,22 @@ class Meter:
         if proc is None or getattr(proc, "stdout", None) is None:
             return
         try:
+            buf = bytearray()
             while True:
-                chunk = proc.stdout.read(CHUNK_BYTES)
+                # one pipe read returns a single quantum (~5 ms); collect a whole
+                # window so the level is a real peak and not a random slice
+                chunk = proc.stdout.read(CHUNK_BYTES - len(buf))
                 if not chunk:
                     break
-                peak = peak_of(chunk)
-                self.level.peak = peak
-                self.level.db = to_db(peak)
+                buf += chunk
+                if len(buf) < CHUNK_BYTES:
+                    continue
+                peak = peak_of(bytes(buf))
+                buf.clear()
+                # short peak hold: a level that only falls between windows reads
+                # much more calmly than one that jumps back to zero
+                self.level.peak = max(peak, self.level.peak * 0.6)
+                self.level.db = to_db(self.level.peak)
                 self.level.updated = time.monotonic()
         except (OSError, ValueError):
             pass
@@ -170,6 +179,7 @@ class Meter:
         except Exception:  # noqa: BLE001
             try:
                 proc.kill()
+                proc.wait(timeout=0.5)  # reap it; a killed child would linger as a zombie
             except Exception:  # noqa: BLE001
                 pass
         self.level.running = False
@@ -264,7 +274,9 @@ def meter_specs(cfg: Config, resolved: dict[str, str | None] | None = None) -> l
             sources.add(route.source_ref)
         if route.sink_ref in cfg.devices:
             sinks.add(route.sink_ref)
-    specs = [MeterSpec(a, resolved[a], capture_sink=False) for a in sorted(sources) if resolved.get(a)]
+    # a source that is really a sink monitor (capture_sink route) must be metered the same way
+    monitor_sources = {r.source_ref for r in cfg.routes.values() if r.capture_sink}
+    specs = [MeterSpec(a, resolved[a], capture_sink=a in monitor_sources) for a in sorted(sources) if resolved.get(a)]
     specs += [MeterSpec(a, resolved[a], capture_sink=True) for a in sorted(sinks - sources) if resolved.get(a)]
     specs.append(MeterSpec(OBS_KEY, cfg.virtual.obs_mic_name, capture_sink=False))
     return specs

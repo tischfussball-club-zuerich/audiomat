@@ -344,6 +344,20 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             else:
                 bad(f"PipeWire {'.'.join(map(str, ver))} is too old (need 0.3.60+, Ubuntu 22.10+)",
                     "upgrade to Ubuntu 24.04 or install PipeWire >= 0.3.60 (the pipewire-upstream PPA on 22.04)")
+    # HDMI capture card: an out-of-tree DKMS module can silently fail to rebuild
+    # after a kernel update, and then only the game sound is missing
+    cards = ""
+    try:
+        cards = Path("/proc/asound/cards").read_text(errors="replace")
+    except OSError:
+        pass
+    if Path("/sys/module/hws").exists() or "hws" in cards.lower():
+        ok(f"HDMI capture driver loaded ({cards.lower().count('hws')} input(s))" if "hws" in cards.lower() else "HDMI capture driver (hws) is loaded")
+    else:
+        warn("no HDMI capture card found (the 'hws' driver is not loaded)",
+             "only needed for the game sound. After a kernel update the driver must be rebuilt: "
+             "sudo dkms autoinstall && sudo modprobe hws   (see docs/hdmi-capture.md)")
+
     if _tool("pw-record"):
         rc, out = _run(["pw-record", "--help"])
         if "--raw" in out:

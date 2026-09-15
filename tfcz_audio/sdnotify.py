@@ -57,7 +57,9 @@ class Notifier:
         self._send("WATCHDOG=1")
 
     def status(self, text: str) -> None:
-        self._send(f"STATUS={text}")
+        # the text contains user-chosen device labels; a newline would inject
+        # further notify fields
+        self._send("STATUS=" + text.replace("\n", " ").replace("\r", " ")[:200])
 
     def stopping(self) -> None:
         self._send("STOPPING=1")

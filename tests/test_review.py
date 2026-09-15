@@ -102,6 +102,8 @@ class SettleAndBudgetTests(unittest.TestCase):
         for n in router.cfg.routes:
             router.desired[n].volume = 0.11
         router._applied.clear()
+        # not freshly spawned any more: corrections are budgeted (fresh streams never are)
+        router._spawned_at = {n: -1e9 for n in router._spawned_at}
         backend.calls.clear()
         router.reconcile()
         self.assertEqual(sum(1 for c in backend.calls if c[0] == "set_volume"), 2)
@@ -521,3 +523,223 @@ class SelfHealingTests(unittest.TestCase):
         clock[0] += 60
         router.reconcile()
         self.assertTrue(all(n in router.procs for n in router.cfg.routes))
+
+
+class ThirdReviewTests(unittest.TestCase):
+    def test_fresh_streams_are_never_budgeted(self):
+        router, backend = make_router()
+        router.apply_budget = 1
+        router.start()
+        for n in router.cfg.routes:
+            router.desired[n].volume = 0.2
+        router._applied.clear()
+        backend.calls.clear()
+        router.reconcile()  # all routes are fresh: every one of them gets its level at once
+        applied = {c[1] for c in backend.calls if c[0] == "set_volume"}
+        self.assertEqual(len(applied), len(router.cfg.routes))
+
+    def test_capture_side_drift_is_corrected(self):
+        router, backend = make_router()
+        router.start()
+        clock = [time.monotonic() + 1000]
+        router._clock = lambda: clock[0]
+        cap = backend.graph().by_name("tfcz.a_to_b.in")
+        cap.mute = True  # someone muted the capture stream in a mixer app
+        router.reconcile()
+        cap = backend.graph().by_name("tfcz.a_to_b.in")
+        self.assertFalse(cap.mute)
+        self.assertEqual(cap.volume, 1.0)
+
+    def test_remembered_target_is_cleared_before_recycling(self):
+        router, backend = make_router()
+        router.start()
+        clock = [time.monotonic() + 1000]  # ahead of the timestamps recorded during start()
+        router._clock = lambda: clock[0]
+        g = backend.graph()
+        play = g.by_name("tfcz.a_to_b.out")
+        g.links = [l for l in g.links if l.output_node != play.id]
+        backend.link("tfcz.a_to_b.out", "alsa_output.a")  # "remembered" wrong target
+        router.reconcile()
+        self.assertTrue(router.route_status("a_to_b")["safety_muted"])
+        clock[0] += 10
+        backend.calls.clear()
+        router.reconcile()
+        self.assertTrue(any(c[0] == "clear_target" for c in backend.calls), "forgets the remembered target")
+
+    def test_default_sink_on_the_mix_bus_is_put_back(self):
+        router, backend = make_router()
+        router.start()
+        backend.graph().defaults["default.audio.sink"] = "tfcz.obsmix"
+        router.reconcile()
+        self.assertFalse(backend.graph().defaults["default.audio.sink"].startswith("tfcz."))
+        self.assertNotIn("default_into_obs", {p["code"] for p in router.problems()})
+
+    def test_missing_session_manager_is_reported(self):
+        router, backend = make_router()
+        router.start()
+        g = backend.graph()
+        g.clients.clear()
+        g.has_default_metadata = False
+        problems = {p["code"]: p for p in router.problems()}
+        self.assertIn("no_session_manager", problems)
+        self.assertIn("restart wireplumber", problems["no_session_manager"]["fix"])
+        g.clients.add("WirePlumber")
+        self.assertNotIn("no_session_manager", {p["code"] for p in router.problems()})
+
+    def test_no_helper_churn_while_pipewire_is_down(self):
+        from tfcz_audio.pw import PwError
+
+        router, backend = make_router()
+        router.start()
+        backend.graph = lambda: (_ for _ in ()).throw(PwError("down"))
+        for proc, _ in list(backend.processes.values()):
+            proc.crash()
+        router.reconcile()
+        backend.calls.clear()
+        for _ in range(5):
+            router.reconcile()
+        self.assertEqual([c for c in backend.calls if c[0] == "spawn"], [], "no spawn storm while PipeWire is unreachable")
+
+    def test_pw_dump_failure_is_negative_cached(self):
+        from tfcz_audio.pw import PwError
+
+        router, backend = make_router()
+        router.start()
+        calls = {"n": 0}
+
+        def failing():
+            calls["n"] += 1
+            raise PwError("timed out")
+
+        backend.graph = failing
+        clock = [time.monotonic() + 1000]
+        router._clock = lambda: clock[0]
+        router._invalidate_graph()
+        router._graph_or_empty()
+        router._graph_or_empty()
+        router.devices()
+        self.assertEqual(calls["n"], 1, "one failing pw-dump is not repeated for every caller")
+        clock[0] += 2
+        router._graph_or_empty()
+        self.assertEqual(calls["n"], 2)
+
+    def test_owned_helper_matching_is_strict(self):
+        from tfcz_audio.pw import is_owned_helper
+
+        self.assertTrue(is_owned_helper(["pw-loopback", "-n", "tfcz.a_to_b", "-c", "2"]))
+        self.assertTrue(is_owned_helper(["/usr/bin/pw-record", "-P", '{ node.name = "tfcz.meter.obs" }', "-"]))
+        self.assertFalse(is_owned_helper(["pw-record", "--target", "tfcz.obsmic", "test.wav"]), "a user's own recording is not ours")
+        self.assertFalse(is_owned_helper(["pw-play", "-n", "tfcz.x"]))
+        self.assertFalse(is_owned_helper([]))
+
+
+class TieBreakAndGuardTests(unittest.TestCase):
+    def twins_sharing_a_serial(self):
+        """Two identical headsets whose 'serial' is only the model name."""
+        from tfcz_audio.pw import FakeBackend
+
+        b = FakeBackend()
+        for i, port in ((1, "pci-0000:00:14.0-usb-0:1:1.0"), (2, "pci-0000:00:14.0-usb-0:2:1.0")):
+            b.add_physical(
+                "Logitech USB Headset", "usb", f"alsa_input.usb-Logitech-0{i}.mono-fallback",
+                f"alsa_output.usb-Logitech-0{i}.analog-stereo", form_factor="headset",
+                extra={"device.serial": "Logitech_USB_Headset", "device.bus-path": port,
+                       "device.vendor.id": "046d", "device.product.id": "0a44"},
+            )
+        return b
+
+    def test_prefer_breaks_a_tie_between_identical_devices(self):
+        import tomllib
+
+        from tfcz_audio.config import parse
+        from tfcz_audio.router import resolve_devices
+
+        cfg = parse(tomllib.loads('''
+[devices.a_mic]
+match = { "device.serial" = "Logitech_USB_Headset", kind = "input" }
+prefer = { "device.bus-path" = "pci-0000:00:14.0-usb-0:2:1.0" }
+[devices.a_out]
+match = { "device.serial" = "Logitech_USB_Headset", kind = "output" }
+[routes.x]
+from = "a_mic"
+to = "a_out"
+'''))
+        graph = self.twins_sharing_a_serial().graph()
+        res = resolve_devices(cfg, graph)
+        self.assertEqual(res["a_mic"].node, "alsa_input.usb-Logitech-02.mono-fallback", "tie broken by the recorded port")
+        self.assertFalse(res["a_mic"].ambiguous)
+        self.assertTrue(res["a_out"].ambiguous, "without a tie-breaker it stays reported as ambiguous")
+
+    def test_serial_identity_records_the_port_as_tie_breaker(self):
+        from tfcz_audio.pw import identity_for
+
+        from .test_identity import twin_backend
+
+        g = twin_backend().graph()
+        ident = identity_for(g.by_name("alsa_output.usb-Jabra_A1B2-00.analog-stereo"), g)
+        self.assertEqual(ident["strategy"], "serial")
+        self.assertEqual(ident["prefer"], {"device.bus-path": "pci-0000:00:14.0-usb-0:4:1.0"})
+
+    def test_config_rejects_feedback_cycles(self):
+        import tomllib
+
+        from tfcz_audio.config import ConfigError, parse
+
+        base = '[devices]\na_out = "alsa_output.a"\nb_out = "alsa_output.b"\na_mic = "alsa_input.a"\n'
+        with self.assertRaises(ConfigError) as ctx:
+            parse(tomllib.loads(base + '[routes.self]\nfrom = "a_out"\nto = "a_out"\ncapture_sink = true\n'))
+        self.assertIn("circle", str(ctx.exception))
+        with self.assertRaises(ConfigError):
+            parse(tomllib.loads(
+                base
+                + '[routes.one]\nfrom = "a_out"\nto = "b_out"\ncapture_sink = true\n'
+                + '[routes.two]\nfrom = "b_out"\nto = "a_out"\ncapture_sink = true\n'
+            ))
+        # a normal fan-out is not a cycle
+        parse(tomllib.loads(base + '[routes.ok]\nfrom = "a_mic"\nto = "a_out"\n[routes.ok2]\nfrom = "a_mic"\nto = "b_out"\n'))
+
+    def test_virtual_names_must_be_ours(self):
+        import tomllib
+
+        from tfcz_audio.config import ConfigError, parse
+
+        from .helpers import MINIMAL
+
+        with self.assertRaises(ConfigError):
+            parse(tomllib.loads('[virtual]\nobs_mic_name = "OBS Mic"\n' + MINIMAL))
+        with self.assertRaises(ConfigError):
+            parse(tomllib.loads('[virtual]\nobs_mic_name = "tfcz.x"\nobs_mix_name = "tfcz.x"\n' + MINIMAL))
+
+    def test_status_text_cannot_break_the_notify_protocol(self):
+        from tfcz_audio.sdnotify import Notifier
+
+        sent = []
+        n = Notifier(env={})
+        n._send = sent.append
+        n.status("problem in\nSTOPPING=1\nx" + "y" * 500)
+        self.assertEqual(len(sent), 1)
+        self.assertNotIn("\n", sent[0])
+        self.assertLessEqual(len(sent[0]), 208)
+
+    def test_meter_peak_uses_a_full_window(self):
+        import io
+
+        from tfcz_audio import meters
+
+        class Stub:
+            def __init__(self, data):
+                self.stdout = io.BytesIO(data)
+                self.returncode = None
+
+            def poll(self):
+                return self.returncode
+
+        loud = (16384).to_bytes(2, "little", signed=True) * (meters.CHUNK_FRAMES * meters.CHANNELS)
+        m = meters.Meter(meters.MeterSpec("x", "node"), lambda cmd: Stub(loud))
+        m.start()
+        for _ in range(100):
+            if m.level.updated:
+                break
+            time.sleep(0.01)
+        self.assertGreater(m.level.peak, 0.4)
+        self.assertLess(m.level.peak, 0.6)
