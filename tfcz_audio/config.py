@@ -133,7 +133,12 @@ def load(path: Path) -> Config:
             data = tomllib.load(fh)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"{path}: invalid TOML: {exc}") from exc
-    cfg = parse(data)
+    except OSError as exc:
+        raise ConfigError(f"{path}: cannot read: {exc.strerror or exc}") from exc
+    try:
+        cfg = parse(data)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{path}: invalid value: {exc}") from exc
     cfg.path = path
     return cfg
 
@@ -385,18 +390,19 @@ def save(cfg: Config, path: Path | None = None) -> Path:
     parse(tomllib.loads(text))  # never write something we cannot read back
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            try:
-                os.replace(path, path.with_suffix(path.suffix + ".bak"))
-                # keep the original in place too until the new one is written
-                import shutil
-
-                shutil.copyfile(path.with_suffix(path.suffix + ".bak"), path)
-            except OSError:
-                pass
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(text)
-        os.replace(tmp, path)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        if path.exists():
+            import shutil
+
+            try:
+                shutil.copyfile(path, path.with_suffix(path.suffix + ".bak"))
+            except OSError as exc:
+                log_backup_failure(path, exc)
+        os.replace(tmp, path)  # the live file is only ever replaced atomically, never removed
     except PermissionError as exc:
         raise ConfigError(
             f"cannot write {path}: permission denied. Copy it to ~/.config/tfcz-audio/config.toml (writable) and restart."
@@ -404,6 +410,12 @@ def save(cfg: Config, path: Path | None = None) -> Path:
     except OSError as exc:
         raise ConfigError(f"cannot write {path}: {exc.strerror or exc}. Check free disk space and permissions.") from exc
     return path
+
+
+def log_backup_failure(path: Path, exc: OSError) -> None:
+    import logging
+
+    logging.getLogger("tfcz.config").warning("could not write backup of %s: %s", path, exc)
 
 
 def load_or_recover(path: Path) -> tuple[Config, str]:

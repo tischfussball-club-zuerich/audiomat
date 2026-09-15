@@ -122,7 +122,7 @@ class MeterFallbackTests(unittest.TestCase):
     def test_meter_spec_has_no_passive_links(self):
         cmd = meters.MeterSpec("x", "node").command()
         joined = " ".join(cmd)
-        self.assertNotIn("node.passive", joined)
+        self.assertNotIn('node.passive = "true"', joined)
         self.assertIn("node.dont-fallback", joined)
 
 
@@ -166,7 +166,7 @@ class SingleInstanceTests(unittest.TestCase):
                 first = cli._single_instance()
                 with self.assertRaises(SystemExit) as ctx:
                     cli._single_instance()
-                self.assertIn("already running", str(ctx.exception))
+                self.assertEqual(ctx.exception.code, 3)
                 first.close()
                 again = cli._single_instance()  # lock released with the handle
                 again.close()

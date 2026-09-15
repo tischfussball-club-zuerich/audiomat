@@ -430,6 +430,8 @@ class PipeWireBackend:
             raise PwError(f"{cmd[0]} not found; install pipewire-bin/wireplumber") from exc
         except subprocess.TimeoutExpired as exc:
             raise PwError(f"{cmd[0]} timed out") from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise PwError(f"cannot run {cmd[0]}: {exc}") from exc
         if proc.returncode != 0:
             raise PwError(f"{shlex.join(cmd)} failed ({proc.returncode}): {proc.stderr.strip()}")
         return proc.stdout

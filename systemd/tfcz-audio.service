@@ -19,12 +19,16 @@ ExecStart=%h/.local/bin/tfcz-audio run
 WatchdogSec=30
 NotifyAccess=main
 Restart=always
+# 2 s after the first failure, doubling up to 60 s: a persistent problem never
+# turns into a tight loop that floods the journal (systemd >= 254)
 RestartSec=2
-TimeoutStopSec=10
-# pw-loopback / pw-record children die together with the daemon
+RestartSteps=6
+RestartMaxDelaySec=60
+# helpers are terminated in parallel by the daemon; this is the hard limit
+TimeoutStopSec=30
+# pw-loopback / pw-record children die together with the daemon; a fresh
+# daemon recreates them within a second and cleans up any leftovers
 KillMode=control-group
-# routing must keep working when the daemon is starved; it only talks to PipeWire
-Nice=-5
 
 [Install]
 WantedBy=default.target

@@ -13,6 +13,7 @@ LIB=$PREFIX/share/tfcz-audio
 BIN=$PREFIX/bin/tfcz-audio
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/tfcz-audio/config.toml
+ME=$(id -un)
 
 if [[ $EUID -eq 0 ]]; then
   echo "run this as your normal desktop user, not root" >&2
@@ -79,8 +80,14 @@ chmod 0755 "$BIN"
 echo "==> installed $BIN ($("$BIN" --version))"
 
 mkdir -p "$UNIT_DIR"
-install -m 0644 "$HERE/systemd/tfcz-audio.service" "$UNIT_DIR/tfcz-audio.service"
+# the unit must point at the wrapper wherever PREFIX put it
+sed "s|^ExecStart=.*|ExecStart=$BIN run|" "$HERE/systemd/tfcz-audio.service" > "$UNIT_DIR/tfcz-audio.service"
+chmod 0644 "$UNIT_DIR/tfcz-audio.service"
 systemctl --user daemon-reload
+case ":$PATH:" in
+  *":$PREFIX/bin:"*) ;;
+  *) echo "note: $PREFIX/bin is not in PATH of this shell yet; use $BIN or log out and in (Ubuntu adds ~/.local/bin at login)." ;;
+esac
 
 first_install=0
 if [[ ! -f $CONFIG ]]; then
@@ -105,23 +112,24 @@ fi
 if (( ENABLE_BOOT )); then
   echo
   echo "==> start at boot"
-  if loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q "Linger=yes"; then
-    echo "    lingering already enabled for $USER"
-  elif loginctl enable-linger "$USER" 2>/dev/null; then
+  if loginctl show-user "$ME" -p Linger 2>/dev/null | grep -q "Linger=yes"; then
+    echo "    lingering already enabled for $ME"
+  elif loginctl enable-linger "$ME" 2>/dev/null; then
     echo "    lingering enabled: the audio router starts at boot, no login needed"
-  elif command -v sudo >/dev/null 2>&1 && sudo loginctl enable-linger "$USER"; then
+  elif command -v sudo >/dev/null 2>&1 && { echo "    (sudo password may be asked to enable start-at-boot)"; sudo loginctl enable-linger "$ME"; }; then
     echo "    lingering enabled (via sudo)"
   else
-    echo "    could not enable lingering. Run:  sudo loginctl enable-linger $USER" >&2
+    echo "    could not enable lingering. Run:  sudo loginctl enable-linger $ME" >&2
   fi
-  if id -nG "$USER" | tr ' ' '\n' | grep -qx audio; then
-    echo "    $USER is in the 'audio' group (devices usable before login)"
+  if id -nG "$ME" | tr ' ' '\n' | grep -qx audio; then
+    echo "    $ME is in the 'audio' group (devices usable before login)"
   else
-    echo "    adding $USER to the 'audio' group so PipeWire can open the devices before anyone logs in"
-    if command -v sudo >/dev/null 2>&1 && sudo usermod -aG audio "$USER"; then
+    echo "    adding $ME to the 'audio' group so PipeWire can open the devices before anyone logs in"
+    echo "    (sudo password may be asked)"
+    if command -v sudo >/dev/null 2>&1 && sudo usermod -aG audio "$ME"; then
       echo "    done. Takes effect at the next boot (or after logging out and in)."
     else
-      echo "    could not add the group. Run:  sudo usermod -aG audio $USER" >&2
+      echo "    could not add the group. Run:  sudo usermod -aG audio $ME" >&2
     fi
   fi
 fi

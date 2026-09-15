@@ -64,13 +64,17 @@ class MeterSpec:
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", self.key)
         props = {
             "node.name": f"tfcz.meter.{safe}",
-            "node.description": f"TFCZ meter {self.key}",
+            "node.description": f"TFCZ meter {safe}",
             "node.dont-fallback": "true",
-            "media.role": "Production",
+            "node.passive": "false",
+            # unique restore-stream keys: nothing WirePlumber remembers for one meter reaches another
+            "media.role": f"tfcz.meter.{safe}",
+            "application.id": f"tfcz.meter.{safe}",
+            "application.name": f"tfcz.meter.{safe}",
         }
         if self.capture_sink:
             props["stream.capture.sink"] = "true"
-        spa = "{ " + " ".join(f'{k} = "{v}"' for k, v in props.items()) + " }"
+        spa = "{ " + " ".join(f'{k} = "{_spa_escape(v)}"' for k, v in props.items()) + " }"
         return [
             "pw-record",
             "--raw",
@@ -82,6 +86,10 @@ class MeterSpec:
             "-P", spa,
             "-",
         ]
+
+
+def _spa_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def peak_of(chunk: bytes) -> float:
@@ -134,7 +142,7 @@ class Meter:
 
     def _read(self) -> None:
         proc = self.proc
-        if proc is None or proc.stdout is None:
+        if proc is None or getattr(proc, "stdout", None) is None:
             return
         try:
             while True:
@@ -266,15 +274,21 @@ class MeterManager:
     """Owns all meters, follows config reloads, never raises out of reconcile()."""
 
     WATCH_SECONDS = 120.0
+    MAX_WATCH = 32
 
     def __init__(
         self,
         cfg_getter: Callable[[], Config],
-        spawn: Callable[[list[str]], subprocess.Popen] = _default_spawn,
+        spawn: Callable[[list[str]], Any] = _default_spawn,
         resolved_getter: Callable[[], dict[str, str | None]] | None = None,
+        known_nodes: Callable[[], set[str]] | None = None,
+        pw_recovered: Callable[[], int] | None = None,
     ):
         self._cfg = cfg_getter
         self._resolved = resolved_getter
+        self._known_nodes = known_nodes
+        self._pw_recovered = pw_recovered
+        self._pw_recovered_seen = pw_recovered() if pw_recovered else 0
         self._spawn = spawn
         self._lock = threading.Lock()
         self.meters: dict[str, Meter] = {}
@@ -289,13 +303,23 @@ class MeterManager:
     def watch(self, nodes: list[dict[str, Any]], seconds: float | None = None) -> list[str]:
         """Temporarily meter arbitrary nodes (used by the setup wizard so the
         user can identify a headset by speaking into it). Keys = node names."""
+        if seconds is not None and seconds <= 0:
+            with self._lock:
+                self._watch.clear()
+            self.reconcile()
+            return []
         expires = time.monotonic() + (seconds or self.WATCH_SECONDS)
+        known = self._known_nodes() if self._known_nodes else None
         added: list[str] = []
         with self._lock:
             for item in nodes[:16]:
                 name = str(item.get("name", "")).strip()
-                if not name or name.startswith("tfcz."):
+                if not name or name.startswith("tfcz.") or len(name) > 200:
                     continue
+                if known is not None and name not in known:
+                    continue  # only real, currently present devices get a pw-record
+                if name not in self._watch and len(self._watch) >= self.MAX_WATCH:
+                    break
                 self._watch[name] = (expires, str(item.get("kind", "input")) == "output")
                 added.append(name)
         self.reconcile()
@@ -316,6 +340,10 @@ class MeterManager:
             return
         now = time.monotonic()
         with self._lock:
+            if self._pw_recovered and self._pw_recovered() != self._pw_recovered_seen:
+                self._pw_recovered_seen = self._pw_recovered()
+                for m in self.meters.values():
+                    m.failures, m.retry_at = 0, 0.0  # PipeWire is back: retry immediately
             wanted = {s.key: s for s in meter_specs(self._cfg(), self._resolved() if self._resolved else None)}
             for spec in self._watched_specs(now):
                 wanted.setdefault(spec.key, spec)
@@ -333,11 +361,16 @@ class MeterManager:
         with self._lock:
             return {key: m.level.to_dict(now) for key, m in self.meters.items()}
 
-    def stop(self) -> None:
+    def stop(self, deadline: float = 3.0) -> None:
+        from .router import stop_all
+
         with self._lock:
-            for meter in self.meters.values():
-                meter.stop()
+            procs = [m.proc for m in self.meters.values() if m.proc is not None]
+            for m in self.meters.values():
+                m.proc = None
+                m.level.running = False
             self.meters.clear()
+        stop_all(procs, deadline)
 
 
 class FakeMeterManager:
@@ -358,8 +391,11 @@ class FakeMeterManager:
         self.enabled = True
 
     def watch(self, nodes: list[dict[str, Any]], seconds: float | None = None) -> list[str]:
+        if seconds is not None and seconds <= 0:
+            self._watch.clear()
+            return []
         expires = time.monotonic() + (seconds or 120.0)
-        names = [str(n.get("name", "")) for n in nodes if n.get("name")]
+        names = [str(n.get("name", "")) for n in nodes if n.get("name")][:32]
         for n in names:
             self._watch[n] = expires
         return names

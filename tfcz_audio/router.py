@@ -29,6 +29,35 @@ from .pw import (
 
 log = logging.getLogger("tfcz.router")
 
+
+def stop_all(procs, deadline: float = 5.0) -> None:
+    """SIGTERM every process, then wait for all of them within ONE shared
+    deadline; whatever is still alive gets SIGKILL."""
+    procs = list(procs)
+    for proc in procs:
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+    end = time.monotonic() + deadline
+    stubborn = []
+    for proc in procs:
+        remaining = max(0.05, end - time.monotonic())
+        try:
+            proc.wait(timeout=remaining)
+        except Exception:  # noqa: BLE001
+            stubborn.append(proc)
+    for proc in stubborn:
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+    for proc in stubborn:
+        try:
+            proc.wait(timeout=0.05)
+        except Exception:  # noqa: BLE001
+            pass
+
 VIRTUAL = "__virtual__"
 UNRESOLVED_PREFIX = "tfcz.unresolved."
 
@@ -88,10 +117,18 @@ def route_spec(cfg: Config, route: RouteConfig, resolved: dict[str, Resolved]) -
         "node.dont-fallback": True,
         "node.dont-reconnect": False,
     }
+
+    def identity(node_name: str) -> dict[str, Any]:
+        # WirePlumber's restore-stream keys saved volumes by media.role /
+        # application.id / application.name. Every stream gets its own key so a
+        # volume set on one route can never be restored onto another stream.
+        return {"media.role": node_name, "application.id": node_name, "application.name": node_name}
+
     capture = {
         "node.name": route.in_node,
         "node.description": f"TFCZ {route.name} (capture)",
         "target.object": _target(cfg, route.source_ref, resolved),
+        **identity(route.in_node),
         **common,
     }
     if route.capture_sink:
@@ -100,6 +137,7 @@ def route_spec(cfg: Config, route: RouteConfig, resolved: dict[str, Resolved]) -
         "node.name": route.out_node,
         "node.description": f"TFCZ {route.name} (playback)",
         "target.object": _target(cfg, route.sink_ref, resolved),
+        **identity(route.out_node),
         **common,
     }
     return LoopbackSpec(name=f"tfcz.{route.name}", capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
@@ -113,6 +151,9 @@ def virtual_spec(cfg: Config) -> LoopbackSpec:
         "node.description": f"{cfg.virtual.obs_mic_description} (mix bus)",
         "audio.position": position,
         "node.latency": cfg.audio.latency,
+        "media.role": cfg.virtual.obs_mix_name,
+        "application.id": cfg.virtual.obs_mix_name,
+        "application.name": cfg.virtual.obs_mix_name,
     }
     playback = {
         "media.class": "Audio/Source/Virtual",
@@ -120,6 +161,9 @@ def virtual_spec(cfg: Config) -> LoopbackSpec:
         "node.description": cfg.virtual.obs_mic_description,
         "audio.position": position,
         "node.latency": cfg.audio.latency,
+        "media.role": cfg.virtual.obs_mic_name,
+        "application.id": cfg.virtual.obs_mic_name,
+        "application.name": cfg.virtual.obs_mic_name,
     }
     return LoopbackSpec(name="tfcz.virtual", capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
 
@@ -152,7 +196,12 @@ class Router:
         self.last_error: str = ""
         self.config_error: str = ""  # set by the CLI when the config could not be loaded cleanly
         self._graph_cache: tuple[float, Graph] | None = None
+        self._graph_fetch_lock = threading.Lock()  # concurrent cache misses share one pw-dump
         self._apply_retry_at: dict[str, float] = {}  # per-route backoff after a failed wpctl call
+        self.apply_budget = 4  # max wpctl-affected routes per supervisor pass; keeps a pass short
+        self._state_timer: threading.Timer | None = None
+        self._state_last_saved = 0.0
+        self.pw_recovered_count = 0  # bumped whenever PipeWire comes back; meters reset their backoff on it
         self.graph_cache_ttl = 0.0  # seconds; the CLI enables caching for the real backend
         self._pw_down_logged = False
         self._load_state()
@@ -179,6 +228,20 @@ class Router:
         log.info("restored route state from %s", path)
 
     def _save_state(self) -> None:
+        """Coalesce bursts (slider drags) into at most ~2 writes per second."""
+        if not self.cfg.state_file:
+            return
+        now = time.monotonic()
+        if now - self._state_last_saved >= 0.5:
+            self._write_state()
+            return
+        if self._state_timer is None or not self._state_timer.is_alive():
+            self._state_timer = threading.Timer(0.5, self._write_state)
+            self._state_timer.daemon = True
+            self._state_timer.start()
+
+    def _write_state(self) -> None:
+        self._state_last_saved = time.monotonic()
         path = self.cfg.state_file
         if not path:
             return
@@ -198,9 +261,13 @@ class Router:
         cached = self._graph_cache
         if cached is not None and now - cached[0] < self.graph_cache_ttl:
             return cached[1]
-        graph = self.backend.graph()
-        self._graph_cache = (now, graph)
-        return graph
+        with self._graph_fetch_lock:
+            cached = self._graph_cache
+            if cached is not None and self._clock() - cached[0] < self.graph_cache_ttl:
+                return cached[1]
+            graph = self.backend.graph()
+            self._graph_cache = (self._clock(), graph)
+            return graph
 
     def _invalidate_graph(self) -> None:
         self._graph_cache = None
@@ -215,8 +282,7 @@ class Router:
             self.last_error = f"cannot talk to PipeWire: {exc}"
             return Graph()
         if self._pw_down_logged:
-            log.info("PipeWire reachable again")
-            self._pw_down_logged = False
+            self._pipewire_recovered()
         return graph
 
     def _refresh_resolution(self, graph: Graph) -> None:
@@ -240,12 +306,29 @@ class Router:
                 self._spawn(name)
             self.reconcile()
 
-    def stop(self) -> None:
+    def stop(self, deadline: float = 5.0) -> None:
+        """Terminate all helpers at once and wait for them with one shared
+        deadline, so shutdown never takes N x timeout."""
         with self._lock:
             self._started = False
-            for name in list(self.procs):
-                self._terminate(name)
+            procs = dict(self.procs)
+            self.procs.clear()
+            self._spec_used.clear()
             self._applied.clear()
+            if self._state_timer is not None and self._state_timer.is_alive():
+                self._state_timer.cancel()
+                self._write_state()
+        stop_all(procs.values(), deadline)
+        for name in procs:
+            log.info("stopped loopback %s", name)
+
+    def _pipewire_recovered(self) -> None:
+        log.info("PipeWire reachable again; retrying all helpers now")
+        self._pw_down_logged = False
+        self._retry_at.clear()
+        self._failures.clear()
+        self._apply_retry_at.clear()
+        self.pw_recovered_count += 1
 
     def _terminate(self, name: str) -> None:
         proc = self.procs.pop(name, None)
@@ -312,8 +395,7 @@ class Router:
                 graph = self._fetch_graph()
                 self.last_error = ""
                 if self._pw_down_logged:
-                    log.info("PipeWire reachable again")
-                    self._pw_down_logged = False
+                    self._pipewire_recovered()
             except PwError as exc:
                 if not self._pw_down_logged:
                     log.warning("pw-dump failed: %s (further failures are not logged until it recovers)", exc)
@@ -339,16 +421,51 @@ class Router:
                     log.warning("loopback %s exited with %s %s", name, proc.poll(), err)
                     self.procs.pop(name, None)
                     self._spec_used.pop(name, None)
-                    self._failures[name] = self._failures.get(name, 0) + 1
-                    self._retry_at[name] = now + min(30.0, 2.0 ** self._failures[name])
+                    if graph is None:
+                        # PipeWire itself is gone: not the helper's fault, retry as soon as it is back
+                        self._retry_at[name] = now + 1.0
+                    else:
+                        self._failures[name] = self._failures.get(name, 0) + 1
+                        self._retry_at[name] = now + min(30.0, 2.0 ** self._failures[name])
                     self.last_error = f"{name} stopped unexpectedly, restarting"
                     continue
                 if self._retry_at.get(name, 0.0) <= now:
                     self._spawn(name)
             if graph is None:
                 return
-            for name in self.cfg.routes:
-                self._apply(name, graph)
+            self._apply_all(graph)
+
+    def _apply_all(self, graph: Graph) -> None:
+        """Apply desired volumes with a per-pass budget of wpctl work, and give
+        freshly spawned streams a short settle window so they are never audible
+        at the wrong volume for a whole tick."""
+        budget = self.apply_budget
+        pending = [n for n in self.cfg.routes if not self._is_applied(n, graph)]
+        fresh = [n for n in pending if self._clock() - self._spawned_at.get(n, -1e9) < 2.0]
+        if fresh:
+            # poll (bounded) for the new nodes, then apply right away
+            deadline = self._clock() + 0.6
+            while self._clock() < deadline:
+                self._invalidate_graph()
+                try:
+                    graph = self._fetch_graph()
+                except PwError:
+                    return
+                if all(graph.by_name(self.cfg.routes[n].out_node) is not None for n in fresh):
+                    break
+                self._sleep(0.1)
+        for name in fresh + [n for n in pending if n not in fresh]:
+            if budget <= 0:
+                return
+            if self._apply(name, graph):
+                budget -= 1
+
+    def _is_applied(self, name: str, graph: Graph) -> bool:
+        node = graph.by_name(self.cfg.routes[name].out_node)
+        if node is None:
+            return True  # nothing to do until it exists
+        want = self.desired[name]
+        return self._applied.get(name) == (node.id, want.volume, want.mute)
 
     def run_forever(
         self,
@@ -407,8 +524,7 @@ class Router:
 
             if self._started:
                 if VIRTUAL not in self.procs:
-                    self._spawn(VIRTUAL)
-                    self._wait_for_node(self.cfg.virtual.obs_mix_name)
+                    self._spawn(VIRTUAL)  # routes to it link as soon as it exists; no blocking wait here
                 for name in self.cfg.routes:
                     if name not in self.procs:
                         self._spawn(name)
@@ -433,6 +549,11 @@ class Router:
         try:
             self.backend.set_volume(node.id, want.volume)
             self.backend.set_mute(node.id, want.mute)
+            cap = graph.by_name(route.in_node)
+            if cap is not None and ((cap.volume is not None and abs(cap.volume - 1.0) > 0.01) or cap.mute):
+                # the capture side must always be neutral; only the playback side carries the route gain
+                self.backend.set_volume(cap.id, 1.0)
+                self.backend.set_mute(cap.id, False)
         except PwError as exc:
             log.error("apply %s: %s (retry in 5s)", name, exc)
             self._apply_retry_at[name] = now + 5.0
@@ -537,7 +658,7 @@ class Router:
     def route_status(self, name: str, graph: Graph | None = None) -> dict[str, Any]:
         route = self._route(name)
         graph = graph or self._graph_or_empty()
-        want = self.desired[name]
+        want = self.desired.get(name) or RouteState(route.volume, route.mute)
         src = self._ref_node(route.source_ref, graph)
         dst = self._ref_node(route.sink_ref, graph)
         cap = graph.by_name(route.in_node)
@@ -711,7 +832,7 @@ class Router:
 
         # routes to OBS
         obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref == OBS_MIC]
-        live_obs = [n for n, _ in obs_routes if not self.desired[n].mute and self.desired[n].volume > 0]
+        live_obs = [n for n, _ in obs_routes if n in self.desired and not self.desired[n].mute and self.desired[n].volume > 0]
         if cfg.routes and not obs_routes:
             add("warning", "obs_unconnected", "obs_mic", "Nothing is connected to the OBS stream",
                 "No arrow points to the OBS stream.", "Your viewers hear no microphones.",

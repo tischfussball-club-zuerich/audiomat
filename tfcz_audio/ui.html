@@ -451,7 +451,6 @@
     });
     const done = () => { sendVolume(name, slider.value); setTimeout(() => state.dragging.delete(name), 500); };
     slider.addEventListener('change', done);
-    slider.addEventListener('pointerup', done);
     card.querySelector('.switch').addEventListener('click', e => { e.preventDefault(); api('POST', `/routes/${encodeURIComponent(name)}/toggle`).then(() => refresh(false), fail); });
     card.querySelector('.del').addEventListener('click', () => {
       const c = state.config.routes[name];
@@ -591,7 +590,7 @@
     loadHardware().then(renderWizard);
     $('#wizard').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
-  function closeWizard() { state.wiz = null; $('#wizard').hidden = true; }
+  function closeWizard() { state.wiz = null; $('#wizard').hidden = true; api('POST', '/meters/watch', { clear: true }).catch(() => {}); }
   async function loadHardware() {
     try {
       const hw = await api('GET', '/hardware');
@@ -658,12 +657,12 @@
         w.step = !A ? 0 : !B ? 1 : 2; renderWizard(); return;
       }
       const nA = w.nameA.trim() || 'Person A', nB = w.nameB.trim() || 'Person B', nG = w.nameGame.trim() || 'Game sound';
-      const ident = g => !g ? '' : g.identity.strategy === 'port' ? `recognised by ${g.port} (identical headsets have no serial number). <b>Keep it in ${g.port}</b>; put a sticker on the plug and the port.` :
+      const ident = g => !g ? '' : g.identity.strategy === 'port' ? `recognised by ${esc(g.port)} (identical headsets have no serial number). <b>Keep it in ${esc(g.port)}</b>; put a sticker on the plug and the port.` :
                           g.identity.strategy === 'serial' ? 'recognised by its serial number, any USB port works.' : 'recognised by its fixed name.';
       const warnings = [];
-      if (A && B && A.identity.strategy === 'port' && B.identity.strategy === 'port') warnings.push(`${nA}'s and ${nB}'s headsets are the same model without serial numbers. If you ever swap their USB ports, the names swap too. Label the ports now.`);
+      if (A && B && A.identity.strategy === 'port' && B.identity.strategy === 'port') warnings.push(`${esc(nA)}'s and ${esc(nB)}'s headsets are the same model without serial numbers. If you ever swap their USB ports, the names swap too. Label the ports now.`);
       if (A && A.speakers || B && B.speakers) warnings.push('One of the chosen outputs looks like loudspeakers, not headphones. A microphone routed to loudspeakers causes echo.');
-      if (G && !G.hdmi_capture) warnings.push(`${nG} is not an HDMI capture input. If it is a microphone, it will be heard in both headsets.`);
+      if (G && !G.hdmi_capture) warnings.push(`${esc(nG)} is not an HDMI capture input. If it is a microphone, it will be heard in both headsets.`);
       body.innerHTML = `
         <p class="hint">This is what will be set up. Check the names, then press Connect.</p>
         <div class="summary">

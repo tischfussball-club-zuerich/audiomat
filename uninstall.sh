@@ -11,6 +11,7 @@ BIN=$PREFIX/bin/tfcz-audio
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/tfcz-audio
 STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/tfcz-audio
+ME=$(id -un)
 
 if [[ $EUID -eq 0 ]]; then
   echo "run this as the user that installed tfcz-audio, not root" >&2
@@ -32,7 +33,7 @@ fi
 # merely contains these words is never killed.
 kill_matching() {  # $1 = comm, $2 = regex on full args
   local pid
-  for pid in $(pgrep -u "$USER" -x "$1" || true); do
+  for pid in $(pgrep -u "$ME" -x "$1" || true); do
     [[ $pid == "$$" || $pid == "$PPID" ]] && continue
     if ps -o args= -p "$pid" 2>/dev/null | grep -Eq -- "$2"; then
       kill "$pid" 2>/dev/null && echo "==> stopped $1 ($pid)" || true
@@ -42,6 +43,7 @@ kill_matching() {  # $1 = comm, $2 = regex on full args
 kill_matching python3 '(^|/)python3 -m tfcz_audio( |$)'
 kill_matching tfcz-audio '.'
 kill_matching pw-loopback '^pw-loopback -n tfcz\.'
+kill_matching pw-record 'tfcz\.meter\.'
 
 rm -f "$UNIT_DIR/tfcz-audio.service" && echo "==> removed systemd unit"
 rm -f "$BIN" && echo "==> removed $BIN"
@@ -54,7 +56,7 @@ if (( purge )); then
 else
   echo "kept config in $CONFIG_DIR and state in $STATE_DIR (use --purge to delete them)"
 fi
-if loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q "Linger=yes"; then
-  echo "note: start-at-boot (lingering) for $USER is left enabled; to undo:  loginctl disable-linger $USER"
+if loginctl show-user "$ME" -p Linger 2>/dev/null | grep -q "Linger=yes"; then
+  echo "note: start-at-boot (lingering) for $ME is left enabled; to undo:  loginctl disable-linger $ME"
 fi
 echo "done. The OBS source 'TFCZ OBS Mic' disappears with the service; remove it from your OBS scene."

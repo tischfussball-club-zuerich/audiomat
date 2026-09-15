@@ -251,11 +251,16 @@ With `token` set, send `Authorization: Bearer <token>` or `?token=<token>`.
 * Level meters are separate `pw-record` processes per device plus one on
   the OBS mic. They are read-only observers; a failing meter is restarted
   and never affects routing.
-* Under systemd the unit is `Type=notify` with a 30 s watchdog: the daemon
-  reports READY and pings from the supervisor loop, so a hung process is
-  killed and restarted. `Restart=always` and `StartLimitIntervalSec=0`
-  mean systemd never gives up. If the API port is taken, routing still
-  starts and the bind is retried every second.
+* Under systemd the unit is `Type=notify` with a 30 s watchdog. A small
+  thread pings it as long as the supervisor loop has made progress in the
+  last 20 s, so a slow PipeWire cannot get the daemon killed, while a truly
+  hung loop is restarted. `Restart=always` with `RestartSteps` backs off
+  from 2 s to 60 s between failures and never gives up. If the API port is
+  taken, routing still starts and the bind is retried every second.
+* Every stream carries its own WirePlumber restore key, so a volume saved
+  for one route can never be restored onto another stream; freshly
+  spawned streams get their volume and mute within the same supervisor
+  pass, and capture streams are forced to unity.
 * WirePlumber relinks the streams itself when a USB device disappears and
   comes back; the daemon only steps in when a device resolves differently.
 

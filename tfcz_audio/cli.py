@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from importlib import resources
@@ -123,10 +124,12 @@ def _single_instance() -> Any:
     except OSError:
         fh.seek(0)
         other = fh.read().strip() or "unknown pid"
-        raise SystemExit(
+        print(
             f"tfcz-audio is already running ({other}). Use 'systemctl --user status tfcz-audio' / "
-            "'systemctl --user stop tfcz-audio' if you want to run it by hand."
-        ) from None
+            "'systemctl --user stop tfcz-audio' if you want to run it by hand.",
+            file=sys.stderr,
+        )
+        raise SystemExit(3) from None
     fh.seek(0)
     fh.truncate()
     fh.write(f"pid {os.getpid()}")
@@ -140,7 +143,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         path = find_config(args.config)
     except ConfigError as exc:
         if args.config:
-            raise
+            print(f"config error: {exc}", file=sys.stderr)
+            raise SystemExit(2) from None
         path = default_config_paths()[0]
         log.warning("%s -- writing the example config to %s so the service can start; use the web UI Setup to connect devices", exc, path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +187,12 @@ def cmd_run(args: argparse.Namespace) -> int:
     elif args.no_meters or args.dry_run:
         meters = None
     else:
-        meters = MeterManager(lambda: router.cfg, resolved_getter=router.resolved_nodes)
+        meters = MeterManager(
+            lambda: router.cfg,
+            resolved_getter=router.resolved_nodes,
+            known_nodes=lambda: {d["name"] for d in router.devices()},
+            pw_recovered=lambda: router.pw_recovered_count,
+        )
 
     # The HTTP server is optional for the audio: if the port is taken we keep
     # routing and retry binding from the supervisor loop.
@@ -200,10 +209,24 @@ def cmd_run(args: argparse.Namespace) -> int:
         threading.Thread(target=server.serve_forever, name="http", daemon=True).start()
         server_box["server"] = server
 
+    last_tick = {"t": time.monotonic()}
+    stall_limit = 20.0  # a supervisor pass longer than this counts as hung
+
     def heartbeat() -> None:
-        notifier.watchdog()
+        last_tick["t"] = time.monotonic()
         problems = [p for p in router.problems() if p["level"] in ("error", "warning")]
         notifier.status("OK: all routes linked" if not problems else f"{len(problems)} problem(s): {problems[0]['title']}")
+
+    def watchdog_pinger() -> None:
+        # Pings on its own schedule while the supervisor loop makes progress.
+        # A slow pass (PipeWire busy) therefore does not get the process killed;
+        # a truly hung loop stops the pings within stall_limit and systemd restarts us.
+        period = (notifier.watchdog_interval or 10.0) / 2
+        while not stop.wait(period):
+            if time.monotonic() - last_tick["t"] < stall_limit:
+                notifier.watchdog()
+            else:
+                log.error("supervisor loop has not ticked for %.0fs; letting the systemd watchdog restart us", stall_limit)
 
     ticks = [ensure_http, heartbeat]
     if meters is not None:
@@ -213,20 +236,20 @@ def cmd_run(args: argparse.Namespace) -> int:
     if meters is not None:
         meters.reconcile()
     notifier.ready("routes started")
-    interval = args.interval
-    wd = notifier.watchdog_interval
-    if wd is not None:
-        interval = min(interval, wd)
+    notifier.watchdog()
+    if notifier.enabled:
+        threading.Thread(target=watchdog_pinger, name="watchdog", daemon=True).start()
     try:
-        router.run_forever(stop, interval=interval, on_tick=ticks)
+        router.run_forever(stop, interval=args.interval, on_tick=ticks)
     finally:
         notifier.stopping()
         if server_box["server"] is not None:
             server_box["server"].shutdown()
             server_box["server"].server_close()
+        # all helpers in parallel, one shared deadline each: well inside TimeoutStopSec
         if meters is not None:
-            meters.stop()
-        router.stop()
+            meters.stop(deadline=3.0)
+        router.stop(deadline=5.0)
         log.info("stopped")
     return 0
 
@@ -388,11 +411,12 @@ def cmd_check(args: argparse.Namespace) -> int:
     except PwError as exc:
         print(f"warning: cannot inspect PipeWire graph ({exc}); config syntax is OK")
         return 0
+    from .router import resolve_devices
+
     missing = 0
-    for alias, node in cfg.devices.items():
-        present = graph.by_name(node) is not None
-        missing += not present
-        print(f"  [{'ok' if present else 'MISSING'}] {alias:16} {node}")
+    for alias, res in resolve_devices(cfg, graph).items():
+        missing += not res.present
+        print(f"  [{'ok' if res.present else 'MISSING'}] {alias:16} {res.node or cfg.devices[alias].match}")
     if missing:
         print(f"{missing} device(s) not present; routes using them stay silent until they appear.")
     return 0

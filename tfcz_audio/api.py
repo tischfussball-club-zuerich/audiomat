@@ -81,6 +81,7 @@ class ApiServer(ThreadingHTTPServer):
         self.router = router
         self.token = token
         self.meters = meters
+        self.listen_host = address[0]
         super().__init__(address, Handler)
 
 
@@ -128,8 +129,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise BadRequest("invalid Content-Length") from None
-        if length > MAX_BODY:
-            raise BadRequest("request body too large")
+        if length < 0 or length > MAX_BODY:
+            raise BadRequest("invalid request body length")
         if length:
             raw = self.rfile.read(length)
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
@@ -148,15 +149,34 @@ class Handler(BaseHTTPRequestHandler):
                 params.update(body)
         return params
 
+    def _host_allowed(self) -> bool:
+        """Pin the Host header so DNS rebinding cannot impersonate this daemon.
+        When listening on all interfaces (LAN mode) the token is the guard."""
+        listen = (self.server.listen_host or "").lower()
+        if listen in ("0.0.0.0", "::", ""):
+            return True
+        host = (self.headers.get("Host") or "").lower()
+        if host.startswith("["):
+            hostname = host.split("]")[0].lstrip("[")
+        elif host.count(":") == 1:
+            hostname = host.rsplit(":", 1)[0]
+        else:
+            hostname = host
+        return hostname in {"127.0.0.1", "localhost", "::1", listen}
+
     def _same_origin(self) -> bool:
         """Browsers add Origin / Sec-Fetch-Site to cross-site requests. Reject
         those so a random web page cannot change volumes on localhost."""
+        if not self._host_allowed():
+            return False
         site = (self.headers.get("Sec-Fetch-Site") or "").lower()
-        if site in ("cross-site",):
+        if site == "cross-site":
             return False
         origin = self.headers.get("Origin")
-        if not origin or origin == "null":
-            return True  # curl, Advanced Scene Switcher, same-origin GETs
+        if not origin:
+            return True  # curl, Advanced Scene Switcher
+        if origin == "null":
+            return False  # sandboxed iframe / file:// page: not us
         host = (self.headers.get("Host") or "").lower()
         o = urlsplit(origin)
         return bool(host) and (o.netloc.lower() == host)
@@ -227,7 +247,8 @@ class Handler(BaseHTTPRequestHandler):
         ok = HTTPStatus.OK
 
         if not seg or seg == ["health"]:
-            return ok, {"ok": True, "version": __version__, "routes": len(router.cfg.routes), "problems": len(router.problems())}
+            # cheap liveness probe: no pw-dump, no /proc reads
+            return ok, {"ok": not router.last_error, "version": __version__, "routes": len(router.cfg.routes), "error": router.last_error}
         if seg == ["status"] and read:
             return ok, router.status()
         if seg == ["devices"] and read:
@@ -243,7 +264,10 @@ class Handler(BaseHTTPRequestHandler):
             nodes = params.get("nodes") or []
             if not isinstance(nodes, list):
                 raise BadRequest("nodes must be a list of {name, kind}")
-            watched = meters.watch(nodes) if meters is not None and hasattr(meters, "watch") else []
+            clear = params.get("clear") in (True, "true", "1")
+            watched = []
+            if meters is not None and hasattr(meters, "watch"):
+                watched = meters.watch([], seconds=0) if clear else meters.watch([n for n in nodes if isinstance(n, dict)])
             return ok, {"ok": True, "watching": watched, "available": meters is not None}
         if len(seg) == 3 and seg[0] == "fix" and seg[1] == "device" and write:
             return ok, router.fix_device(seg[2])
