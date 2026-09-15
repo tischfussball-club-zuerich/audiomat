@@ -253,7 +253,10 @@ With `token` set, send `Authorization: Bearer <token>` or `?token=<token>`.
 * A supervisor pass runs every second: re-resolves devices, restarts
   loopbacks that died (with backoff, forgetting crash history after 30 s
   of health), restarts a loopback whose device resolved to a different
-  node, and re-applies desired volumes once a node exists.
+  node, recycles one that stays unlinked, and re-applies desired volumes
+  once a node exists. The pass is bounded: at most three loopback
+  recycles and six seconds of volume work, so it can never approach the
+  systemd watchdog even when every PipeWire call is slow.
 * Level meters are separate `pw-record` processes per device plus one on
   the OBS mic. They are read-only observers; a failing meter is restarted
   and never affects routing.
@@ -293,6 +296,7 @@ so that it explains itself:
 | Level meter fails or PipeWire lacks `pw-record --raw` | meters disabled with a reason; routing unaffected |
 | Browser page from another site calls the API | rejected (cross-site guard); use a token for LAN access |
 | Stream linked to the wrong device (fallback, manual move) | muted for safety and reported; unmuted when the link is right again |
+| Devices present but the session manager does not connect the stream | the loopback is recycled after 8 s, up to 3 times, then reported |
 | OBS mic or mix bus muted/turned down by another program | restored to unity within a second |
 | Non-ASCII device names under a C locale | tool output decoded as UTF-8 regardless of locale |
 

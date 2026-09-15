@@ -201,6 +201,14 @@ class Router:
         self._drift_retry_at: dict[str, float] = {}  # per-route pause after correcting an external volume change
         self._safety_muted: set[str] = set()  # routes muted because their stream is linked to the wrong device
         self._virtual_fix_at = 0.0
+        self._unlinked_since: dict[str, float] = {}
+        self._relink_at: dict[str, float] = {}
+        self._relink_attempts: dict[str, int] = {}
+        # Hard bounds so one supervisor pass can never approach the systemd
+        # watchdog, no matter how slow PipeWire answers.
+        self.max_pass_seconds = 6.0  # wall clock for volume/level work in one pass
+        self.max_restarts_per_pass = 3  # recycles (terminate+spawn) per pass; terminating is the slow part
+        self.relink_after = 8.0  # seconds a present-but-unlinked route may wait before its loopback is recycled
         self.apply_budget = 4  # max wpctl-affected routes per supervisor pass; keeps a pass short
         self._state_timer: threading.Timer | None = None
         self._state_last_saved = 0.0
@@ -414,6 +422,7 @@ class Router:
             if graph is not None:
                 self._refresh_resolution(graph)
 
+            restarts = self.max_restarts_per_pass
             for name in [VIRTUAL, *self.cfg.routes]:
                 proc = self.procs.get(name)
                 if proc is not None and proc.poll() is None:
@@ -421,6 +430,9 @@ class Router:
                         self._failures.pop(name, None)  # healthy for a while: forget crash history
                     # device resolved to a different node (replug, other port, first appearance)?
                     if graph is not None and name != VIRTUAL and self._spec_used.get(name) != self._spec(name):
+                        if restarts <= 0:
+                            continue  # next pass (1 s later) takes the rest; keeps this pass short
+                        restarts -= 1
                         log.info("route %s: target changed, restarting loopback", name)
                         self._terminate(name)
                         self._spawn(name)
@@ -439,12 +451,50 @@ class Router:
                     self.last_error = f"{name} stopped unexpectedly, restarting"
                     continue
                 if self._retry_at.get(name, 0.0) <= now:
-                    self._spawn(name)
+                    self._spawn(name)  # plain spawn is cheap (fork+exec); only recycling is budgeted
             if graph is None:
                 return
+            pass_end = now + self.max_pass_seconds
             self._update_safety(graph)
-            self._enforce_virtual_levels(graph)
-            self._apply_all(graph)
+            self._relink_watchdog(graph, now, restarts)
+            self._enforce_virtual_levels(graph, pass_end)
+            self._apply_all(graph, pass_end)
+
+    def _relink_watchdog(self, graph: Graph, now: float, restarts: int) -> None:
+        """A route whose devices and streams all exist but which is not linked
+        (or linked to the wrong node) is normally waiting for the session
+        manager. If that has not resolved after `relink_after` seconds, recycle
+        the loopback: a fresh stream is linked from scratch. Attempts are
+        limited so a genuinely wrong setup is reported instead of restarted
+        forever."""
+        for name in self.cfg.routes:
+            proc = self.procs.get(name)
+            route = self.cfg.routes[name]
+            src = self._ref_node(route.source_ref, graph)
+            dst = self._ref_node(route.sink_ref, graph)
+            cap = graph.by_name(route.in_node)
+            play = graph.by_name(route.out_node)
+            if proc is None or proc.poll() is not None or src is None or dst is None or cap is None or play is None:
+                self._unlinked_since.pop(name, None)  # nothing to heal while something is missing
+                continue
+            if graph.linked(src.id, cap.id) and graph.linked(play.id, dst.id) and not self._misrouted(name, graph):
+                self._unlinked_since.pop(name, None)
+                self._relink_attempts.pop(name, None)
+                self._relink_at.pop(name, None)
+                continue
+            since = self._unlinked_since.setdefault(name, now)
+            if now - since < self.relink_after or now < self._relink_at.get(name, 0.0) or restarts <= 0:
+                continue
+            attempts = self._relink_attempts.get(name, 0)
+            if attempts >= 3:
+                continue  # reported as a problem instead; restarting clearly does not help
+            self._relink_attempts[name] = attempts + 1
+            self._relink_at[name] = now + 30.0
+            self._unlinked_since[name] = now
+            restarts -= 1
+            log.warning("route %s has not been linked to its devices for %.0fs; recycling its loopback (attempt %d/3)", name, now - since, attempts + 1)
+            self._terminate(name)
+            self._spawn(name)
 
     def _misrouted(self, name: str, graph: Graph) -> list[str]:
         """Names of nodes a route's streams are linked to although they are not
@@ -486,13 +536,15 @@ class Router:
         for stale in list(self._safety_muted - set(self.cfg.routes)):
             self._safety_muted.discard(stale)
 
-    def _enforce_virtual_levels(self, graph: Graph) -> None:
+    def _enforce_virtual_levels(self, graph: Graph, pass_end: float = float("inf")) -> None:
         """The OBS mic and its mix bus belong to the daemon: keep them at
         unity and unmuted no matter what a mixer app or OBS did to them."""
         now = self._clock()
         if now < self._virtual_fix_at:
             return
         for node_name in (self.cfg.virtual.obs_mic_name, self.cfg.virtual.obs_mix_name):
+            if self._clock() >= pass_end:
+                return
             node = graph.by_name(node_name)
             if node is None:
                 continue
@@ -505,7 +557,7 @@ class Router:
                     log.error("cannot restore %s: %s", node_name, exc)
                 self._virtual_fix_at = now + 5.0  # never fight another program every tick
 
-    def _apply_all(self, graph: Graph) -> None:
+    def _apply_all(self, graph: Graph, pass_end: float = float("inf")) -> None:
         """Apply desired volumes with a per-pass budget of wpctl work, and give
         freshly spawned streams a short settle window so they are never audible
         at the wrong volume for a whole tick."""
@@ -519,7 +571,7 @@ class Router:
             if now - self._spawned_at.get(n, -1e9) < 2.0 and n in self.procs and self._applied.get(n) is None
         ]
         if fresh:
-            deadline = now + 0.6
+            deadline = min(now + 0.6, pass_end)
             while True:
                 if all(graph.by_name(self.cfg.routes[n].out_node) is not None for n in fresh):
                     break
@@ -533,7 +585,7 @@ class Router:
                     return
         pending = [n for n in self.cfg.routes if not self._is_applied(n, graph)]
         for name in fresh + [n for n in pending if n not in fresh]:
-            if budget <= 0:
+            if budget <= 0 or self._clock() >= pass_end:
                 return
             if self._apply(name, graph):
                 budget -= 1
@@ -607,9 +659,12 @@ class Router:
             self.cfg = new_cfg
             self.desired = desired
             self.resolved = new_resolved
-            for stale in set(self._failures) - set(new_cfg.routes) - {VIRTUAL}:
+            for stale in (set(self._failures) | set(self._unlinked_since) | set(self._relink_attempts)) - set(new_cfg.routes) - {VIRTUAL}:
                 self._failures.pop(stale, None)
                 self._retry_at.pop(stale, None)
+                self._unlinked_since.pop(stale, None)
+                self._relink_attempts.pop(stale, None)
+                self._relink_at.pop(stale, None)
             self._save_state()
 
             if self._started:
@@ -945,6 +1000,11 @@ class Router:
         # streams linked to the wrong device (remembered manual moves)
         for name, route in cfg.routes.items():
             st = self.route_status(name, graph)
+            if self._relink_attempts.get(name, 0) >= 3 and not st["misrouted_to"] and st["source_present"] and st["sink_present"]:
+                add("error", "not_linking", name, f"Connection {self._route_label(route)} cannot be established",
+                    "Both devices are present, but the audio system does not connect the router's stream to them, even after several retries.",
+                    "This connection is silent.",
+                    "Restart the audio system: systemctl --user restart pipewire wireplumber tfcz-audio. If it persists, check 'journalctl --user -u tfcz-audio' and 'pw-link -l'.")
             if st["misrouted_to"]:
                 add("error", "misrouted", name, f"Connection {self._route_label(route)} is linked to the wrong device",
                     "The audio system connected this stream to " + ", ".join(st["misrouted_to"]) + " instead of the chosen device (a remembered manual move in a mixer app, or a fallback because the device was missing).",

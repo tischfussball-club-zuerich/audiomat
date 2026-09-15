@@ -445,3 +445,79 @@ class SystemEdgeTests(unittest.TestCase):
         code, _ = (200, None)
         st = router.status()  # empty graph -> problems, no exception
         self.assertEqual(st["problems"][0]["code"], "no_audio_system")
+
+
+class SelfHealingTests(unittest.TestCase):
+    def strip_links(self, backend, route="a_to_b"):
+        g = backend.graph()
+        cap = g.by_name(f"tfcz.{route}.in")
+        play = g.by_name(f"tfcz.{route}.out")
+        g.links = [l for l in g.links
+                   if (cap is None or l.input_node != cap.id) and (play is None or l.output_node != play.id)]
+
+    def test_relink_watchdog_recycles_a_stuck_route(self):
+        router, backend = make_router()
+        router.start()
+        clock = [100.0]
+        router._clock = lambda: clock[0]
+        self.strip_links(backend)
+        before = router.procs["a_to_b"]
+        router.reconcile()  # notices it is unlinked and starts the timer
+        self.assertIs(router.procs["a_to_b"], before, "no restart before the grace period")
+        self.assertFalse(router.route_status("a_to_b")["connected"])
+        clock[0] += 10  # longer than relink_after
+        router.reconcile()
+        self.assertIsNot(router.procs["a_to_b"], before, "loopback recycled")
+        self.assertTrue(router.route_status("a_to_b")["connected"])
+        clock[0] += 1
+        router.reconcile()  # the next pass sees it linked again and forgets the attempt
+        self.assertNotIn("a_to_b", router._relink_attempts)
+        self.assertNotIn("a_to_b", router._unlinked_since)
+
+    def test_relink_gives_up_and_reports_instead_of_looping(self):
+        router, backend = make_router()
+        router.start()
+        clock = [100.0]
+        router._clock = lambda: clock[0]
+        self.strip_links(backend)
+        router.reconcile()
+        for _ in range(3):
+            clock[0] += 40
+            self.strip_links(backend)
+            router.reconcile()
+        self.assertEqual(router._relink_attempts["a_to_b"], 3)
+        clock[0] += 40
+        self.strip_links(backend)
+        proc = router.procs["a_to_b"]
+        router.reconcile()
+        self.assertIs(router.procs["a_to_b"], proc, "stopped recycling after 3 attempts")
+        problems = {p["code"]: p for p in router.problems()}
+        self.assertIn("not_linking", problems)
+        self.assertIn("restart the audio system", problems["not_linking"]["fix"].lower())
+
+    def test_pass_deadline_stops_volume_work(self):
+        router, backend = make_router()
+        router.start()
+        for n in router.cfg.routes:
+            router.desired[n].volume = 0.11
+        router._applied.clear()
+        router.max_pass_seconds = 0.0
+        backend.calls.clear()
+        router.reconcile()
+        self.assertFalse(any(c[0] == "set_volume" for c in backend.calls), "no volume work once the pass budget is spent")
+        router.max_pass_seconds = 6.0
+        router.reconcile()
+        self.assertTrue(any(c[0] == "set_volume" for c in backend.calls))
+
+    def test_recycles_are_budgeted_but_respawns_are_not(self):
+        router, backend = make_router()
+        router.start()
+        # every loopback dies at once (PipeWire restart): all come back in one pass
+        for proc, _ in list(backend.processes.values()):
+            proc.crash()
+        clock = [100.0]
+        router._clock = lambda: clock[0]
+        router.reconcile()
+        clock[0] += 60
+        router.reconcile()
+        self.assertTrue(all(n in router.procs for n in router.cfg.routes))
