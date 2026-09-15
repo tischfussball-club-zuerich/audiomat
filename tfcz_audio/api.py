@@ -221,6 +221,23 @@ class Handler(BaseHTTPRequestHandler):
             return ok, {"ok": True, "watching": watched, "available": meters is not None}
         if len(seg) == 3 and seg[0] == "fix" and seg[1] == "device" and write:
             return ok, router.fix_device(seg[2])
+        if len(seg) == 3 and seg[0] == "demo" and seg[1] == "take" and write:
+            # only available against the fake backend: simulate another program grabbing a device
+            from .pw import FakeBackend
+
+            if not isinstance(router.backend, FakeBackend):
+                return HTTPStatus.NOT_FOUND, {"ok": False, "error": "demo endpoints exist only in --fake mode"}
+            alias = seg[2]
+            res = router.resolved.get(alias)
+            node = router.backend.graph().by_name(res.node) if res and res.node else None
+            if node is None:
+                raise UnknownRoute(alias)
+            owner = str(params.get("by", "obs"))
+            if params.get("release") in (True, "true", "1"):
+                node.props.pop("tfcz.fake.owner", None)
+            else:
+                node.props["tfcz.fake.owner"] = owner
+            return ok, router.status()
         if seg == ["levels"] and read:
             meters = self.server.meters
             levels = meters.levels() if meters is not None else {}

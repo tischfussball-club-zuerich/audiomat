@@ -64,6 +64,8 @@ class Node:
     volume: float | None = None  # cubic scale
     mute: bool | None = None
     props: dict[str, Any] = field(default_factory=dict)
+    state: str = ""  # suspended / idle / running / error
+    error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -224,6 +226,9 @@ def describe_node(node: Node, graph: Graph) -> dict[str, Any]:
         "system_mute": bool(node.mute) if node.mute is not None else False,
         "system_volume": node.volume,
         "virtual": node.media_class == "Audio/Source/Virtual" or node.name.startswith("tfcz."),
+        "state": node.state,
+        "error": node.error,
+        "usage": alsa_usage(node),
         "serial": str((device.props.get("device.serial") if device else None) or node.props.get("device.serial") or ""),
         "bus_path": str((device.props.get("device.bus-path") if device else None) or node.props.get("device.bus-path") or ""),
         "port": port_label(str((device.props.get("device.bus-path") if device else None) or node.props.get("device.bus-path") or "")),
@@ -301,6 +306,8 @@ def parse_dump(text: str) -> Graph:
                     description=str(props.get("node.description") or props.get("node.nick") or ""),
                     media_class=str(props.get("media.class", "")),
                     props=props,
+                    state=str(info.get("state", "")),
+                    error=str(info.get("error", "") or ""),
                 )
                 for p in (info.get("params") or {}).get("Props") or []:
                     if not isinstance(p, dict):
@@ -770,3 +777,53 @@ def identity_for(node: Node, graph: Graph) -> dict[str, Any]:
         "port": port_label(bus_path),
         "text": "Recognised by its fixed name in the audio system (built-in or PCI hardware).",
     }
+
+
+# --------------------------------------------------------------------------- #
+# Exclusive use detection: who has the ALSA device open?
+# --------------------------------------------------------------------------- #
+
+PIPEWIRE_COMMS = {"pipewire", "pipewire-pulse", "wireplumber"}
+
+
+def _comm(pid: int, proc_root: str) -> str:
+    try:
+        with open(f"{proc_root}/{pid}/comm", encoding="utf-8", errors="replace") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def alsa_usage(node: Node, proc_root: str = "/proc") -> dict[str, Any]:
+    """Read /proc/asound/cardX/pcmYc|p/subZ/status for the node's ALSA device.
+
+    Returns {open, owner_pid, owner, exclusive}. ``exclusive`` is True when a
+    process other than PipeWire holds the device, which means PipeWire (and
+    therefore this router and every other program) cannot use it.
+    """
+    fake = node.props.get("tfcz.fake.owner")
+    if fake:
+        return {"open": True, "owner_pid": 0, "owner": str(fake), "exclusive": True}
+    card = node.props.get("alsa.card") or node.props.get("api.alsa.pcm.card")
+    if card is None or node.props.get("device.api", "alsa") != "alsa":
+        return {"open": False, "owner_pid": None, "owner": "", "exclusive": False}
+    device = node.props.get("alsa.device", "0")
+    sub = node.props.get("alsa.subdevice", "0")
+    stream = node.props.get("api.alsa.pcm.stream") or ("capture" if node.media_class.startswith("Audio/Source") else "playback")
+    path = f"{proc_root}/asound/card{card}/pcm{device}{'c' if stream == 'capture' else 'p'}/sub{sub}/status"
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return {"open": False, "owner_pid": None, "owner": "", "exclusive": False}
+    if text.strip().startswith("closed"):
+        return {"open": False, "owner_pid": None, "owner": "", "exclusive": False}
+    pid = None
+    for line in text.splitlines():
+        if line.startswith("owner_pid"):
+            try:
+                pid = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                pid = None
+    owner = _comm(pid, proc_root) if pid else ""
+    return {"open": True, "owner_pid": pid, "owner": owner, "exclusive": bool(owner) and owner not in PIPEWIRE_COMMS}

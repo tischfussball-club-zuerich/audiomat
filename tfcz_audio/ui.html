@@ -139,7 +139,7 @@
   <h2>How the sound flows</h2>
   <p class="hint">Left: where sound comes in. Right: where it goes out. Every arrow is one connection you can adjust below. Click an arrow to jump to its control. Green bars show live sound.</p>
   <div id="diagram"></div>
-  <div class="legend"><span>Sound flows</span><span class="off">Turned off</span><span class="miss">Device missing</span></div>
+  <div class="legend"><span>Sound flows</span><span class="off">Turned off</span><span class="miss">Device missing or blocked</span></div>
   <div class="obsline">
     <span style="font-size:22px">📡</span>
     <div style="flex:1;min-width:200px">
@@ -313,7 +313,8 @@
       const a = pos['in:' + c.from], b = pos['out:' + c.to];
       if (!a || !b) return;
       const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
-      const missing = !present(c.from) || !present(c.to);
+      const takenOrErr = a => devs[a] && (devs[a].taken_by || devs[a].error);
+      const missing = !present(c.from) || !present(c.to) || takenOrErr(c.from) || takenOrErr(c.to);
       const off = r.mute || r.volume === 0;
       const flowing = !missing && !off;
       const color = missing ? 'var(--bad)' : flowing ? (c.to === 'obs_mic' ? 'var(--obs)' : 'var(--ok)') : 'var(--muted)';
@@ -323,7 +324,7 @@
       const mx = (x1 + x2) / 2;
       const lx = (1 - t) ** 3 * x1 + 3 * (1 - t) ** 2 * t * mx + 3 * (1 - t) * t * t * mx + t ** 3 * x2;
       const ly = (1 - t) ** 3 * y1 + 3 * (1 - t) ** 2 * t * y1 + 3 * (1 - t) * t * t * y2 + t ** 3 * y2;
-      const label = missing ? 'missing' : r.mute ? 'off' : pct(r.volume);
+      const label = (takenOrErr(c.from) || takenOrErr(c.to)) ? 'blocked' : missing ? 'missing' : r.mute ? 'off' : pct(r.volume);
       const sel = state.selected === name;
       svg += `<g class="route" data-route="${esc(name)}" style="cursor:pointer" opacity="${sel || !state.selected ? 1 : 0.35}">
         <path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="transparent" stroke-width="18"/>
@@ -338,15 +339,17 @@
       const lvl = state.levels[isObs ? 'obs' : alias];
       const lw = levelWidth(lvl);
       const dev = devs[alias];
-      const status = !ok ? 'not connected' : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (state.levelsAvailable ? 'no signal' : 'connected'));
+      const taken = dev && dev.taken_by;
+      const status = !ok ? 'not connected' : taken ? ('⚠ taken over by ' + taken) : (dev && dev.error) ? '⚠ audio system error' : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (state.levelsAvailable ? 'no signal' : 'connected'));
       const sub2 = isObs ? 'what your viewers hear' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
-      const stroke = !ok ? 'var(--bad)' : isObs ? 'var(--obs)' : 'var(--line)';
+      const broken = !ok || taken || (dev && dev.error);
+      const stroke = broken ? 'var(--bad)' : isObs ? 'var(--obs)' : 'var(--line)';
       const fill = isObs ? 'var(--obs-soft)' : 'var(--card)';
       return `<g>
-        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${!ok || isObs ? 2.5 : 1.5}" ${!ok ? 'stroke-dasharray="6 4"' : ''}/>
+        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${broken || isObs ? 2.5 : 1.5}" ${!ok ? 'stroke-dasharray="6 4"' : ''}/>
         <text x="${p.x + 14}" y="${p.y + 30}" font-size="22">${icon(alias, kind)}</text>
         <text x="${p.x + 48}" y="${p.y + 24}" font-size="15" font-weight="600" fill="${!ok ? 'var(--bad)' : 'var(--text)'}">${esc(human(alias))}</text>
-        <text x="${p.x + 48}" y="${p.y + 41}" font-size="12" fill="${!ok ? 'var(--bad)' : 'var(--muted)'}">${esc(status)}</text>
+        <text x="${p.x + 48}" y="${p.y + 41}" font-size="12" fill="${broken ? 'var(--bad)' : 'var(--muted)'}">${esc(status)}</text>
         <text x="${p.x + 48}" y="${p.y + 55}" font-size="11" fill="var(--muted)">${esc(sub2.slice(0, 44))}</text>
         ${ok ? `<rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${p.w - 62}" height="6" rx="3" fill="var(--line)"/>
         <rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${(p.w - 62) * lw / 100}" height="6" rx="3" fill="${isObs ? 'var(--obs)' : 'var(--ok)'}"/>` : ''}
@@ -515,7 +518,7 @@
         `<label title="${esc(d.node || '')}"><span class="dot ${d.present ? 'ok' : 'bad'}"></span>${esc(human(alias))} <span class="hint" style="margin:0;display:inline">${kind === 'from' ? '(input)' : kind === 'to' ? '(output)' : ''}</span></label>
          <div><div class="row"><select data-alias="${esc(alias)}" style="flex:1">${deviceOptions(kind, d.node)}</select>
          <button class="danger" data-remove="${esc(alias)}" title="${use ? 'in use by a connection' : 'remove'}" ${use ? 'disabled' : ''}>✕</button></div>
-         <div class="hint" style="margin:2px 0 0">${esc(d.identity ? d.identity.text : '')}</div></div>`);
+         <div class="hint" style="margin:2px 0 0">${d.taken_by ? `<span style="color:var(--bad)">Taken over by ${esc(d.taken_by)}. </span>` : ''}${esc(d.identity ? d.identity.text : '')}</div></div>`);
     }
     grid.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', () => {
       delete state.config.devices[b.dataset.remove]; renderDevices(); renderRouteForm();

@@ -96,6 +96,18 @@ Every UI change rewrites `config.toml` (comments in the file are not kept)
 and hot-reloads the daemon. Hand edits to the file still work; restart the
 service afterwards.
 
+## Sharing devices with OBS
+
+PipeWire shares every device, so the router and OBS can both read the HDMI
+audio at the same time. In OBS use **Audio Input Capture (PipeWire)** (or
+the PulseAudio variant) for the game sound. Never use the old **ALSA Input
+Capture** source: it opens the sound card directly and locks PipeWire out.
+
+The daemon detects that case. It reads the device owner from
+`/proc/asound` and PipeWire's node state, and reports "Game sound is taken
+over by OBS" with the fix. The diagram marks the device and its arrows as
+blocked. In `--fake` mode, `POST /demo/take/<alias>` simulates it.
+
 ## Telling identical headsets apart
 
 Two headsets of the same model are the classic trap: after a reboot the

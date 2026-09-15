@@ -549,10 +549,13 @@ class Router:
                     else "Recognised by matching hardware properties."
                 ),
             }
+        usage = info["usage"] if info else {"exclusive": False, "owner": ""}
         return {
             "label": self._label(alias),
             "node": res.node,
             "present": res.present,
+            "taken_by": usage["owner"] if usage["exclusive"] else None,
+            "error": (info or {}).get("error") or None,
             "ambiguous": res.ambiguous,
             "friendly": info["friendly"] if info else None,
             "bus": info["bus"] if info else None,
@@ -637,6 +640,21 @@ class Router:
                 add("error", "device_missing", alias, f"{label} is not connected", why,
                     "These connections are silent: " + ", ".join(routes_using), fix, routes=routes_using)
                 continue
+            info = describe_node(node, graph)
+            usage = info["usage"]
+            if usage["exclusive"]:
+                owner = usage["owner"] or "another program"
+                pretty = {"obs": "OBS", "obs64": "OBS"}.get(owner.lower(), owner)
+                add("error", "device_taken", alias, f"{label} is taken over by {pretty}",
+                    f"{pretty} opened the device directly, bypassing the computer's audio system. Only one program can do that, and it locks everyone else out.",
+                    "Silent for all connections using it, and for the level bar. " + ("OBS still hears it, nobody else does." if pretty == "OBS" else ""),
+                    f"In {pretty}, use a source that goes through the audio system: in OBS pick 'Audio Input Capture (PipeWire)' instead of 'ALSA Input Capture' for this device. Or close {pretty}.",
+                    owner=owner)
+            elif node.state == "error" or info["error"]:
+                add("error", "device_error", alias, f"The audio system cannot use {label}",
+                    f"The device reports an error: {info['error'] or 'unknown'}. Usually another program holds it, or the driver is stuck.",
+                    "Silent for all connections using it.",
+                    "Close other audio programs; unplug and replug the device; if it persists, restart the audio system: systemctl --user restart pipewire wireplumber")
             if res.ambiguous:
                 add("warning", "device_ambiguous", alias, f"More than one device matches {label}",
                     f"{res.candidates} connected devices look the same to the computer.",
@@ -696,11 +714,20 @@ class Router:
                         "Microphone and headphones belong to the same headset.", "Some people like the sidetone, others find it distracting.",
                         "Switch it off or turn it down if it bothers them.")
 
-        # identity hints: port-bound devices are worth knowing about
+        # identity hints: port-bound devices are worth knowing about (once per headset)
+        seen_ports: dict[tuple[str, str], str] = {}
         for alias in sorted(used_aliases):
             spec = cfg.devices[alias]
             if "device.bus-path" in spec.match and self.resolved.get(alias, Resolved(None, False)).present:
-                add("info", "port_bound", alias, f"{self._label(alias)} must stay in {self._port_from_match(spec.match)}",
+                base, _, kind = alias.rpartition("_")
+                group = base if kind in ("mic", "out") else alias
+                key = (group, self._port_from_match(spec.match))
+                if key in seen_ports:
+                    continue
+                seen_ports[key] = alias
+                name = human(cfg, group) if kind in ("mic", "out") else self._label(alias)
+                what = f"{name}'s headset" if kind in ("mic", "out") else name
+                add("info", "port_bound", alias, f"{what} must stay in {key[1]}",
                     "It is recognised by its USB port because identical devices report no serial number.",
                     "If it is moved to another port it counts as missing.", "Label the plug and the port.")
 

@@ -45,35 +45,53 @@ def _load_config(args: argparse.Namespace) -> Config:
 
 
 def _populate_fake(backend: Any, cfg: Config) -> None:
-    """Build a believable fake graph: the config's devices grouped into
-    headsets, plus unassigned hardware so the setup wizard has choices."""
-    groups: dict[str, dict[str, str]] = {}
-    singles: list[tuple[str, str]] = []
+    """Build a believable fake graph that satisfies the config: the config's
+    devices grouped into headsets (static names or serial/port matchers), plus
+    unassigned hardware so the setup wizard has choices."""
+    import re
+
+    groups: dict[str, dict[str, Any]] = {}
     for alias, spec in cfg.devices.items():
-        node = spec.node or (spec.match.get("device.serial") or spec.match.get("device.bus-path") or alias)
-        if alias.endswith(("_mic", "_out")):
-            base, kind = alias.rsplit("_", 1)
-            groups.setdefault(base, {})[kind] = node
-        else:
-            singles.append((alias, node))
-    # two IDENTICAL headsets (same model, no serial) in different USB ports,
-    # exactly the hard case: they can only be told apart by the port.
+        base, _, kind = alias.rpartition("_")
+        if kind not in ("mic", "out"):
+            base, kind = alias, "mic"
+        groups.setdefault(base, {})[kind] = spec
+
+    used_ports: set[str] = set()
     for i, (base, parts) in enumerate(groups.items()):
-        backend.add_physical(
-            "Logitech USB Headset", "usb", parts.get("mic"), parts.get("out"), form_factor="headset",
-            extra={"device.serial": "Logitech_Logitech_USB_Headset", "device.bus-path": f"pci-0000:00:14.0-usb-0:{i + 1}:1.0",
-                   "device.vendor.id": "046d", "device.product.id": "0a44"},
-        )
-    for alias, node in singles:
-        if "output" in node:
-            backend.add_physical(alias.replace("_", " ").title(), "usb", None, node)
+        specs = list(parts.values())
+        serial = next((s.match["device.serial"] for s in specs if "device.serial" in s.match), None)
+        bus_path = next((s.match["device.bus-path"] for s in specs if "device.bus-path" in s.match), None)
+        label = cfg.labels.get(base, base).replace("_", " ").title()
+        is_hdmi = not any(k == "out" for k in parts) and ("hdmi" in base or "game" in base or "hws" in base)
+        if is_hdmi:
+            node = specs[0].node or f"alsa_input.pci-0000_03_00.0.hws-{i + 1}"
+            backend.add_physical("HWS", "pci", node, None, extra={"alsa.card_name": "HWS", "api.alsa.card": str(i + 1)})
+            continue
+        safe = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or f"Headset{i}"
+        mic = parts["mic"].node if "mic" in parts and parts["mic"].node else f"alsa_input.usb-{safe}-00.mono-fallback"
+        out = parts["out"].node if "out" in parts and parts["out"].node else (f"alsa_output.usb-{safe}-00.analog-stereo" if "out" in parts else None)
+        extra = {"device.vendor.id": "046d", "device.product.id": "0a44"}  # identical model unless a serial says otherwise
+        if serial:
+            extra.update({"device.serial": serial, "device.vendor.id": "0b0e", "device.product.id": "0412"})
         else:
-            backend.add_physical("HWS", "pci", node, None, extra={"alsa.card_name": "HWS", "api.alsa.card": "1"})
-    # extra hardware that is not assigned yet: a headset WITH a serial number
-    backend.add_physical("Jabra Speak 510", "usb", "alsa_input.usb-Jabra_Speak_510_A1B2C3-00.mono-fallback",
-                         "alsa_output.usb-Jabra_Speak_510_A1B2C3-00.analog-stereo", form_factor="headset",
-                         extra={"device.serial": "Jabra_Speak_510_A1B2C3", "device.bus-path": "pci-0000:00:14.0-usb-0:4:1.0",
-                                "device.vendor.id": "0b0e", "device.product.id": "0412"})
+            extra["device.serial"] = "Logitech_Logitech_USB_Headset"
+        extra["device.bus-path"] = bus_path or f"pci-0000:00:14.0-usb-0:{i + 1}:1.0"
+        used_ports.add(extra["device.bus-path"])
+        backend.add_physical("Jabra Speak 510" if serial else "Logitech USB Headset", "usb", mic, out, form_factor="headset", extra=extra)
+
+    # extra hardware that is not assigned yet
+    if not any("Jabra" in d.description for d in backend.graph().devices.values()):
+        backend.add_physical("Jabra Speak 510", "usb", "alsa_input.usb-Jabra_Speak_510_A1B2C3-00.mono-fallback",
+                             "alsa_output.usb-Jabra_Speak_510_A1B2C3-00.analog-stereo", form_factor="headset",
+                             extra={"device.serial": "Jabra_Speak_510_A1B2C3", "device.bus-path": "pci-0000:00:14.0-usb-0:4:1.0",
+                                    "device.vendor.id": "0b0e", "device.product.id": "0412"})
+    port = 5
+    if len([g for g in groups.values() if "out" in g]) < 2:
+        backend.add_physical("Logitech USB Headset", "usb", "alsa_input.usb-Logitech_Logitech_USB_Headset-01.mono-fallback",
+                             "alsa_output.usb-Logitech_Logitech_USB_Headset-01.analog-stereo", form_factor="headset",
+                             extra={"device.serial": "Logitech_Logitech_USB_Headset", "device.bus-path": f"pci-0000:00:14.0-usb-0:{port}:1.0",
+                                    "device.vendor.id": "046d", "device.product.id": "0a44"})
     for n in (2, 3, 4):
         backend.add_physical("HWS", "pci", f"alsa_input.pci-0000_03_00.0.hws-{n}", None,
                              extra={"alsa.card_name": "HWS", "api.alsa.card": str(n)})
@@ -134,8 +152,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     def heartbeat() -> None:
         notifier.watchdog()
-        problems = router.problems()
-        notifier.status("OK: all routes linked" if not problems else f"{len(problems)} problem(s): {problems[0]['text']}")
+        problems = [p for p in router.problems() if p["level"] in ("error", "warning")]
+        notifier.status("OK: all routes linked" if not problems else f"{len(problems)} problem(s): {problems[0]['title']}")
 
     ticks = [ensure_http, heartbeat]
     if meters is not None:
