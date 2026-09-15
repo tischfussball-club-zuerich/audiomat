@@ -24,12 +24,7 @@ ENABLE_BOOT=1
 [[ ${1:-} == "--no-boot" ]] && ENABLE_BOOT=0
 
 if [[ ${1:-} == "--uninstall" ]]; then
-  systemctl --user disable --now tfcz-audio 2>/dev/null || true
-  rm -f "$UNIT_DIR/tfcz-audio.service" "$BIN"
-  rm -rf "$LIB"
-  systemctl --user daemon-reload
-  echo "removed. Config kept at $CONFIG"
-  exit 0
+  exec "$HERE/uninstall.sh"
 fi
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing: $1  ->  sudo apt install $2" >&2; exit 1; }; }
@@ -94,8 +89,10 @@ if [[ ! -f $CONFIG ]]; then
   first_install=1
   "$BIN" init-config "$CONFIG"   # starter config; the web UI wizard adds devices and connections
 fi
-systemctl --user enable tfcz-audio >/dev/null
-systemctl --user restart tfcz-audio
+systemctl --user enable tfcz-audio >/dev/null || true
+# Type=notify: restart blocks until READY; never let a failed start abort the
+# diagnostics below
+systemctl --user restart tfcz-audio || true
 sleep 2
 if systemctl --user is-active --quiet tfcz-audio; then
   echo "==> service is running"
@@ -135,7 +132,8 @@ if (( ENABLE_BOOT )); then
     echo "    adding $ME to the group(s): ${missing_groups[*]}  (device access / realtime priority before anyone logs in)"
     echo "    (sudo password may be asked)"
     if command -v sudo >/dev/null 2>&1 && sudo usermod -aG "$(IFS=,; echo "${missing_groups[*]}")" "$ME"; then
-      echo "    done. Takes effect at the next boot (or after logging out and in)."
+      echo "    done. Takes effect at the next boot (your running session keeps the old groups;"
+      echo "    alternatively: sudo systemctl restart user@$(id -u)  -- this restarts all your session services)."
     else
       echo "    could not add the group(s). Run:  sudo usermod -aG $(IFS=,; echo "${missing_groups[*]}") $ME" >&2
     fi

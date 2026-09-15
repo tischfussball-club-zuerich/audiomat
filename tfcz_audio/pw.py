@@ -101,6 +101,16 @@ class Graph:
     nodes: dict[int, Node] = field(default_factory=dict)
     links: list[Link] = field(default_factory=list)
     devices: dict[int, Device] = field(default_factory=dict)
+    defaults: dict[str, str] = field(default_factory=dict)  # default.audio.sink / default.audio.source -> node.name
+
+    def linked(self, output_node: int, input_node: int) -> bool:
+        return any(l.output_node == output_node and l.input_node == input_node for l in self.links)
+
+    def peers_of_input(self, node_id: int) -> set[int]:
+        return {l.output_node for l in self.links if l.input_node == node_id}
+
+    def peers_of_output(self, node_id: int) -> set[int]:
+        return {l.input_node for l in self.links if l.output_node == node_id}
 
     def by_name(self, name: str) -> Node | None:
         for node in self.nodes.values():
@@ -333,6 +343,17 @@ def parse_dump(text: str) -> Graph:
                     api=str(props.get("device.api", "")),
                     props=props,
                 )
+            elif otype == "PipeWire:Interface:Metadata":
+                if str((obj.get("props") or info.get("props") or {}).get("metadata.name", "")) == "default":
+                    for entry in obj.get("metadata") or []:
+                        if not isinstance(entry, dict):
+                            continue
+                        key = str(entry.get("key", ""))
+                        if key in ("default.audio.sink", "default.audio.source", "default.configured.audio.sink", "default.configured.audio.source"):
+                            value = entry.get("value")
+                            name = value.get("name") if isinstance(value, dict) else None
+                            if name:
+                                graph.defaults[key] = str(name)
             elif otype == "PipeWire:Interface:Link":
                 try:
                     graph.links.append(

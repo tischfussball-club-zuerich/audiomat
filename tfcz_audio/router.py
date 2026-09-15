@@ -198,6 +198,7 @@ class Router:
         self._graph_cache: tuple[float, Graph] | None = None
         self._graph_fetch_lock = threading.Lock()  # concurrent cache misses share one pw-dump
         self._apply_retry_at: dict[str, float] = {}  # per-route backoff after a failed wpctl call
+        self._drift_retry_at: dict[str, float] = {}  # per-route pause after correcting an external volume change
         self.apply_budget = 4  # max wpctl-affected routes per supervisor pass; keeps a pass short
         self._state_timer: threading.Timer | None = None
         self._state_last_saved = 0.0
@@ -328,6 +329,7 @@ class Router:
         self._retry_at.clear()
         self._failures.clear()
         self._apply_retry_at.clear()
+        self._drift_retry_at.clear()
         self.pw_recovered_count += 1
 
     def _terminate(self, name: str) -> None:
@@ -472,8 +474,19 @@ class Router:
         node = graph.by_name(self.cfg.routes[name].out_node)
         if node is None:
             return True  # nothing to do until it exists
-        want = self.desired[name]
-        return self._applied.get(name) == (node.id, want.volume, want.mute)
+        want = self.desired.get(name)
+        if want is None:
+            return True
+        if self._applied.get(name) != (node.id, want.volume, want.mute):
+            return False
+        # applied by us, but does the node still agree? (WirePlumber may restore an old value after us)
+        drift = (node.volume is not None and abs(node.volume - want.volume) > 0.005) or (node.mute is not None and bool(node.mute) != want.mute)
+        if drift and self._clock() >= self._drift_retry_at.get(name, 0.0):
+            log.info("route %s: volume drifted (node %.3f/%s, want %.3f/%s); re-applying", name, node.volume or 0, node.mute, want.volume, want.mute)
+            self._applied.pop(name, None)
+            self._drift_retry_at[name] = self._clock() + 5.0  # never fight another program every tick
+            return False
+        return True
 
     def run_forever(
         self,
@@ -672,6 +685,20 @@ class Router:
         cap = graph.by_name(route.in_node)
         play = graph.by_name(route.out_node)
         proc = self.procs.get(name)
+        # linked to the RIGHT devices? (a manual move in pavucontrol is remembered by WirePlumber)
+        in_ok = bool(cap and src and graph.linked(src.id, cap.id))
+        out_ok = bool(play and dst and graph.linked(play.id, dst.id))
+        wrong: list[str] = []
+        if cap and src and not in_ok:
+            for peer in graph.peers_of_input(cap.id):
+                n = graph.nodes.get(peer)
+                if n is not None:
+                    wrong.append(n.description or n.name)
+        if play and dst and not out_ok:
+            for peer in graph.peers_of_output(play.id):
+                n = graph.nodes.get(peer)
+                if n is not None:
+                    wrong.append(n.description or n.name)
         return {
             "name": name,
             "description": route.description,
@@ -687,7 +714,8 @@ class Router:
             "running": proc is not None and proc.poll() is None,
             "source_present": src is not None,
             "sink_present": dst is not None,
-            "connected": bool(cap and play and graph.has_input_link(cap.id) and graph.has_output_link(play.id)),
+            "connected": in_ok and out_ok,
+            "misrouted_to": wrong,
         }
 
     def device_status(self, alias: str, graph: Graph) -> dict[str, Any]:
@@ -837,6 +865,30 @@ class Router:
                     "The device's own volume in the computer's sound settings is at 0.",
                     "Everything from or to it is nearly silent.",
                     "Click Fix to set it to 100 %, or raise it in the sound settings.", fixable=True)
+
+        # system default output/input pointing at our virtual nodes
+        for key, label in (("default.audio.sink", "output"), ("default.audio.source", "input")):
+            target = graph.defaults.get(key, "")
+            if target.startswith("tfcz."):
+                if label == "output":
+                    add("error", "default_into_obs", "obs_mic", "System sounds are going into the OBS microphone",
+                        "The computer's default output is the router's mix bus (probably because no other output is connected right now). Notification sounds, browser audio and so on end up on the stream.",
+                        "Your viewers hear the computer's sounds through the microphone channel.",
+                        "Plug the headsets in, or choose another output device in the system sound settings (wpctl set-default <id>).")
+                else:
+                    add("warning", "default_source_is_obs", "obs_mic", "The computer's default microphone is the OBS microphone",
+                        "Programs that just use 'the default microphone' now record the router's mix.",
+                        "Usually harmless; OBS should select 'TFCZ OBS Mic' explicitly anyway.",
+                        "Pick a real microphone as default in the sound settings if another program needs it.")
+
+        # streams linked to the wrong device (remembered manual moves)
+        for name, route in cfg.routes.items():
+            st = self.route_status(name, graph)
+            if st["misrouted_to"] and st["source_present"] and st["sink_present"]:
+                add("error", "misrouted", name, f"Connection {self._route_label(route)} is linked to the wrong device",
+                    "Something moved this stream by hand (e.g. in a mixer app) and the audio system remembered it: " + ", ".join(st["misrouted_to"]),
+                    "The sound goes somewhere else than the arrow shows.",
+                    "Restart the service to re-create the connection (systemctl --user restart tfcz-audio), then avoid moving 'TFCZ' streams in mixer apps.")
 
         # routes to OBS
         obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref == OBS_MIC]

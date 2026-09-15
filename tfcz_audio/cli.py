@@ -368,7 +368,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
         with socket.socket() as sock:
             sock.settimeout(0.5)
-            if sock.connect_ex((cfg.api.listen if cfg.api.listen != "0.0.0.0" else "127.0.0.1", cfg.api.port)) == 0:
+            probe_host = "127.0.0.1" if cfg.api.listen in ("0.0.0.0", "::", "", "localhost") else cfg.api.listen
+            if sock.connect_ex((probe_host, cfg.api.port)) == 0:
                 ok(f"web UI answers on http://{cfg.api.listen}:{cfg.api.port}/")
             else:
                 warn(f"nothing listens on port {cfg.api.port}", "systemctl --user start tfcz-audio   (then: journalctl --user -u tfcz-audio -n 50)")
@@ -381,7 +382,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             ok("service enabled at login")
         else:
             warn("service is not enabled", "./install.sh   (or: systemctl --user enable --now tfcz-audio)")
-        user = os.environ.get("USER", "")
+        import pwd
+
+        user = pwd.getpwuid(os.getuid()).pw_name
         rc, out = _run(["loginctl", "show-user", str(os.getuid()), "-p", "Linger"])
         if "Linger=yes" in out:
             ok("starts at boot without login (lingering enabled)")
@@ -391,19 +394,34 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         try:
             import grp
 
-            groups = [g.gr_name for g in grp.getgrall() if user in g.gr_mem]
-            if "audio" in groups or grp.getgrgid(os.getgid()).gr_name == "audio":
-                ok("member of the 'audio' group (devices usable before login)")
-            else:
-                warn("not in the 'audio' group: before the first login PipeWire may not be allowed to open the sound devices",
-                     f"sudo usermod -aG audio {user}   (then reboot)")
-            if "pipewire" in groups:
-                ok("member of the 'pipewire' group (realtime priority for the audio helpers without a login)")
-            else:
-                warn("not in the 'pipewire' group: without a desktop login the audio helpers run without realtime priority (risk of crackles under load)",
-                     f"sudo usermod -aG pipewire {user}   (then reboot)")
+            effective = set()
+            for gid in os.getgroups():
+                try:
+                    effective.add(grp.getgrgid(gid).gr_name)
+                except KeyError:
+                    pass
+            on_disk = {g.gr_name for g in grp.getgrall() if user in g.gr_mem}
+            for group, why in (("audio", "devices usable before login"), ("pipewire", "realtime priority for the audio helpers without a login")):
+                if group in effective:
+                    ok(f"member of the '{group}' group ({why})")
+                elif group in on_disk:
+                    warn(f"'{group}' group was added but is not active yet for running services",
+                         "reboot (or: sudo systemctl restart user@$(id -u), which restarts your session services)")
+                else:
+                    warn(f"not in the '{group}' group ({why})", f"sudo usermod -aG {group} {user}   (then reboot)")
         except (KeyError, OSError):
             pass
+        # realtime limit as seen by user services (PAM limits must reach user@.service)
+        rc, out = _run(["systemd-run", "--user", "--quiet", "--pipe", "--wait", "cat", "/proc/self/limits"], timeout=10)
+        if rc == 0:
+            line = next((l for l in out.splitlines() if "realtime priority" in l.lower()), "")
+            parts = line.split()
+            hard = parts[-2] if len(parts) >= 3 else "?"
+            if hard not in ("0", "?"):
+                ok(f"user services may use realtime priority (limit {hard})")
+            else:
+                warn("user services have no realtime priority limit: audio helpers run without RT when nobody is logged in",
+                     "add the user to the 'pipewire' group and make sure /etc/pam.d/systemd-user contains 'session required pam_limits.so'; reboot")
 
     print()
     if problems:

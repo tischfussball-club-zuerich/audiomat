@@ -276,3 +276,87 @@ class ShutdownTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, out[-2000:])
             self.assertNotIn("Traceback", out)
             self.assertIn("stopped", out)
+
+
+class SecondReviewTests(unittest.TestCase):
+    def test_connected_requires_links_to_the_right_devices(self):
+        router, backend = make_router()
+        router.start()
+        st = router.route_status("a_to_b")
+        self.assertTrue(st["connected"])
+        self.assertEqual(st["misrouted_to"], [])
+        # simulate WirePlumber moving the playback stream to another sink (remembered manual move)
+        g = backend.graph()
+        play = g.by_name("tfcz.a_to_b.out")
+        g.links = [l for l in g.links if l.output_node != play.id]
+        backend.link("tfcz.a_to_b.out", "alsa_output.a")
+        st = router.route_status("a_to_b")
+        self.assertFalse(st["connected"])
+        self.assertEqual(st["misrouted_to"], ["alsa_output.a"])
+        codes = {p["code"]: p for p in router.problems()}
+        self.assertIn("misrouted", codes)
+        self.assertEqual(codes["misrouted"]["level"], "error")
+
+    def test_volume_drift_is_corrected_but_not_fought_every_tick(self):
+        router, backend = make_router()
+        router.start()
+        clock = [100.0]
+        router._clock = lambda: clock[0]
+        node = backend.graph().by_name("tfcz.hdmi_to_a.out")
+        node.volume = 1.0  # something else changed it after we applied 0.6
+        backend.calls.clear()
+        router.reconcile()
+        self.assertEqual(backend.graph().by_name("tfcz.hdmi_to_a.out").volume, 0.6)
+        self.assertTrue(any(c[0] == "set_volume" for c in backend.calls))
+        # drift again immediately: we wait 5 s before re-applying instead of fighting
+        backend.graph().by_name("tfcz.hdmi_to_a.out").volume = 1.0
+        backend.calls.clear()
+        router.reconcile()
+        self.assertFalse(any(c[0] == "set_volume" for c in backend.calls))
+        clock[0] += 6
+        router.reconcile()
+        self.assertTrue(any(c[0] == "set_volume" for c in backend.calls))
+
+    def test_system_default_into_obs_mic_is_reported(self):
+        router, backend = make_router()
+        router.start()
+        backend.graph().defaults["default.audio.sink"] = "tfcz.obsmix"
+        codes = {p["code"]: p for p in router.problems()}
+        self.assertIn("default_into_obs", codes)
+        self.assertEqual(codes["default_into_obs"]["level"], "error")
+        backend.graph().defaults["default.audio.sink"] = "alsa_output.a"
+        self.assertNotIn("default_into_obs", {p["code"] for p in router.problems()})
+
+    def test_parse_dump_reads_default_metadata(self):
+        import json
+
+        from tfcz_audio.pw import parse_dump
+
+        dump = json.dumps([
+            {"id": 30, "type": "PipeWire:Interface:Metadata", "props": {"metadata.name": "default"},
+             "metadata": [{"subject": 0, "key": "default.audio.sink", "type": "Spa:String:JSON", "value": {"name": "tfcz.obsmix"}},
+                          {"subject": 0, "key": "default.audio.source", "type": "Spa:String:JSON", "value": {"name": "alsa_input.x"}}]},
+        ])
+        g = parse_dump(dump)
+        self.assertEqual(g.defaults["default.audio.sink"], "tfcz.obsmix")
+        self.assertEqual(g.defaults["default.audio.source"], "alsa_input.x")
+
+    def test_setup_rejects_headset_output_as_game_and_names_descriptions(self):
+        from tfcz_audio import edit
+        from tfcz_audio.config import ConfigError
+        from .test_identity import twin_backend
+        from tfcz_audio.config import parse
+        import tomllib
+        from .helpers import MINIMAL
+
+        cfg = parse(tomllib.loads(MINIMAL)); cfg.state_file = None
+        router = Router(cfg, twin_backend(), node_wait=0.1, sleep=lambda s: None)
+        router.start()
+        a = {"mic": "alsa_input.usb-Logitech-01.mono-fallback", "out": "alsa_output.usb-Logitech-01.analog-stereo", "label": "Anna"}
+        b = {"mic": "alsa_input.usb-Jabra_A1B2-00.mono-fallback", "out": "alsa_output.usb-Jabra_A1B2-00.analog-stereo", "label": "Ben"}
+        with self.assertRaises(ConfigError):
+            edit.setup(router, {"headset_a": a, "headset_b": b, "game": b["out"]})
+        st = edit.setup(router, {"headset_a": a, "headset_b": b, "game": "alsa_input.pci-0000_03_00.0.hws-1", "game_label": "Switch"})
+        self.assertEqual(router.cfg.routes["a_to_b"].description, "Anna talks to Ben")
+        self.assertEqual(router.cfg.routes["game_to_b"].description, "Switch for Ben")
+        self.assertTrue(st["routes"]["game_to_b"]["connected"])

@@ -176,17 +176,18 @@ def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
         game_volume = float(body.get("game_volume", 0.6))
     except (TypeError, ValueError):
         raise EditError("game_volume must be a number") from None
-    if game and game in (a_mic, b_mic):
-        raise EditError("The game sound input cannot be one of the headset microphones")
+    if game and game in (a_mic, b_mic, a_out, b_out):
+        raise EditError("The game sound input cannot be part of a headset; pick the HDMI capture input")
 
     def mutate(data: dict[str, Any]) -> None:
         devices = {"headset_a_mic": ids[a_mic], "headset_a_out": ids[a_out], "headset_b_mic": ids[b_mic], "headset_b_out": ids[b_out]}
-        labels = {"headset_a": a_label or "Headset A", "headset_b": b_label or "Headset B"}
+        na, nb, ng = a_label or "Headset A", b_label or "Headset B", game_label or "Game sound"
+        labels = {"headset_a": na, "headset_b": nb}
         routes: dict[str, Any] = {
-            "a_to_b": {"description": "Person A talks to person B", "from": "headset_a_mic", "to": "headset_b_out", "volume": 1.0},
-            "b_to_a": {"description": "Person B talks to person A", "from": "headset_b_mic", "to": "headset_a_out", "volume": 1.0},
-            "a_to_obs": {"description": "Person A on the stream", "from": "headset_a_mic", "to": OBS_MIC, "volume": 1.0},
-            "b_to_obs": {"description": "Person B on the stream", "from": "headset_b_mic", "to": OBS_MIC, "volume": 1.0},
+            "a_to_b": {"description": f"{na} talks to {nb}", "from": "headset_a_mic", "to": "headset_b_out", "volume": 1.0},
+            "b_to_a": {"description": f"{nb} talks to {na}", "from": "headset_b_mic", "to": "headset_a_out", "volume": 1.0},
+            "a_to_obs": {"description": f"{na} on the stream", "from": "headset_a_mic", "to": OBS_MIC, "volume": 1.0},
+            "b_to_obs": {"description": f"{nb} on the stream", "from": "headset_b_mic", "to": OBS_MIC, "volume": 1.0},
         }
         presets: dict[str, Any] = {
             "everything_on": {"a_to_b": 1.0, "b_to_a": 1.0, "a_to_obs": 1.0, "b_to_obs": 1.0},
@@ -195,9 +196,9 @@ def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
         }
         if game:
             devices[GAME_ALIAS] = ids[str(game)]
-            labels[GAME_ALIAS] = game_label or "Game sound"
-            routes["game_to_a"] = {"description": "Game sound for person A", "from": GAME_ALIAS, "to": "headset_a_out", "volume": game_volume}
-            routes["game_to_b"] = {"description": "Game sound for person B", "from": GAME_ALIAS, "to": "headset_b_out", "volume": game_volume}
+            labels[GAME_ALIAS] = ng
+            routes["game_to_a"] = {"description": f"{ng} for {na}", "from": GAME_ALIAS, "to": "headset_a_out", "volume": game_volume}
+            routes["game_to_b"] = {"description": f"{ng} for {nb}", "from": GAME_ALIAS, "to": "headset_b_out", "volume": game_volume}
             presets["everything_on"].update({"game_to_a": game_volume, "game_to_b": game_volume})
             presets["game_quiet"] = {"game_to_a": round(game_volume / 2, 2), "game_to_b": round(game_volume / 2, 2)}
             presets["game_off"] = {"game_to_a": {"mute": True}, "game_to_b": {"mute": True}}
