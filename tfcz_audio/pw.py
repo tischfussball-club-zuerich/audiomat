@@ -626,6 +626,9 @@ class FakeBackend:
 
     def __init__(self, devices: list[tuple[str, str]] | None = None):
         self._graph = Graph()
+        # a healthy system: session manager connected, default metadata present
+        self._graph.clients.add("WirePlumber")
+        self._graph.has_default_metadata = True
         self._next_id = 30
         self.calls: list[tuple] = []
         self.processes: dict[int, tuple[FakeProcess, LoopbackSpec]] = {}
