@@ -54,4 +54,7 @@ if (( purge )); then
 else
   echo "kept config in $CONFIG_DIR and state in $STATE_DIR (use --purge to delete them)"
 fi
+if loginctl show-user "$USER" -p Linger 2>/dev/null | grep -q "Linger=yes"; then
+  echo "note: start-at-boot (lingering) for $USER is left enabled; to undo:  loginctl disable-linger $USER"
+fi
 echo "done. The OBS source 'TFCZ OBS Mic' disappears with the service; remove it from your OBS scene."
