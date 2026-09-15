@@ -112,8 +112,12 @@ def _single_instance() -> Any:
     (e.g. started by hand while the service runs) would fight over the same
     loopbacks; refuse with a clear message instead."""
     path = _runtime_dir() / "tfcz-audio.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fh = open(path, "a+")  # noqa: SIM115 - kept open on purpose
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(path, "a+")  # noqa: SIM115 - kept open on purpose
+    except OSError:
+        path = Path(f"/tmp/tfcz-audio-{os.getuid()}.lock")
+        fh = open(path, "a+")  # noqa: SIM115
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -132,7 +136,16 @@ def _single_instance() -> Any:
 
 def cmd_run(args: argparse.Namespace) -> int:
     lock = _single_instance()  # noqa: F841 - must stay referenced
-    path = find_config(args.config)
+    try:
+        path = find_config(args.config)
+    except ConfigError as exc:
+        if args.config:
+            raise
+        path = default_config_paths()[0]
+        log.warning("%s -- writing the example config to %s so the service can start; use the web UI Setup to connect devices", exc, path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with resources.files("tfcz_audio").joinpath("example_config.toml").open("rb") as src, open(path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
     cfg, config_error = load_or_recover(path)
     if config_error:
         log.error("CONFIG PROBLEM: %s", config_error)

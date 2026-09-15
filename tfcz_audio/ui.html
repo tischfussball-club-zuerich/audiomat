@@ -288,6 +288,24 @@
     outs.push('obs_mic');
     return { ins, outs };
   }
+  function boxStatus(alias, kind, ok, taken, dev, lvl) {
+    const meterKnown = state.levelsAvailable && lvl && (lvl.running || lvl.active);
+    return !ok ? 'not connected' : taken ? ('⚠ taken over by ' + taken) : (dev && dev.error) ? '⚠ audio system error'
+      : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (meterKnown ? 'no signal' : 'connected'));
+  }
+  function updateMeters() {
+    // cheap in-place update of the level bars and status words; no SVG rebuild
+    document.querySelectorAll('#diagram rect[data-meter]').forEach(r => {
+      const alias = r.dataset.meter; const lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
+      r.setAttribute('width', (parseFloat(r.dataset.full) * levelWidth(lvl) / 100).toFixed(1));
+    });
+    document.querySelectorAll('#diagram text[data-status]').forEach(t => {
+      if (t.dataset.broken === '1') return;
+      const alias = t.dataset.status; const lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
+      const dev = state.status.devices[alias];
+      t.textContent = boxStatus(alias, t.dataset.kind, true, null, dev, lvl);
+    });
+  }
   function renderDiagram() {
     const { ins, outs } = endpoints();
     const routes = state.status.routes, cfg = state.config, devs = state.status.devices;
@@ -340,8 +358,7 @@
       const lw = levelWidth(lvl);
       const dev = devs[alias];
       const taken = dev && dev.taken_by;
-      const meterKnown = state.levelsAvailable && lvl && (lvl.running || lvl.active);
-      const status = !ok ? 'not connected' : taken ? ('⚠ taken over by ' + taken) : (dev && dev.error) ? '⚠ audio system error' : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (meterKnown ? 'no signal' : 'connected'));
+      const status = boxStatus(alias, kind, ok, taken, dev, lvl);
       const sub2 = isObs ? 'what your viewers hear' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
       const broken = !ok || taken || (dev && dev.error);
       const stroke = broken ? 'var(--bad)' : isObs ? 'var(--obs)' : 'var(--line)';
@@ -350,10 +367,10 @@
         <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${broken || isObs ? 2.5 : 1.5}" ${!ok ? 'stroke-dasharray="6 4"' : ''}/>
         <text x="${p.x + 14}" y="${p.y + 30}" font-size="22">${icon(alias, kind)}</text>
         <text x="${p.x + 48}" y="${p.y + 24}" font-size="15" font-weight="600" fill="${!ok ? 'var(--bad)' : 'var(--text)'}">${esc(human(alias))}</text>
-        <text x="${p.x + 48}" y="${p.y + 41}" font-size="12" fill="${broken ? 'var(--bad)' : 'var(--muted)'}">${esc(status)}</text>
+        <text x="${p.x + 48}" y="${p.y + 41}" font-size="12" fill="${broken ? 'var(--bad)' : 'var(--muted)'}" data-status="${esc(alias)}" data-kind="${kind}" data-broken="${broken ? 1 : 0}">${esc(status)}</text>
         <text x="${p.x + 48}" y="${p.y + 55}" font-size="11" fill="var(--muted)">${esc(sub2.slice(0, 44))}</text>
         ${ok ? `<rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${p.w - 62}" height="6" rx="3" fill="var(--line)"/>
-        <rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${(p.w - 62) * lw / 100}" height="6" rx="3" fill="${isObs ? 'var(--obs)' : 'var(--ok)'}"/>` : ''}
+        <rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${(p.w - 62) * lw / 100}" height="6" rx="3" fill="${isObs ? 'var(--obs)' : 'var(--ok)'}" data-meter="${esc(alias)}" data-full="${p.w - 62}"/>` : ''}
       </g>`;
     };
     ins.forEach(a => svg += box('in:' + a, a, 'in'));
@@ -712,7 +729,7 @@
     try {
       const data = await api('GET', '/levels');
       state.levels = data.levels || {}; state.levelsAvailable = data.available; state.levelsReason = data.reason || '';
-      renderObs(); renderDiagram();
+      renderObs(); updateMeters();
       if (state.wiz) document.querySelectorAll('#wiz-body .choice').forEach(el => {
         const g = hwById(el.dataset.id); const bar = el.querySelector('.meter > i');
         if (g && bar && g.inputs.length) bar.style.width = levelWidth(state.levels[g.inputs[0].name]) + '%';

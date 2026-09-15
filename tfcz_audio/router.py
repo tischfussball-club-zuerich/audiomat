@@ -152,6 +152,7 @@ class Router:
         self.last_error: str = ""
         self.config_error: str = ""  # set by the CLI when the config could not be loaded cleanly
         self._graph_cache: tuple[float, Graph] | None = None
+        self._apply_retry_at: dict[str, float] = {}  # per-route backoff after a failed wpctl call
         self.graph_cache_ttl = 0.0  # seconds; the CLI enables caching for the real backend
         self._pw_down_logged = False
         self._load_state()
@@ -426,12 +427,17 @@ class Router:
         key = (node.id, want.volume, want.mute)
         if self._applied.get(name) == key:
             return True
+        now = self._clock()
+        if self._apply_retry_at.get(name, 0.0) > now:
+            return False  # wpctl failed recently; do not stall the supervisor on it again
         try:
             self.backend.set_volume(node.id, want.volume)
             self.backend.set_mute(node.id, want.mute)
         except PwError as exc:
-            log.error("apply %s: %s", name, exc)
+            log.error("apply %s: %s (retry in 5s)", name, exc)
+            self._apply_retry_at[name] = now + 5.0
             return False
+        self._apply_retry_at.pop(name, None)
         self._applied[name] = key
         log.info("route %s: volume=%.3f mute=%s", name, want.volume, want.mute)
         return True

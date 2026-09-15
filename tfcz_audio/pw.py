@@ -444,14 +444,14 @@ class PipeWireBackend:
         if self.dry_run:
             log.info("dry-run: %s", shlex.join(cmd))
             return
-        self._run(cmd)
+        self._run(cmd, timeout=3.0)
 
     def set_mute(self, node_id: int, mute: bool) -> None:
         cmd = ["wpctl", "set-mute", str(node_id), "1" if mute else "0"]
         if self.dry_run:
             log.info("dry-run: %s", shlex.join(cmd))
             return
-        self._run(cmd)
+        self._run(cmd, timeout=3.0)
 
     def spawn_loopback(self, spec: LoopbackSpec) -> Process:
         cmd = spec.command()
