@@ -494,6 +494,7 @@
   }
   function renderLabels() {
     const grid = $('#labels');
+    if (editing($('#advanced'))) return;
     const labels = state.config.labels || {};
     grid.innerHTML = labelGroups().map(k => `<label for="lbl-${esc(k)}">${esc(k)}</label><input type="text" id="lbl-${esc(k)}" data-label="${esc(k)}" value="${esc(labels[k] || '')}" placeholder="${esc(human(k + (state.config.devices[k] ? '' : '_mic')).replace(/ microphone$/, ''))}">`).join('');
   }
@@ -523,8 +524,16 @@
     if (!opts.length) opts.push('<option value="">(no device found)</option>');
     return opts.join('');
   }
-  function renderDevices() {
+  const editing = root => root && document.activeElement && root.contains(document.activeElement) && document.activeElement !== document.body;
+  let lastDevicesKey = '';
+  function renderDevices(force) {
     const grid = $('#devices');
+    // rebuild only when the underlying data changed, and never while the user is
+    // interacting with one of these controls (a rebuild would undo their choice)
+    const key = JSON.stringify([state.config.devices, state.devices.map(d => [d.name, d.friendly, d.port]), Object.entries(state.status.devices || {}).map(([a, d]) => [a, d.node, d.present, d.taken_by, d.identity && d.identity.text])]);
+    if (!force && key === lastDevicesKey) return;
+    if (!force && editing($('#advanced'))) return;
+    lastDevicesKey = key;
     const usage = aliasUsage();
     const devs = state.status.devices || {};
     grid.innerHTML = '';
@@ -538,7 +547,7 @@
          <div class="hint" style="margin:2px 0 0">${d.taken_by ? `<span style="color:var(--bad)">Taken over by ${esc(d.taken_by)}. </span>` : ''}${esc(d.identity ? d.identity.text : '')}</div></div>`);
     }
     grid.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', () => {
-      delete state.config.devices[b.dataset.remove]; renderDevices(); renderRouteForm();
+      delete state.config.devices[b.dataset.remove]; renderDevices(true); renderRouteForm();
     }));
     $('#new-alias-node').innerHTML = deviceOptions(null, null).replace('<option value="" selected>(not connected right now)</option>', '');
   }
@@ -546,7 +555,7 @@
     const alias = $('#new-alias').value.trim(); const node = $('#new-alias-node').value;
     if (!/^[a-z0-9_]+$/.test(alias)) return toast('name: lowercase letters, digits, underscore', true);
     if (!node) return toast('pick a device', true);
-    state.config.devices[alias] = node; $('#new-alias').value = ''; renderDevices(); renderRouteForm();
+    state.config.devices[alias] = node; $('#new-alias').value = ''; renderDevices(true); renderRouteForm();
   });
   $('#save-devices').addEventListener('click', () => {
     const devices = {};
@@ -561,6 +570,7 @@
 
   // ---------------------------------------------------------- route form
   function renderRouteForm() {
+    if (editing($('#advanced'))) return;
     const aliases = Object.keys(state.config.devices);
     const usage = aliasUsage();
     const opt = (a, sel, label) => `<option value="${esc(a)}" ${a === sel ? 'selected' : ''}>${esc(label || human(a))}</option>`;
@@ -587,10 +597,11 @@
     state.wiz = { step: 0, a: null, b: null, game: null, noGame: false,
                   nameA: labels.headset_a || '', nameB: labels.headset_b || '', nameGame: labels.game_sound || '' };
     $('#wizard').hidden = false;
-    loadHardware().then(renderWizard);
+    loadHardware().then(() => renderWizard());
     $('#wizard').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
   function closeWizard() { state.wiz = null; $('#wizard').hidden = true; api('POST', '/meters/watch', { clear: true }).catch(() => {}); }
+  let lastHardwareKey = '';
   async function loadHardware() {
     try {
       const hw = await api('GET', '/hardware');
@@ -598,7 +609,11 @@
       const nodes = [];
       for (const g of state.hardware) { for (const n of g.inputs) nodes.push({ name: n.name, kind: 'input' }); }
       if (nodes.length) api('POST', '/meters/watch', { nodes }).catch(() => {});
-    } catch (e) { fail(e); }
+      const key = JSON.stringify(state.hardware.map(g => [g.id, g.name, g.port, g.inputs.map(n => n.name), g.outputs.map(n => n.name), g.identity && g.identity.strategy]));
+      const changed = key !== lastHardwareKey;
+      lastHardwareKey = key;
+      return changed;
+    } catch (e) { fail(e); return false; }
   }
   const hwById = id => state.hardware.find(g => g.id === id);
   function headsetChoice(g, selected, taken, showMeter) {
@@ -619,6 +634,7 @@
   }
   function renderWizard() {
     const w = state.wiz; if (!w) return;
+    if (editing($('#wiz-body'))) return;  // do not yank the name field away while typing; the next tick redraws
     $('#wiz-steps').innerHTML = STEPS.map((s, i) => `<span class="${i === w.step ? 'cur' : i < w.step ? 'done' : ''}">${i + 1}. ${s}</span>`).join('');
     const body = $('#wiz-body');
     const headsets = state.hardware.filter(g => g.headset || (g.inputs.length && g.outputs.length && !g.hdmi_capture));
@@ -720,7 +736,7 @@
       }
       state.failures = 0;
       renderOverall(); renderDiagram(); renderCards(); renderObs(); renderDevices();
-      if (state.wiz && (Date.now() % 4000) < 2100) loadHardware().then(renderWizard);
+      if (state.wiz) loadHardware().then(changed => { if (changed) renderWizard(); });
       if (!state.wiz && !state.autoOpened && (!Object.keys(status.routes).length || location.hash === '#setup')) { state.autoOpened = true; openWizard(); }
     } catch (e) {
       state.failures++;
