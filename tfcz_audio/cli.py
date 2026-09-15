@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import logging
+import os
 import shutil
 import signal
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -17,7 +20,7 @@ from typing import Any
 
 from . import __version__
 from .api import serve
-from .config import Config, ConfigError, default_config_paths, find_config, load
+from .config import Config, ConfigError, default_config_paths, find_config, load, load_or_recover
 from .meters import FakeMeterManager, MeterManager
 from .pw import PipeWireBackend, PwError, cubic_to_db, kill_stale_helpers
 from .router import Router
@@ -100,8 +103,39 @@ def _populate_fake(backend: Any, cfg: Config) -> None:
     backend.add_physical("HDMI Monitor", "pci", None, "alsa_output.pci-0000_01_00.1.hdmi-stereo")
 
 
+def _runtime_dir() -> Path:
+    return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/tfcz-audio-{os.getuid()}")
+
+
+def _single_instance() -> Any:
+    """Hold an exclusive lock for the lifetime of the daemon. A second copy
+    (e.g. started by hand while the service runs) would fight over the same
+    loopbacks; refuse with a clear message instead."""
+    path = _runtime_dir() / "tfcz-audio.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+")  # noqa: SIM115 - kept open on purpose
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.seek(0)
+        other = fh.read().strip() or "unknown pid"
+        raise SystemExit(
+            f"tfcz-audio is already running ({other}). Use 'systemctl --user status tfcz-audio' / "
+            "'systemctl --user stop tfcz-audio' if you want to run it by hand."
+        ) from None
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"pid {os.getpid()}")
+    fh.flush()
+    return fh
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    cfg = _load_config(args)
+    lock = _single_instance()  # noqa: F841 - must stay referenced
+    path = find_config(args.config)
+    cfg, config_error = load_or_recover(path)
+    if config_error:
+        log.error("CONFIG PROBLEM: %s", config_error)
     if args.no_state:
         cfg.state_file = None
     if args.fake:
@@ -113,6 +147,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     else:
         backend = PipeWireBackend(dry_run=args.dry_run)
     router = Router(cfg, backend, node_wait=args.node_wait)
+    router.config_error = config_error
+    if not args.fake:
+        router.graph_cache_ttl = 0.4  # the UI polls often; pw-dump is not free
     stop = threading.Event()
 
     def _signal(signum, _frame):  # noqa: ANN001
@@ -178,6 +215,136 @@ def cmd_run(args: argparse.Namespace) -> int:
             meters.stop()
         router.stop()
         log.info("stopped")
+    return 0
+
+
+# ------------------------------------------------------------------- doctor
+
+
+def _tool(name: str) -> bool:
+    return shutil.which(name) is not None
+
+
+def _run(cmd: list[str], timeout: float = 5) -> tuple[int, str]:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, str(exc)
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Check everything the daemon needs and say how to fix what is missing."""
+    problems = 0
+
+    def ok(msg: str) -> None:
+        print(f"  [ok]   {msg}")
+
+    def bad(msg: str, fix: str) -> None:
+        nonlocal problems
+        problems += 1
+        print(f"  [FAIL] {msg}\n         -> {fix}")
+
+    def warn(msg: str, fix: str) -> None:
+        print(f"  [warn] {msg}\n         -> {fix}")
+
+    print("tfcz-audio doctor")
+    if sys.version_info < (3, 11):
+        bad(f"Python {sys.version.split()[0]} is too old", "Install Python 3.11 or newer (Ubuntu 24.04 ships 3.12).")
+    else:
+        ok(f"Python {sys.version.split()[0]}")
+
+    for tool, pkg in (("pw-loopback", "pipewire-bin"), ("pw-dump", "pipewire-bin"), ("pw-record", "pipewire-bin"), ("wpctl", "wireplumber")):
+        if _tool(tool):
+            ok(f"{tool} found")
+        else:
+            bad(f"{tool} not found", f"sudo apt install {pkg}")
+
+    if not os.environ.get("XDG_RUNTIME_DIR"):
+        bad("XDG_RUNTIME_DIR is not set (no user session)",
+            f"Run this from the desktop session, or: export XDG_RUNTIME_DIR=/run/user/{os.getuid()}")
+    else:
+        ok(f"user session runtime dir {os.environ['XDG_RUNTIME_DIR']}")
+
+    if _tool("pw-dump"):
+        rc, out = _run(["pw-dump"])
+        if rc != 0:
+            bad("PipeWire is not reachable", "systemctl --user start pipewire wireplumber  (log out and in if that fails)")
+        else:
+            ok("PipeWire answers")
+            if _tool("pactl"):
+                rc2, info = _run(["pactl", "info"])
+                if rc2 == 0 and "PipeWire" not in info:
+                    bad("The sound server is PulseAudio, not PipeWire",
+                        "sudo apt install pipewire-audio wireplumber && systemctl --user --now disable pulseaudio.service pulseaudio.socket && systemctl --user --now enable pipewire pipewire-pulse wireplumber")
+                elif rc2 == 0:
+                    ok("PipeWire is the sound server")
+    if _tool("systemctl"):
+        rc, out = _run(["systemctl", "--user", "is-active", "wireplumber"])
+        if out.strip() == "active":
+            ok("WirePlumber session manager active")
+        elif rc == 127 or "Failed to connect" in out:
+            bad("cannot talk to the user systemd instance", "Run from a logged-in desktop session (or ssh with a running session and XDG_RUNTIME_DIR set).")
+        else:
+            bad("WirePlumber is not active", "systemctl --user enable --now wireplumber")
+    if _tool("pw-record"):
+        rc, out = _run(["pw-record", "--help"])
+        if "--raw" in out:
+            ok("pw-record supports --raw (level bars available)")
+        else:
+            warn("pw-record lacks --raw: level bars will be off", "Newer PipeWire (>= 0.3.60) enables them; routing works without.")
+
+    try:
+        path = find_config(args.config)
+        cfg, err = load_or_recover(path)
+        if err:
+            bad(f"config {path} is invalid: {err}", "Fix the file or run Setup in the web UI.")
+        else:
+            ok(f"config {path} ({len(cfg.routes)} connections)")
+            if _tool("pw-dump") and cfg.devices:
+                from .router import resolve_devices
+
+                graph = PipeWireBackend().graph()
+                for alias, res in resolve_devices(cfg, graph).items():
+                    if res.present:
+                        ok(f"device {alias}: {res.node}")
+                    else:
+                        warn(f"device {alias} is not connected right now", "Plug it in; routes using it stay silent until then.")
+        lock = _runtime_dir() / "tfcz-audio.lock"
+        if lock.exists():
+            try:
+                fh = open(lock)
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(fh, fcntl.LOCK_UN)
+                ok("daemon is not running (port free for a manual start)")
+            except OSError:
+                ok(f"daemon is running ({open(lock).read().strip()})")
+        import socket
+
+        with socket.socket() as sock:
+            sock.settimeout(0.5)
+            if sock.connect_ex((cfg.api.listen if cfg.api.listen != "0.0.0.0" else "127.0.0.1", cfg.api.port)) == 0:
+                ok(f"web UI answers on http://{cfg.api.listen}:{cfg.api.port}/")
+            else:
+                warn(f"nothing listens on port {cfg.api.port}", "systemctl --user start tfcz-audio   (then: journalctl --user -u tfcz-audio -n 50)")
+    except ConfigError as exc:
+        bad(str(exc), "tfcz-audio init-config, then edit the [devices] or run Setup in the web UI.")
+
+    if _tool("systemctl"):
+        rc, out = _run(["systemctl", "--user", "is-enabled", "tfcz-audio"])
+        if out.strip() in ("enabled", "static"):
+            ok("service enabled at login")
+        else:
+            warn("service is not enabled", "./install.sh   (or: systemctl --user enable --now tfcz-audio)")
+        rc, out = _run(["loginctl", "show-user", str(os.getuid()), "-p", "Linger"])
+        if "Linger=no" in out:
+            warn("no lingering: audio routing starts only after login", f"loginctl enable-linger {os.environ.get('USER', '')}  (if the PC should route audio without login)")
+
+    print()
+    if problems:
+        print(f"{problems} problem(s) found. Fix the [FAIL] lines above, then run 'tfcz-audio doctor' again.")
+        return 1
+    print("Everything needed is in place.")
     return 0
 
 
@@ -369,6 +536,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("check", help="validate config and report missing devices")
     s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser("doctor", help="check tools, PipeWire, config, service; explains how to fix problems")
+    s.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("devices", help="list PipeWire audio sources and sinks")
     s.add_argument("--json", action="store_true")

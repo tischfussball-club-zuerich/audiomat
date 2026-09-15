@@ -340,7 +340,8 @@
       const lw = levelWidth(lvl);
       const dev = devs[alias];
       const taken = dev && dev.taken_by;
-      const status = !ok ? 'not connected' : taken ? ('⚠ taken over by ' + taken) : (dev && dev.error) ? '⚠ audio system error' : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (state.levelsAvailable ? 'no signal' : 'connected'));
+      const meterKnown = state.levelsAvailable && lvl && (lvl.running || lvl.active);
+      const status = !ok ? 'not connected' : taken ? ('⚠ taken over by ' + taken) : (dev && dev.error) ? '⚠ audio system error' : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (meterKnown ? 'no signal' : 'connected'));
       const sub2 = isObs ? 'what your viewers hear' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
       const broken = !ok || taken || (dev && dev.error);
       const stroke = broken ? 'var(--bad)' : isObs ? 'var(--obs)' : 'var(--line)';
@@ -381,8 +382,8 @@
     else if (!anyToObs) { text.textContent = '✗ Nothing is connected to OBS. Switch on an arrow to the OBS stream.'; text.style.color = 'var(--bad)'; }
     else if (lvl && lvl.signal) { text.textContent = '✓ Sound is reaching OBS right now'; text.style.color = 'var(--ok)'; }
     else if (lvl && lvl.active) { text.textContent = '✓ Ready. Quiet at the moment: nobody is talking.'; text.style.color = 'var(--text)'; }
-    else if (state.levelsAvailable) { text.textContent = '? OBS microphone exists but no sound data arrives. Check the microphones on the left.'; text.style.color = 'var(--warn)'; }
-    else { text.textContent = '✓ The OBS microphone is available. Microphones are connected to it.'; text.style.color = 'var(--ok)'; }
+    else if (state.levelsAvailable && lvl && lvl.running) { text.textContent = '? OBS microphone exists but no sound data arrives. Check the microphones on the left.'; text.style.color = 'var(--warn)'; }
+    else { text.textContent = '✓ The OBS microphone is available. Microphones are connected to it.' + (state.levelsAvailable ? '' : ' (Level bars are off on this system.)'); text.style.color = 'var(--ok)'; }
     $('#obs-meter').style.width = levelWidth(lvl) + '%';
   }
 
@@ -682,7 +683,10 @@
 
   // ---------------------------------------------------------------- loop
   let lastConfig = '';
+  let refreshing = false;
   async function refresh(withConfig) {
+    if (refreshing) return;  // never pile up requests on a slow daemon
+    refreshing = true;
     try {
       const [status, devices] = await Promise.all([api('GET', '/status'), api('GET', '/devices')]);
       state.status = status; state.devices = devices.devices;
@@ -699,19 +703,21 @@
       state.failures++;
       if (state.failures >= 2) renderUnreachable();
       if (/token/i.test(e.message)) { $('#advanced').open = true; toast('API token required (see Advanced → Access)', true); }
-    }
+    } finally { refreshing = false; }
   }
+  let polling = false;
   async function pollLevels() {
-    if (!state.status || !state.config) return;
+    if (!state.status || !state.config || polling) return;
+    polling = true;
     try {
       const data = await api('GET', '/levels');
-      state.levels = data.levels || {}; state.levelsAvailable = data.available;
+      state.levels = data.levels || {}; state.levelsAvailable = data.available; state.levelsReason = data.reason || '';
       renderObs(); renderDiagram();
       if (state.wiz) document.querySelectorAll('#wiz-body .choice').forEach(el => {
         const g = hwById(el.dataset.id); const bar = el.querySelector('.meter > i');
         if (g && bar && g.inputs.length) bar.style.width = levelWidth(state.levels[g.inputs[0].name]) + '%';
       });
-    } catch (e) { /* the 2 s status poll reports connectivity */ }
+    } catch (e) { /* the 2 s status poll reports connectivity */ } finally { polling = false; }
   }
   refresh(true);
   setInterval(() => refresh(false), 2000);

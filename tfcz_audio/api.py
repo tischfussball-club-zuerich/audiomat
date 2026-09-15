@@ -84,9 +84,14 @@ class ApiServer(ThreadingHTTPServer):
         super().__init__(address, Handler)
 
 
+MAX_BODY = 1_000_000  # bytes; nothing legitimate is anywhere near this
+
+
 class Handler(BaseHTTPRequestHandler):
     server: ApiServer  # type: ignore[assignment]
     server_version = f"tfcz-audio/{__version__}"
+    timeout = 15  # a stalled client releases its thread instead of holding it forever
+    protocol_version = "HTTP/1.0"
 
     # silence default stderr logging; use logging module instead
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -119,7 +124,12 @@ class Handler(BaseHTTPRequestHandler):
     def _read_params(self) -> dict[str, Any]:
         parts = urlsplit(self.path)
         params: dict[str, Any] = {k: v[-1] for k, v in parse_qs(parts.query).items()}
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise BadRequest("invalid Content-Length") from None
+        if length > MAX_BODY:
+            raise BadRequest("request body too large")
         if length:
             raw = self.rfile.read(length)
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
@@ -137,6 +147,19 @@ class Handler(BaseHTTPRequestHandler):
                     raise BadRequest("JSON body must be an object")
                 params.update(body)
         return params
+
+    def _same_origin(self) -> bool:
+        """Browsers add Origin / Sec-Fetch-Site to cross-site requests. Reject
+        those so a random web page cannot change volumes on localhost."""
+        site = (self.headers.get("Sec-Fetch-Site") or "").lower()
+        if site in ("cross-site",):
+            return False
+        origin = self.headers.get("Origin")
+        if not origin or origin == "null":
+            return True  # curl, Advanced Scene Switcher, same-origin GETs
+        host = (self.headers.get("Host") or "").lower()
+        o = urlsplit(origin)
+        return bool(host) and (o.netloc.lower() == host)
 
     def _authorized(self, params: dict[str, Any]) -> bool:
         token = self.server.token
@@ -173,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.command in ("GET", "HEAD") and path in ("/", "/ui", "/ui/", "/index.html"):
                 self._send_html(load_ui())
                 return
+            if self.command not in ("GET", "HEAD") and not self._same_origin():
+                self._error(HTTPStatus.FORBIDDEN, "cross-site request rejected")
+                return
             params = self._read_params()
             if not self._authorized(params):
                 self._error(HTTPStatus.UNAUTHORIZED, "invalid or missing token")
@@ -201,7 +227,7 @@ class Handler(BaseHTTPRequestHandler):
         ok = HTTPStatus.OK
 
         if not seg or seg == ["health"]:
-            return ok, {"ok": True, "version": __version__}
+            return ok, {"ok": True, "version": __version__, "routes": len(router.cfg.routes), "problems": len(router.problems())}
         if seg == ["status"] and read:
             return ok, router.status()
         if seg == ["devices"] and read:
@@ -240,11 +266,13 @@ class Handler(BaseHTTPRequestHandler):
             return ok, router.status()
         if seg == ["levels"] and read:
             meters = self.server.meters
-            levels = meters.levels() if meters is not None else {}
+            enabled = meters is not None and getattr(meters, "enabled", True)
+            levels = meters.levels() if enabled else {}
             obs = levels.get("obs", {})
             return ok, {
                 "ok": True,
-                "available": meters is not None,
+                "available": enabled,
+                "reason": "" if enabled else (getattr(meters, "disabled_reason", "") or "level meters are switched off"),
                 "levels": levels,
                 "obs_signal": bool(obs.get("signal")),
                 "obs_active": bool(obs.get("active")),

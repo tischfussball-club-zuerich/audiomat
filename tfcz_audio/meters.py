@@ -66,7 +66,6 @@ class MeterSpec:
             "node.name": f"tfcz.meter.{safe}",
             "node.description": f"TFCZ meter {self.key}",
             "node.dont-fallback": "true",
-            "node.passive": "true",
             "media.role": "Production",
         }
         if self.capture_sink:
@@ -104,11 +103,11 @@ def to_db(peak: float) -> float:
 
 
 class Meter:
-    def __init__(self, spec: MeterSpec, spawn: Callable[[list[str]], subprocess.Popen]):
+    def __init__(self, spec: MeterSpec, spawn: Callable[[list[str]], Any]):
         self.spec = spec
         self._spawn = spawn
         self.level = Level()
-        self.proc: subprocess.Popen | None = None
+        self.proc: Any = None
         self._thread: threading.Thread | None = None
         self.failures = 0
         self.retry_at = 0.0
@@ -173,12 +172,7 @@ class Meter:
                 self.failures = 0  # lived long enough: forget the crash history
             return
         if self.proc is not None:
-            err = ""
-            if self.proc.stderr is not None:
-                try:
-                    err = (self.proc.stderr.read() or b"").decode("utf-8", "replace").strip()[-200:]
-                except Exception:  # noqa: BLE001
-                    err = ""
+            err = getattr(self.proc, "stderr_tail", "")[-200:]
             log.warning("meter %s exited (%s) %s", self.spec.key, self.proc.poll(), err)
             self.proc = None
             self.level.running = False
@@ -190,10 +184,65 @@ class Meter:
             self.start()
 
 
-def _default_spawn(cmd: list[str]) -> subprocess.Popen:
-    return subprocess.Popen(  # noqa: S603 - fixed argv
+class _MeterProcess:
+    """pw-record with stdout read by the meter and stderr drained in the
+    background (bounded), so the child can never block on a full pipe."""
+
+    def __init__(self, proc: subprocess.Popen):
+        self._proc = proc
+        self.pid = proc.pid
+        self.stdout = proc.stdout
+        self._tail: list[str] = []
+        threading.Thread(target=self._drain, name=f"meter-stderr-{proc.pid}", daemon=True).start()
+
+    def _drain(self) -> None:
+        if self._proc.stderr is None:
+            return
+        try:
+            for raw in iter(self._proc.stderr.readline, b""):
+                self._tail.append(raw.decode("utf-8", "replace").rstrip())
+                del self._tail[:-10]
+        except (OSError, ValueError):
+            pass
+
+    @property
+    def stderr_tail(self) -> str:
+        return "\n".join(self._tail)
+
+    def poll(self) -> int | None:
+        return self._proc.poll()
+
+    def terminate(self) -> None:
+        self._proc.terminate()
+
+    def kill(self) -> None:
+        self._proc.kill()
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self._proc.wait(timeout=timeout)
+
+
+def _default_spawn(cmd: list[str]) -> Any:
+    proc = subprocess.Popen(  # noqa: S603 - fixed argv
         cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
     )
+    return _MeterProcess(proc)
+
+
+_RAW_SUPPORT: bool | None = None
+
+
+def pw_record_supports_raw() -> bool:
+    """pw-record --raw exists since PipeWire 0.3.6x; older versions would
+    write a WAV header into our sample stream. Probe once."""
+    global _RAW_SUPPORT  # noqa: PLW0603
+    if _RAW_SUPPORT is None:
+        try:
+            out = subprocess.run(["pw-record", "--help"], capture_output=True, text=True, timeout=5, check=False)
+            _RAW_SUPPORT = "--raw" in (out.stdout + out.stderr)
+        except (OSError, subprocess.SubprocessError):
+            _RAW_SUPPORT = False
+    return _RAW_SUPPORT
 
 
 def meter_specs(cfg: Config, resolved: dict[str, str | None] | None = None) -> list[MeterSpec]:
@@ -231,6 +280,11 @@ class MeterManager:
         self.meters: dict[str, Meter] = {}
         self._watch: dict[str, tuple[float, bool]] = {}  # node -> (expires, capture_sink)
         self.enabled = True
+        self.disabled_reason = ""
+        if spawn is _default_spawn and not pw_record_supports_raw():
+            self.enabled = False
+            self.disabled_reason = "pw-record does not support --raw (PipeWire too old); level bars are off, routing is unaffected"
+            log.warning(self.disabled_reason)
 
     def watch(self, nodes: list[dict[str, Any]], seconds: float | None = None) -> list[str]:
         """Temporarily meter arbitrary nodes (used by the setup wizard so the
@@ -258,6 +312,8 @@ class MeterManager:
             log.exception("meter reconcile failed (meters are optional; routing unaffected)")
 
     def _reconcile(self) -> None:
+        if not self.enabled:
+            return
         now = time.monotonic()
         with self._lock:
             wanted = {s.key: s for s in meter_specs(self._cfg(), self._resolved() if self._resolved else None)}

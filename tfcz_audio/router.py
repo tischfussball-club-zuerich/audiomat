@@ -150,6 +150,10 @@ class Router:
         self._spawned_at: dict[str, float] = {}
         self._started = False
         self.last_error: str = ""
+        self.config_error: str = ""  # set by the CLI when the config could not be loaded cleanly
+        self._graph_cache: tuple[float, Graph] | None = None
+        self.graph_cache_ttl = 0.0  # seconds; the CLI enables caching for the real backend
+        self._pw_down_logged = False
         self._load_state()
 
     # ------------------------------------------------------------------ state
@@ -187,13 +191,32 @@ class Router:
 
     # -------------------------------------------------------------- lifecycle
 
+    def _fetch_graph(self) -> Graph:
+        """Graph with a short cache so UI polling does not multiply pw-dump calls."""
+        now = self._clock()
+        cached = self._graph_cache
+        if cached is not None and now - cached[0] < self.graph_cache_ttl:
+            return cached[1]
+        graph = self.backend.graph()
+        self._graph_cache = (now, graph)
+        return graph
+
+    def _invalidate_graph(self) -> None:
+        self._graph_cache = None
+
     def _graph_or_empty(self) -> Graph:
         try:
-            return self.backend.graph()
+            graph = self._fetch_graph()
         except PwError as exc:
-            log.warning("pw-dump failed: %s", exc)
+            if not self._pw_down_logged:
+                log.warning("pw-dump failed: %s (further failures are not logged until it recovers)", exc)
+                self._pw_down_logged = True
             self.last_error = f"cannot talk to PipeWire: {exc}"
             return Graph()
+        if self._pw_down_logged:
+            log.info("PipeWire reachable again")
+            self._pw_down_logged = False
+        return graph
 
     def _refresh_resolution(self, graph: Graph) -> None:
         new = resolve_devices(self.cfg, graph)
@@ -234,9 +257,11 @@ class Router:
         except Exception:  # noqa: BLE001
             try:
                 proc.kill()
+                proc.wait(timeout=1)
             except Exception:  # noqa: BLE001
                 pass
         self._applied.pop(name, None)
+        self._invalidate_graph()
         log.info("stopped loopback %s", name)
 
     def _spec(self, name: str) -> LoopbackSpec:
@@ -258,6 +283,7 @@ class Router:
         self._retry_at.pop(name, None)
         self._applied.pop(name, None)
         self._spawned_at[name] = self._clock()
+        self._invalidate_graph()
         return True
 
     def _wait_for_node(self, node_name: str) -> bool:
@@ -280,11 +306,17 @@ class Router:
             if not self._started:
                 return
             now = self._clock()
+            self._invalidate_graph()  # the supervisor always looks at a fresh graph
             try:
-                graph = self.backend.graph()
+                graph = self._fetch_graph()
                 self.last_error = ""
+                if self._pw_down_logged:
+                    log.info("PipeWire reachable again")
+                    self._pw_down_logged = False
             except PwError as exc:
-                log.warning("pw-dump failed: %s", exc)
+                if not self._pw_down_logged:
+                    log.warning("pw-dump failed: %s (further failures are not logged until it recovers)", exc)
+                    self._pw_down_logged = True
                 self.last_error = f"cannot talk to PipeWire: {exc}"
                 graph = None
             if graph is not None:
@@ -302,13 +334,7 @@ class Router:
                         self._spawn(name)
                     continue
                 if proc is not None:
-                    err = ""
-                    stream = getattr(proc, "stderr", None)
-                    if stream is not None:
-                        try:
-                            err = (stream.read() or "").strip()
-                        except Exception:  # noqa: BLE001
-                            err = ""
+                    err = str(getattr(proc, "stderr_tail", "") or "")[-300:]
                     log.warning("loopback %s exited with %s %s", name, proc.poll(), err)
                     self.procs.pop(name, None)
                     self._spec_used.pop(name, None)
@@ -600,6 +626,12 @@ class Router:
         def add(level: str, code: str, what: str, title: str, why: str = "", effect: str = "", fix: str = "", **extra: Any) -> None:
             out.append({"level": level, "code": code, "what": what, "title": title, "why": why, "effect": effect, "fix": fix, **extra})
 
+        if self.config_error:
+            add("error", "config_invalid", "config", "The settings file could not be read",
+                self.config_error,
+                "The router runs with whatever it could recover; some or all connections may be missing.",
+                f"Run Setup in this page to write a fresh settings file, or fix {cfg.path} by hand and restart the service.")
+
         if not graph.nodes:
             add("error", "no_audio_system", "daemon", "The computer's audio system is not reachable",
                 self.last_error or "PipeWire did not answer.",
@@ -613,7 +645,7 @@ class Router:
                 "OBS records silence until it is back (a few seconds).",
                 "Nothing to do unless it stays like this for a minute; then restart: systemctl --user restart tfcz-audio")
 
-        if not cfg.routes:
+        if not cfg.routes and not self.config_error:
             add("warning", "no_routes", "routes", "No connections set up yet", "", "No sound goes anywhere.",
                 "Use Setup to connect your headsets.")
 

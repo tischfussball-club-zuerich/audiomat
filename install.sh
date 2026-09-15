@@ -37,8 +37,27 @@ if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)';
   echo "python 3.11+ required" >&2; exit 1
 fi
 
+if [[ -z ${XDG_RUNTIME_DIR:-} ]]; then
+  echo "XDG_RUNTIME_DIR is not set: this is not a desktop/user session." >&2
+  echo "  -> run this from a terminal inside the logged-in desktop session," >&2
+  echo "     or: export XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus" >&2
+  exit 1
+fi
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+  echo "cannot talk to your user systemd instance (systemctl --user)." >&2
+  echo "  -> log in on the desktop and run this there; over ssh you need a running user session." >&2
+  exit 1
+fi
+if command -v pactl >/dev/null 2>&1 && ! pactl info 2>/dev/null | grep -q "PipeWire"; then
+  echo "The sound server is not PipeWire (PulseAudio?). Ubuntu 22.10+ uses PipeWire by default." >&2
+  echo "  -> sudo apt install pipewire-audio wireplumber" >&2
+  echo "     systemctl --user --now disable pulseaudio.service pulseaudio.socket" >&2
+  echo "     systemctl --user --now enable pipewire pipewire-pulse wireplumber" >&2
+  exit 1
+fi
 if ! systemctl --user is-active --quiet wireplumber; then
-  echo "warning: wireplumber user service is not active; PipeWire with WirePlumber is required" >&2
+  echo "warning: wireplumber is not active; starting it (systemctl --user enable --now wireplumber)" >&2
+  systemctl --user enable --now wireplumber || true
 fi
 
 # Pure stdlib package: copy it and write a wrapper. No pip, no network.
@@ -59,21 +78,37 @@ mkdir -p "$UNIT_DIR"
 install -m 0644 "$HERE/systemd/tfcz-audio.service" "$UNIT_DIR/tfcz-audio.service"
 systemctl --user daemon-reload
 
-if [[ -f $CONFIG ]]; then
-  systemctl --user enable --now tfcz-audio
-  systemctl --user restart tfcz-audio
-  echo "==> service restarted with existing config $CONFIG"
-  echo "    tfcz-audio status"
-else
+first_install=0
+if [[ ! -f $CONFIG ]]; then
+  first_install=1
   "$BIN" init-config "$CONFIG"
-  systemctl --user enable tfcz-audio
-  cat <<MSG
+fi
+systemctl --user enable tfcz-audio >/dev/null
+systemctl --user restart tfcz-audio
+sleep 2
+if systemctl --user is-active --quiet tfcz-audio; then
+  echo "==> service is running"
+else
+  echo "==> the service did NOT start. Last log lines:" >&2
+  journalctl --user -u tfcz-audio -n 20 --no-pager >&2 || true
+  echo "    fix the problem above, then: systemctl --user restart tfcz-audio" >&2
+fi
+PORT=$(grep -E '^port *= *[0-9]+' "$CONFIG" | head -1 | grep -oE '[0-9]+' || echo 8787)
+echo
+echo "==> checking the installation"
+"$BIN" doctor || true
+cat <<MSG
 
-==> next steps
-  1. list your devices:            tfcz-audio devices
-  2. fill in [devices] in:         $CONFIG
-  3. validate:                     tfcz-audio check
-  4. start:                        systemctl --user start tfcz-audio
-  5. inspect:                      tfcz-audio status   |   journalctl --user -u tfcz-audio -f
+==> open the web UI:   http://127.0.0.1:${PORT}/
+MSG
+if (( first_install )); then
+  cat <<MSG
+    It opens the setup wizard: pick the headset of person A, person B and the
+    game sound input (speak into a headset to see which one it is), then Connect.
+    Nothing needs to be edited by hand.
 MSG
 fi
+cat <<MSG
+    useful:  tfcz-audio doctor | tfcz-audio status | journalctl --user -u tfcz-audio -f
+    If the PC should route audio without anyone logged in:  loginctl enable-linger $USER
+MSG

@@ -8,6 +8,7 @@ amplitudes, i.e. the cube of that value.
 
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import math
@@ -15,6 +16,7 @@ import os
 import shlex
 import signal
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -458,15 +460,56 @@ class PipeWireBackend:
             return _DryProcess()
         log.info("spawn: %s", shlex.join(cmd))
         try:
-            return subprocess.Popen(  # noqa: S603 - fixed argv, no shell
+            proc = subprocess.Popen(  # noqa: S603 - fixed argv, no shell
                 cmd,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
-                text=True,
             )
         except FileNotFoundError as exc:
             raise PwError("pw-loopback not found; install pipewire-bin") from exc
+        except OSError as exc:
+            raise PwError(f"cannot start pw-loopback: {exc}") from exc
+        return DrainedProcess(proc)
+
+
+class DrainedProcess:
+    """Popen wrapper whose stderr is drained by a background thread into a
+    bounded buffer. A child that logs a lot must never block on a full pipe:
+    for pw-loopback that would stall the audio it carries."""
+
+    def __init__(self, proc: subprocess.Popen, keep_lines: int = 20):
+        self._proc = proc
+        self.pid = proc.pid
+        self._lines: collections.deque[str] = collections.deque(maxlen=keep_lines)
+        self._thread = threading.Thread(target=self._drain, name=f"stderr-{proc.pid}", daemon=True)
+        self._thread.start()
+
+    def _drain(self) -> None:
+        stream = self._proc.stderr
+        if stream is None:
+            return
+        try:
+            for raw in iter(stream.readline, b""):
+                self._lines.append(raw.decode("utf-8", "replace").rstrip())
+        except (OSError, ValueError):
+            pass
+
+    @property
+    def stderr_tail(self) -> str:
+        return "\n".join(self._lines)
+
+    def poll(self) -> int | None:
+        return self._proc.poll()
+
+    def terminate(self) -> None:
+        self._proc.terminate()
+
+    def kill(self) -> None:
+        self._proc.kill()
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self._proc.wait(timeout=timeout)
 
 
 class _DryProcess:

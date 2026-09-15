@@ -383,11 +383,49 @@ def save(cfg: Config, path: Path | None = None) -> Path:
     data = to_dict(cfg)
     text = dumps(data)
     parse(tomllib.loads(text))  # never write something we cannot read back
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text)
-    os.replace(tmp, path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            try:
+                os.replace(path, path.with_suffix(path.suffix + ".bak"))
+                # keep the original in place too until the new one is written
+                import shutil
+
+                shutil.copyfile(path.with_suffix(path.suffix + ".bak"), path)
+            except OSError:
+                pass
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    except PermissionError as exc:
+        raise ConfigError(
+            f"cannot write {path}: permission denied. Copy it to ~/.config/tfcz-audio/config.toml (writable) and restart."
+        ) from exc
+    except OSError as exc:
+        raise ConfigError(f"cannot write {path}: {exc.strerror or exc}. Check free disk space and permissions.") from exc
     return path
+
+
+def load_or_recover(path: Path) -> tuple[Config, str]:
+    """Load the config; on failure fall back to the .bak copy, then to an
+    empty config so the daemon (and its UI) can still start and the user can
+    repair or re-run Setup. Returns (config, error message or '')."""
+    try:
+        return load(path), ""
+    except ConfigError as exc:
+        primary = str(exc)
+    backup = path.with_suffix(path.suffix + ".bak")
+    if backup.is_file():
+        try:
+            cfg = load(backup)
+            cfg.path = path
+            return cfg, f"{primary}. Started with the previous config from {backup.name}; saving from the UI writes a fresh {path.name}."
+        except ConfigError as exc2:
+            primary += f" (backup also unusable: {exc2})"
+    cfg = Config()
+    cfg.path = path
+    cfg.state_file = default_state_file()
+    return cfg, f"{primary}. Started with NO connections. Fix the file or run Setup in the web UI, which rewrites it."
 
 
 def human(cfg: Config | None, alias: str) -> str:
