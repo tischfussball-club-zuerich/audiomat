@@ -367,6 +367,24 @@ so that it explains itself:
 | Daemon hangs | systemd watchdog (30 s) kills and restarts it; `Restart=always`, never gives up |
 | Daemon crashes | systemd restarts it after 2 s; leftover helpers are cleaned up at start |
 | Helper writes a lot to stderr | drained in the background; a child can never block on a full pipe |
+### Level bars on an older pw-record
+
+Some PipeWire builds ship a `pw-record` without `--raw`. The daemon finds
+that out by trying and walks a list of command shapes until one delivers
+audio:
+
+| Shape | Notes |
+|---|---|
+| `pw-record --raw …` | preferred, raw samples on stdout |
+| `pw-record …` without `--raw` | writes a WAV header first, which the reader skips |
+| the same without `-P` | for builds that also reject stream properties |
+| `parec …` | PulseAudio client, needs `sudo apt install pulseaudio-utils` |
+
+Which one is in use appears in the log (`Pegelmessung liefert Daten (…)`)
+and in `/levels`. Nothing needs fixing on `pw-record` itself; if every
+shape fails, the page names the refusal and `[audio] meters = false`
+switches metering off. Routing never depends on any of this.
+
 | `pw-record` refuses an option | that option is dropped and metering starts again (without `--raw` the WAV header is skipped); only an undroppable error switches the bars off, with the real message |
 | Browser page from another site calls the API | rejected (cross-site guard); use a token for LAN access |
 | Stream linked to the wrong device (fallback, manual move) | muted for safety and reported; unmuted when the link is right again |

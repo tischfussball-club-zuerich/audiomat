@@ -466,6 +466,7 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "available": enabled,
                 "reason": "" if enabled else (getattr(meters, "disabled_reason", "") or "level meters are switched off"),
+                "shape": getattr(meters, "shape_label", lambda: "")() if enabled else "",
                 "levels": levels,
                 "obs_signal": bool(obs.get("signal")),
                 "obs_active": bool(obs.get("active")),

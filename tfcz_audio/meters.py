@@ -362,6 +362,7 @@ class MeterManager:
         # Which command shape this pw-record accepts is found out by trying,
         # not by parsing --help: the help text differs between versions.
         self.shape = 0
+        self._announced = False
 
     def watch(self, nodes: list[dict[str, Any]], seconds: float | None = None) -> list[str]:
         """Temporarily meter arbitrary nodes (used by the setup wizard so the
@@ -419,6 +420,9 @@ class MeterManager:
                     self.meters[key] = Meter(spec, self._spawn, **shape)
             for meter in self.meters.values():
                 meter.reconcile(now)
+            if not self._announced and any(m.level.updated for m in self.meters.values()):
+                self._announced = True
+                log.info("Pegelmessung liefert Daten (%s)", self.shape_label())
             self._degrade_if_needed()
 
     def _degrade_if_needed(self) -> None:
@@ -446,6 +450,7 @@ class MeterManager:
             return
         log.warning("Pegelmessung: %s; nächster Versuch mit %s", complaint, _shape_label(SHAPES[nxt]))
         self.shape = nxt
+        self._announced = False
         for meter in self.meters.values():
             meter.stop()
         self.meters.clear()
