@@ -146,6 +146,7 @@ def wav_data_offset(buf: bytes) -> int | None:
 SHAPES: tuple[dict[str, Any], ...] = (
     {"tool": "pw-record", "raw": True, "props": True},
     {"tool": "pw-record", "raw": False, "props": True},
+    {"tool": "pw-record", "raw": False, "props": False},
     {"tool": "parec", "raw": True, "props": False},
 )
 
@@ -153,7 +154,9 @@ SHAPES: tuple[dict[str, Any], ...] = (
 def _shape_label(shape: dict[str, Any]) -> str:
     if shape["tool"] != "pw-record":
         return shape["tool"]
-    return "pw-record ohne --raw" if not shape["raw"] else "pw-record"
+    if shape["raw"]:
+        return "pw-record"
+    return "pw-record ohne --raw" if shape["props"] else "pw-record ohne --raw und ohne -P"
 
 
 class Meter:
@@ -250,7 +253,7 @@ class Meter:
                 self.failures = 0  # lived long enough: forget the crash history
             return
         if self.proc is not None:
-            err = getattr(self.proc, "stderr_tail", "")[-200:]
+            err = getattr(self.proc, "stderr_tail", "")[:400]
             log.warning("meter %s exited (%s) %s", self.spec.key, self.proc.poll(), err)
             if any(marker in err.lower() for marker in UNSUPPORTED_MARKERS):
                 self.unsupported = err.strip()[:200]
@@ -272,7 +275,7 @@ class _MeterProcess:
         self._proc = proc
         self.pid = proc.pid
         self.stdout = proc.stdout
-        self._tail: list[str] = []
+        self._head: list[str] = []
         threading.Thread(target=self._drain, name=f"meter-stderr-{proc.pid}", daemon=True).start()
 
     def _drain(self) -> None:
@@ -280,14 +283,15 @@ class _MeterProcess:
             return
         try:
             for raw in iter(self._proc.stderr.readline, b""):
-                self._tail.append(raw.decode("utf-8", "replace").rstrip())
-                del self._tail[:-10]
+                # the first lines carry the reason; the rest is usually a help dump
+                if len(self._head) < 8:
+                    self._head.append(raw.decode("utf-8", "replace").rstrip())
         except (OSError, ValueError):
             pass
 
     @property
     def stderr_tail(self) -> str:
-        return "\n".join(self._tail)
+        return "\n".join(self._head)
 
     def poll(self) -> int | None:
         return self._proc.poll()
@@ -426,6 +430,7 @@ class MeterManager:
         if not broken or not self.meters:
             return
         complaint = next((m.unsupported for m in broken if m.unsupported), "") or "der Aufnahmebefehl startet nicht"
+        complaint = complaint.splitlines()[0][:160]
         nxt = self.shape + 1
         # only skip shapes whose tool is really missing; with an injected spawn
         # (tests, fake mode) every shape is reachable
@@ -475,7 +480,7 @@ class MeterManager:
         if live:
             return None
         if failing:
-            detail = (errors[0][:200] if errors else "das Hilfsprogramm beendet sich sofort")
+            detail = (errors[0].splitlines()[0][:160] if errors else "das Hilfsprogramm beendet sich sofort")
             return {
                 "level": "warning", "code": "meters_broken", "what": "meters",
                 "title": "Die Pegelbalken funktionieren nicht",

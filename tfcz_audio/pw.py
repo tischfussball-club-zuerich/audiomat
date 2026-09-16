@@ -569,6 +569,9 @@ class DrainedProcess:
     def __init__(self, proc: subprocess.Popen, keep_lines: int = 20):
         self._proc = proc
         self.pid = proc.pid
+        # A usage error puts the message on the FIRST line and then prints the
+        # whole help text, so keeping only the tail loses the cause.
+        self._head: list[str] = []
         self._lines: collections.deque[str] = collections.deque(maxlen=keep_lines)
         self._thread = threading.Thread(target=self._drain, name=f"stderr-{proc.pid}", daemon=True)
         self._thread.start()
@@ -579,13 +582,21 @@ class DrainedProcess:
             return
         try:
             for raw in iter(stream.readline, b""):
-                self._lines.append(raw.decode("utf-8", "replace").rstrip())
+                line = raw.decode("utf-8", "replace").rstrip()
+                if len(self._head) < 5:
+                    self._head.append(line)
+                else:
+                    self._lines.append(line)
         except (OSError, ValueError):
             pass
 
     @property
+    def stderr_head(self) -> str:
+        return "\n".join(self._head)
+
+    @property
     def stderr_tail(self) -> str:
-        return "\n".join(self._lines)
+        return "\n".join([*self._head, *self._lines])
 
     def poll(self) -> int | None:
         return self._proc.poll()

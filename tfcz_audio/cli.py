@@ -576,12 +576,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 try:
                     with urllib.request.urlopen(req, timeout=3) as resp:  # noqa: S310 - own daemon
                         levels = json.loads(resp.read().decode())
-                    if levels.get("available"):
-                        moving = sum(1 for lvl in (levels.get("levels") or {}).values() if lvl.get("active"))
-                        ok(f"level bars are working ({moving} of {len(levels.get('levels') or {})} devices delivering audio right now)")
-                    else:
-                        warn("level bars are not working: " + (levels.get("reason") or "unknown reason"),
+                    entries = levels.get("levels") or {}
+                    moving = sum(1 for lvl in entries.values() if lvl.get("active"))
+                    if not levels.get("available"):
+                        warn("level bars are switched off: " + (levels.get("reason") or "unknown reason"),
                              "run 'tfcz-audio selftest' for the exact command and its error; routing is unaffected")
+                    elif moving:
+                        ok(f"level bars are working ({moving} of {len(entries)} devices delivering audio right now)")
+                    else:
+                        warn(f"level bars deliver nothing ({len(entries)} meters running, none with data)",
+                             "run 'tfcz-audio selftest': it prints the exact command and its error. "
+                             "The router and the OBS microphone are unaffected either way")
                 except (urllib.error.URLError, OSError, ValueError) as exc:
                     warn(f"cannot ask the daemon about the level bars ({exc})", "check the token under Advanced if one is set")
             else:

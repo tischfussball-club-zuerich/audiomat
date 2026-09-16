@@ -31,8 +31,9 @@ class DrainedProcessTests(unittest.TestCase):
         self.assertEqual(wrapped.poll(), 0, "child blocked on a full stderr pipe")
         time.sleep(0.1)
         tail = wrapped.stderr_tail.splitlines()
-        self.assertLessEqual(len(tail), 5)
-        self.assertIn("line 19999", tail[-1])
+        self.assertLessEqual(len(tail), 25, "bounded buffer")
+        self.assertIn("line 0", tail[0], "the first lines are kept: a usage error names the cause there")
+        self.assertIn("line 19999", tail[-1], "and the newest lines too")
 
 
 class ConfigRecoveryTests(unittest.TestCase):
@@ -281,3 +282,54 @@ class SelftestTests(unittest.TestCase):
         self.assertIn("command:", text, "shows the exact command so it can be run by hand")
         self.assertIn("=== router streams ===", text)
         self.assertTrue(probes and probes[0][0] == "pw-record")
+
+
+class HelperErrorCaptureTests(unittest.TestCase):
+    def test_a_usage_dump_does_not_hide_its_first_line(self):
+        """pw-record answers a bad option with the reason on line one and then
+        the whole help text. Keeping the tail reports the help, not the cause."""
+        from tfcz_audio.pw import DrainedProcess
+
+        code = (
+            "import sys\n"
+            "sys.stderr.write(\"pw-record: unrecognized option '--raw'\\n\")\n"
+            "for i in range(60):\n"
+            "    sys.stderr.write('  --option-%d   some help text\\n' % i)\n"
+        )
+        proc = subprocess.Popen([sys.executable, "-c", code], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        wrapped = DrainedProcess(proc)
+        deadline = time.monotonic() + 10
+        while wrapped.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        time.sleep(0.2)
+        self.assertIn("unrecognized option", wrapped.stderr_head)
+        self.assertTrue(wrapped.stderr_tail.startswith("pw-record: unrecognized option"))
+
+    def test_every_shape_is_tried_before_giving_up(self):
+        from tfcz_audio.pw import FakeProcess
+
+        tried = []
+
+        class Refusing(FakeProcess):
+            def __init__(self, cmd):
+                super().__init__()
+                self.stdout = None
+                tried.append(cmd)
+                # refuse --raw, then -P, then succeed with the plainest shape
+                if "--raw" in cmd:
+                    self.stderr_tail = "pw-record: unrecognized option '--raw'\nusage: ..."
+                    self.returncode = 1
+                elif "-P" in cmd:
+                    self.stderr_tail = "pw-record: unrecognized option '-P'\nusage: ..."
+                    self.returncode = 1
+                else:
+                    self.stderr_tail = ""
+                    self.returncode = None
+
+        mm = meters.MeterManager(lambda: minimal_config(), spawn=Refusing, resolved_getter=lambda: {"a_mic": "alsa_input.a"})
+        for _ in range(8):
+            mm.reconcile()
+        self.assertTrue(mm.enabled, "a working shape was found instead of switching the bars off")
+        self.assertEqual(mm.shape_label(), "pw-record ohne --raw und ohne -P")
+        self.assertTrue(any("--raw" not in c and "-P" not in c for c in tried))
