@@ -210,3 +210,35 @@ class ConfigApiTests(ApiTestCase):
         self.assertEqual(code, 200)
         code, body = self.call("DELETE", "/config/presets/night")
         self.assertEqual(code, 404)
+
+
+class AudioBufferTests(ApiTestCase):
+    def test_read_and_change_the_system_buffer(self):
+        code, body = self.call("GET", "/audio")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["quantum"], 1024, "falls back to the PipeWire default when nothing is set")
+        self.assertFalse(body["forced"])
+        self.assertEqual(body["router_request"], "auto", "the router itself asks for nothing")
+        self.assertIn({"frames": 0, "ms": None}, body["choices"])
+
+        code, body = self.call("PUT", "/audio", {"quantum": 512})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["forced"])
+        self.assertEqual(body["quantum"], 512)
+        self.assertAlmostEqual(body["ms"], 10.7, places=1)
+        self.assertIn(("force_quantum", 512), self.backend.calls)
+
+        code, body = self.call("PUT", "/audio", {"quantum": 0})
+        self.assertEqual(code, 200)
+        self.assertIn(("force_quantum", 0), self.backend.calls)
+
+    def test_invalid_buffer_sizes_are_refused(self):
+        for value in (777, "big", None):
+            code, _ = self.call("PUT", "/audio", {"quantum": value})
+            self.assertEqual(code, 400, f"{value} must be refused")
+
+    def test_dropout_check(self):
+        code, body = self.call("POST", "/audio/dropouts", {"seconds": 1})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["available"])
+        self.assertEqual(body["errors"], 0)

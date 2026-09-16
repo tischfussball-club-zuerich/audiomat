@@ -204,6 +204,19 @@
         <button class="primary" id="r-save">Save connection</button>
       </div>
 
+      <h3>Sound quality (buffer size)</h3>
+      <p class="hint">How much sound the computer carries per trip. Smaller means less delay but more risk of
+        dropouts, which sound like crackling. This is a setting of the whole audio system, not just of this
+        router. Try a value and listen; nothing restarts.</p>
+      <div class="row">
+        <select id="quantum"></select>
+        <button class="primary" id="quantum-apply">Try it now</button>
+        <label class="hint" style="margin:0"><input type="checkbox" id="quantum-persist"> keep after restart</label>
+        <button id="dropout-check">Check for dropouts</button>
+      </div>
+      <p class="hint" id="quantum-state" style="margin-top:6px"></p>
+      <div id="dropout-result"></div>
+
       <h3>Defaults</h3>
       <div class="row">
         <button id="save-defaults" title="The current volumes and on/off switches become the values used after a restart">Save current volumes as defaults</button>
@@ -627,6 +640,45 @@
     const body = { from: $('#r-from').value, to: $('#r-to').value, volume: parseFloat($('#r-volume').value || '100') / 100, description: $('#r-desc').value.trim() };
     api('PUT', `/config/routes/${encodeURIComponent(name)}`, body).then(() => { toast('connection saved'); $('#r-name').value = ''; $('#r-desc').value = ''; refresh(true); }, fail);
   });
+  // ---------------------------------------------------------- buffer size
+  function renderAudio(a) {
+    state.audio = a;
+    const sel = $('#quantum');
+    if (!editing($('#quantum'))) {
+      sel.innerHTML = (a.choices || []).map(c =>
+        `<option value="${c.frames}" ${c.frames === (a.forced ? a.quantum : 0) ? 'selected' : ''}>${c.frames ? c.frames + ' frames (' + c.ms + ' ms)' : 'Automatic (recommended)'}</option>`).join('');
+    }
+    $('#quantum-persist').checked = !!a.saved;
+    const bits = [`now running at ${a.quantum} frames (${a.ms} ms) at ${a.rate} Hz`];
+    bits.push(a.forced ? 'set by hand' : 'chosen by the system');
+    if (a.saved) bits.push(`${a.saved} frames saved for the next start`);
+    if (a.router_request && a.router_request !== 'auto') bits.push(`this router additionally asks for ${a.router_request}`);
+    $('#quantum-state').textContent = bits.join(' · ');
+  }
+  $('#quantum-apply').addEventListener('click', () => {
+    const frames = parseInt($('#quantum').value, 10);
+    api('PUT', '/audio', { quantum: frames, persist: $('#quantum-persist').checked })
+      .then(a => { renderAudio(a); toast(frames ? `buffer set to ${frames} frames` : 'buffer back to automatic'); }, fail);
+  });
+  $('#dropout-check').addEventListener('click', () => {
+    const box = $('#dropout-result');
+    box.innerHTML = '<p class="hint">measuring…</p>';
+    api('POST', '/audio/dropouts', { seconds: 3 }).then(r => {
+      if (!r.available) {
+        box.innerHTML = `<div class="problem info"><div class="t">Cannot measure</div><dl><dd>${esc(r.error || 'pw-top is not available (part of pipewire-bin).')}</dd></dl></div>`;
+        return;
+      }
+      if (!r.errors) {
+        box.innerHTML = '<div class="problem info"><div class="t">✓ No dropouts</div><dl><dd>Nothing was lost while measuring. If the sound is still bad, the buffer size is not the cause.</dd></dl></div>';
+        return;
+      }
+      const worst = (r.nodes || []).slice(0, 5).map(n => `${esc(n.name)} (${n.errors})`).join(', ');
+      box.innerHTML = `<div class="problem warning"><div class="t">! ${r.errors} dropout(s) while measuring</div><dl>` +
+        `<dt>Where</dt><dd>${worst}</dd>` +
+        '<dt>What to do</dt><dd>Pick a bigger buffer above and measure again. If dropouts persist at the biggest setting, the computer is not keeping up (check realtime priority with <code>tfcz-audio doctor</code>).</dd></dl></div>';
+    }, fail);
+  });
+
   $('#save-defaults').addEventListener('click', () => api('POST', '/config/save-defaults').then(() => { toast('saved as defaults'); refresh(true); }, fail));
   $('#reset').addEventListener('click', () => api('POST', '/reset').then(() => { toast('back to defaults'); refresh(false); }, fail));
 
@@ -800,6 +852,7 @@
       if (data.cfg) {
         const serialized = JSON.stringify(data.cfg);
         if (serialized !== lastConfig) { lastConfig = serialized; state.config = data.cfg; renderPresets(); renderLabels(); renderRouteForm(); $('#cfgpath').textContent = data.cfg.path || '(none)'; }
+        api('GET', '/audio').then(renderAudio).catch(() => {});
       }
       // a route known to /status but not to our cached /config means the config is stale: reload it next time
       if (state.config && Object.keys(state.status.routes).some(n => !state.config.routes[n])) wantConfig = true;

@@ -259,6 +259,21 @@ class Handler(BaseHTTPRequestHandler):
             return ok, payload
         if seg == ["devices"] and read:
             return ok, {"ok": True, "devices": router.devices()}
+        if seg == ["audio"] and read:
+            return ok, {"ok": True, **router.audio_settings()}
+        if seg == ["audio"] and method in ("PUT", "POST"):
+            try:
+                frames = int(params.get("quantum"))
+            except (TypeError, ValueError):
+                raise BadRequest("quantum must be a number of frames (0 = automatic)") from None
+            persist = params.get("persist") in (True, "true", "1")
+            return ok, {"ok": True, **router.set_audio_buffer(frames, persist)}
+        if seg == ["audio", "dropouts"] and write:
+            try:
+                seconds = float(params.get("seconds", 2.0))
+            except (TypeError, ValueError):
+                seconds = 2.0
+            return ok, {"ok": True, **router.dropout_check(min(max(seconds, 1.0), 10.0))}
         if seg == ["hardware"] and read:
             return ok, {"ok": True, "devices": router.hardware()}
         if len(seg) == 2 and seg[0] == "identity" and read:

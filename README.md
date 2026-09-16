@@ -112,7 +112,12 @@ nothing and can starve everything. That is why `latency` defaults to
 `"auto"` here: the router asks for nothing and runs at whatever the
 system uses (1024 frames, about 21 ms, on a stock Ubuntu).
 
-To change it, change it system-wide, in
+The easiest way to change it is **Advanced -> Sound quality** in the web
+UI: pick a size, press "Try it now" and listen. Nothing restarts. "Keep
+after restart" writes the PipeWire drop-in below for you, and "Check for
+dropouts" measures whether anything is being lost at the current setting.
+
+By hand, the same thing lives in
 `~/.config/pipewire/pipewire.conf.d/10-quantum.conf`:
 
 ```
@@ -272,6 +277,8 @@ client can drive it.
 | PUT | `/config/labels` | replace the names |
 | POST | `/meters/watch` | `{nodes: [{name, kind}]}`: meter extra devices for two minutes |
 | GET | `/config` | current config as JSON (token hidden) |
+| GET / PUT | `/audio` | read or change the system-wide buffer size (`quantum` in frames, 0 = automatic, `persist` to keep it) |
+| POST | `/audio/dropouts` | measure dropouts with pw-top |
 | PUT | `/config/devices` | replace the alias -> node mapping, save, hot-reload |
 | PUT / DELETE | `/config/routes/{r}` | create or update (`from`, `to`, `volume`, `mute`, `description`) or delete a route |
 | PUT / DELETE | `/config/presets/{p}` | create or update or delete a preset |

@@ -18,6 +18,7 @@ import signal
 import subprocess
 import threading
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -105,6 +106,7 @@ class Graph:
     defaults: dict[str, str] = field(default_factory=dict)  # default.audio.sink / default.audio.source -> node.name
     clients: set[str] = field(default_factory=set)  # application.name of connected clients
     has_default_metadata: bool = False
+    settings: dict[str, str] = field(default_factory=dict)  # PipeWire's own clock settings
 
     def linked(self, output_node: int, input_node: int) -> bool:
         return any(l.output_node == output_node and l.input_node == input_node for l in self.links)
@@ -351,7 +353,13 @@ def parse_dump(text: str) -> Graph:
                 if name:
                     graph.clients.add(name)
             elif otype == "PipeWire:Interface:Metadata":
-                if str((obj.get("props") or info.get("props") or {}).get("metadata.name", "")) == "default":
+                meta_name = str((obj.get("props") or info.get("props") or {}).get("metadata.name", ""))
+                if meta_name == "settings":
+                    for entry in obj.get("metadata") or []:
+                        if isinstance(entry, dict) and entry.get("key"):
+                            value = entry.get("value")
+                            graph.settings[str(entry["key"])] = str(value if not isinstance(value, dict) else value.get("name", ""))
+                if meta_name == "default":
                     graph.has_default_metadata = True
                     for entry in obj.get("metadata") or []:
                         if not isinstance(entry, dict):
@@ -485,6 +493,24 @@ class PipeWireBackend:
             log.info("dry-run: %s", shlex.join(cmd))
             return
         self._run(cmd, timeout=2.0)
+
+    def set_force_quantum(self, frames: int) -> None:
+        """Change the buffer size of the whole audio system, immediately.
+
+        0 hands the decision back to PipeWire. This is the value everything in
+        the graph runs at, which is why it belongs here and not on our streams.
+        """
+        cmd = ["pw-metadata", "-n", "settings", "0", "clock.force-quantum", str(int(frames))]
+        if self.dry_run:
+            log.info("dry-run: %s", shlex.join(cmd))
+            return
+        self._run(cmd, timeout=3.0)
+
+    def dropouts(self, seconds: float = 2.0) -> dict[str, Any]:
+        """Ask pw-top how many periods were missed recently. A non-zero count
+        is what makes audio crackle."""
+        out = self._run(["pw-top", "-b", "-n", "2"], timeout=max(8.0, seconds + 6))
+        return parse_pw_top(out)
 
     def set_default(self, node_id: int) -> None:
         cmd = ["wpctl", "set-default", str(node_id)]
@@ -689,6 +715,15 @@ class FakeBackend:
     def set_mute(self, node_id: int, mute: bool) -> None:
         self.calls.append(("set_mute", node_id, mute))
         self._graph.nodes[node_id].mute = mute
+
+    def set_force_quantum(self, frames: int) -> None:
+        self.calls.append(("force_quantum", frames))
+        self._graph.settings["clock.force-quantum"] = str(frames)
+        if frames:
+            self._graph.settings["clock.quantum"] = str(frames)
+
+    def dropouts(self, seconds: float = 2.0) -> dict[str, Any]:
+        return {"available": True, "errors": 0, "nodes": [], "drivers": []}
 
     def set_default(self, node_id: int) -> None:
         self.calls.append(("set_default", node_id))
@@ -979,3 +1014,111 @@ def alsa_usage(node: Node, proc_root: str = "/proc") -> dict[str, Any]:
                 pid = None
     owner = _comm(pid, proc_root) if pid else ""
     return {"open": True, "owner_pid": pid, "owner": owner, "exclusive": bool(owner) and owner not in PIPEWIRE_COMMS}
+
+
+# --------------------------------------------------------------------------- #
+# pw-top parsing (dropout counters) and the system buffer size
+# --------------------------------------------------------------------------- #
+
+QUANTUM_CHOICES = (0, 128, 256, 512, 1024, 2048)
+
+
+def _looks_like_float(token: str) -> bool:
+    if "." not in token:
+        return False
+    try:
+        float(token)
+    except ValueError:
+        return False
+    return True
+
+
+def parse_pw_top(text: str) -> dict[str, Any]:
+    """Read the last table pw-top printed: dropout counts and who drives the graph.
+
+    Columns cannot be located by header position, because the WAIT and BUSY
+    values carry their unit as a separate token. The ERR count is instead found
+    by its shape: an integer preceded by the two fractional W/Q and B/Q values.
+    """
+    lines = [l.rstrip() for l in text.splitlines() if l.strip()]
+    headers = [i for i, l in enumerate(lines) if "ERR" in l.split() and "ID" in l.split()]
+    if not headers:
+        return {"available": False, "errors": 0, "nodes": [], "drivers": []}
+    nodes: list[dict[str, Any]] = []
+    drivers: list[str] = []
+    total = 0
+    for line in lines[headers[-1] + 1 :]:
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        errors = None
+        for i in range(len(parts) - 1, 1, -1):
+            if parts[i].isdigit() and _looks_like_float(parts[i - 1]) and _looks_like_float(parts[i - 2]):
+                errors = int(parts[i])
+                break
+        if errors is None:
+            continue
+        name = parts[-1]
+        is_driver = not line[:1].isspace()
+        if is_driver:
+            drivers.append(name)
+        total += errors
+        if errors:
+            nodes.append({"name": name, "errors": errors, "driver": is_driver})
+    return {"available": True, "errors": total, "nodes": nodes, "drivers": drivers}
+
+
+def quantum_state(graph: Graph) -> dict[str, Any]:
+    """What buffer size the audio system runs at, in frames and milliseconds."""
+
+    def num(key: str, default: int = 0) -> int:
+        try:
+            return int(float(graph.settings.get(key, default)))
+        except (TypeError, ValueError):
+            return default
+
+    rate = num("clock.force-rate") or num("clock.rate", 48000) or 48000
+    forced = num("clock.force-quantum")
+    quantum = forced or num("clock.quantum", 1024) or 1024
+    return {
+        "quantum": quantum,
+        "rate": rate,
+        "ms": round(quantum * 1000 / rate, 1),
+        "forced": bool(forced),
+        "min": num("clock.min-quantum", 32),
+        "max": num("clock.max-quantum", 2048),
+        "known": bool(graph.settings),
+        "choices": [
+            {"frames": c, "ms": round(c * 1000 / rate, 1) if c else None}
+            for c in QUANTUM_CHOICES
+        ],
+    }
+
+
+def quantum_drop_in() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    return Path(base) / "pipewire" / "pipewire.conf.d" / "10-tfcz-quantum.conf"
+
+
+def persist_quantum(frames: int) -> Path | None:
+    """Write (or remove) a PipeWire drop-in so the buffer size survives a restart."""
+    path = quantum_drop_in()
+    if not frames:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise PwError(f"cannot remove {path}: {exc}") from exc
+        return None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "# written by tfcz-audio; delete this file to go back to the system default\n"
+            "context.properties = {\n"
+            f"    default.clock.quantum = {int(frames)}\n"
+            "}\n"
+        )
+    except OSError as exc:
+        raise PwError(f"cannot write {path}: {exc}") from exc
+    return path

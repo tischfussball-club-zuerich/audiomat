@@ -1214,6 +1214,45 @@ class Router:
 
     # ----------------------------------------------------------------- lists
 
+    def audio_settings(self) -> dict[str, Any]:
+        from .pw import QUANTUM_CHOICES, quantum_drop_in, quantum_state
+
+        state = quantum_state(self._graph_or_empty())
+        path = quantum_drop_in()
+        saved = None
+        try:
+            if path.is_file():
+                text = path.read_text()
+                for line in text.splitlines():
+                    if "default.clock.quantum" in line:
+                        saved = int(line.split("=")[-1].strip())
+        except (OSError, ValueError):
+            saved = None
+        state["saved"] = saved
+        state["saved_path"] = str(path)
+        state["router_request"] = self.cfg.audio.latency
+        state["choices"] = [c for c in state["choices"] if c["frames"] in QUANTUM_CHOICES]
+        return state
+
+    def set_audio_buffer(self, frames: int, persist: bool = False) -> dict[str, Any]:
+        """Change the buffer size of the whole audio system (0 = automatic)."""
+        from .pw import QUANTUM_CHOICES, persist_quantum
+
+        if frames not in QUANTUM_CHOICES:
+            raise RouterError(f"buffer size must be one of {', '.join(str(c) for c in QUANTUM_CHOICES)}")
+        self.backend.set_force_quantum(frames)
+        if persist:
+            persist_quantum(frames)
+        self._invalidate_graph()
+        log.info("audio buffer set to %s%s", frames or "automatic", " (saved for next start)" if persist else "")
+        return self.audio_settings()
+
+    def dropout_check(self, seconds: float = 2.0) -> dict[str, Any]:
+        try:
+            return self.backend.dropouts(seconds)
+        except PwError as exc:
+            return {"available": False, "errors": 0, "nodes": [], "drivers": [], "error": str(exc)}
+
     def hardware(self) -> list[dict[str, Any]]:
         graph = self._graph_or_empty()
         groups = physical_devices(graph)
