@@ -166,8 +166,8 @@ def bus_of(node: Node, device: Device | None) -> str:
     if bus == "pci" or ".pci-" in name:
         ff = (device.form_factor if device else "") or str(node.props.get("device.form-factor", ""))
         if ff == "internal":
-            return "built-in"
-        return "PCI card"
+            return "eingebaut"
+        return "PCI-Karte"
     return ""
 
 
@@ -202,7 +202,7 @@ def friendly_name(node: Node, device: Device | None) -> str:
     if is_hdmi_capture(node, device):
         idx = node.props.get("api.alsa.card") or node.props.get("alsa.card") or ""
         card = str(node.props.get("alsa.card_name") or (device.props.get("alsa.card_name") if device else "") or "")
-        label = "HDMI capture input"
+        label = "HDMI-Aufnahmeeingang"
         if idx != "":
             label += f" {idx}"
         return f"{label} ({card})" if card else label
@@ -214,10 +214,10 @@ def friendly_name(node: Node, device: Device | None) -> str:
     if not base:
         base = node.name
     if node.media_class.startswith("Audio/Source"):
-        return f"{base} · microphone"
+        return f"{base} · Mikrofon"
     if node.media_class.startswith("Audio/Sink"):
         ff = (device.form_factor if device else "") or str(node.props.get("device.form-factor", ""))
-        what = "headphones" if ff in ("headset", "headphone", "hands-free") or bus_of(node, device) in ("USB", "Bluetooth") else "speakers"
+        what = "Kopfhörer" if ff in ("headset", "headphone", "hands-free") or bus_of(node, device) in ("USB", "Bluetooth") else "Lautsprecher"
         return f"{base} · {what}"
     return base
 
@@ -878,10 +878,10 @@ def port_label(bus_path: str) -> str:
         tail = bus_path.split("-usb-", 1)[1]  # 0:3.2:1.0
         parts = tail.split(":")
         if len(parts) >= 2 and parts[1]:
-            return f"USB port {parts[1]}"
-        return "USB port"
+            return f"USB-Anschluss {parts[1]}"
+        return "USB-Anschluss"
     if bus_path.startswith("pci-"):
-        return "internal slot " + bus_path[4:]
+        return "interner Steckplatz " + bus_path[4:]
     return bus_path
 
 
@@ -923,20 +923,20 @@ def identity_for(node: Node, graph: Graph) -> dict[str, Any]:
             "prefer": {"device.bus-path": bus_path} if bus_path else {},
             "strategy": "serial",
             "port": port_label(bus_path),
-            "text": "Recognised by its serial number. Any USB port works."
-            + ("" if twins else " Note: only one of this model is plugged in, so it is not certain the serial is unique. If a second identical one is added later, run Setup again."),
+            "text": "Wird an der Seriennummer erkannt. Jeder USB-Anschluss funktioniert."
+            + ("" if twins else " Hinweis: es ist nur ein Gerät dieses Modells angesteckt, die Seriennummer muss also nicht eindeutig sein. Kommt später ein zweites gleiches dazu, richte die Geräte nochmals ein."),
         }
     if bus_path and bus in ("usb", "bluetooth", "bluez5", "") and "usb" in bus_path:
         why = (
-            "The two identical devices report no distinguishing serial number, so the computer can only tell them apart by the USB port."
+            "Die zwei gleichen Geräte melden keine unterscheidbare Seriennummer, der Computer kann sie also nur am USB-Anschluss auseinanderhalten."
             if twins
-            else "This device reports no usable serial number, so it is recognised by the USB port it is plugged into."
+            else "Dieses Gerät meldet keine brauchbare Seriennummer und wird deshalb am USB-Anschluss erkannt, in dem es steckt."
         )
         return {
             "match": {"device.bus-path": bus_path, "kind": kind},
             "strategy": "port",
             "port": port_label(bus_path),
-            "text": f"{why} Keep it in {port_label(bus_path)}; label the plug and the port.",
+            "text": f"{why} Lass es in {port_label(bus_path)}; beschrifte Stecker und Anschluss.",
         }
     own_device = None
     own_id = node.props.get("device.id")
@@ -952,9 +952,9 @@ def identity_for(node: Node, graph: Graph) -> dict[str, Any]:
             "strategy": "name",
             "port": port_label(bus_path),
             "text": (
-                "Recognised by its name in the audio system. Capture cards are numbered in the order the "
-                "system finds them, so the inputs can swap after a reboot unless the card order is pinned "
-                "(see docs/hdmi-capture.md)."
+                "Wird am Namen im Tonsystem erkannt. Aufnahmekarten werden in der Reihenfolge nummeriert, in der "
+                "das System sie findet; die Eingänge können nach einem Neustart also tauschen, solange die "
+                "Reihenfolge nicht festgenagelt ist (siehe docs/hdmi-capture.md)."
             ),
         }
     return {
@@ -962,7 +962,7 @@ def identity_for(node: Node, graph: Graph) -> dict[str, Any]:
         "prefer": {},
         "strategy": "name",
         "port": port_label(bus_path),
-        "text": "Recognised by its fixed name in the audio system (built-in or PCI hardware).",
+        "text": "Wird am festen Namen im Tonsystem erkannt (eingebaute oder PCI-Hardware).",
     }
 
 

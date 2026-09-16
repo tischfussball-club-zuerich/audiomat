@@ -36,8 +36,8 @@ def twin_backend():
 
 class IdentityTests(unittest.TestCase):
     def test_port_label(self):
-        self.assertEqual(port_label("pci-0000:00:14.0-usb-0:3:1.0"), "USB port 3")
-        self.assertEqual(port_label("pci-0000:00:14.0-usb-0:3.2:1.0"), "USB port 3.2")
+        self.assertEqual(port_label("pci-0000:00:14.0-usb-0:3:1.0"), "USB-Anschluss 3")
+        self.assertEqual(port_label("pci-0000:00:14.0-usb-0:3.2:1.0"), "USB-Anschluss 3.2")
         self.assertEqual(port_label(""), "")
 
     def test_identical_headsets_are_port_bound(self):
@@ -45,15 +45,15 @@ class IdentityTests(unittest.TestCase):
         ident = identity_for(g.by_name("alsa_input.usb-Logitech-01.mono-fallback"), g)
         self.assertEqual(ident["strategy"], "port")
         self.assertEqual(ident["match"], {"device.bus-path": "pci-0000:00:14.0-usb-0:1:1.0", "kind": "input"})
-        self.assertIn("USB port 1", ident["text"])
-        self.assertIn("identical", ident["text"])
+        self.assertIn("USB-Anschluss 1", ident["text"])
+        self.assertIn("gleichen Geräte", ident["text"])
 
     def test_unique_serial_is_port_independent(self):
         g = twin_backend().graph()
         ident = identity_for(g.by_name("alsa_output.usb-Jabra_A1B2-00.analog-stereo"), g)
         self.assertEqual(ident["strategy"], "serial")
         self.assertEqual(ident["match"], {"device.serial": "Jabra_Speak_510_A1B2", "kind": "output"})
-        self.assertIn("Any USB port", ident["text"])
+        self.assertIn("Jeder USB-Anschluss", ident["text"])
 
     def test_pci_hardware_uses_name(self):
         g = twin_backend().graph()
@@ -73,11 +73,11 @@ class IdentityTests(unittest.TestCase):
         headsets = [x for x in groups if x["headset"]]
         self.assertEqual(len(headsets), 3)
         jabra = next(x for x in headsets if "Jabra" in x["name"])
-        self.assertEqual(jabra["inputs"][0]["friendly"], "Jabra Speak 510 · microphone")
-        self.assertEqual(jabra["outputs"][0]["friendly"], "Jabra Speak 510 · headphones")
+        self.assertEqual(jabra["inputs"][0]["friendly"], "Jabra Speak 510 · Mikrofon")
+        self.assertEqual(jabra["outputs"][0]["friendly"], "Jabra Speak 510 · Kopfhörer")
         self.assertEqual(jabra["identity"]["strategy"], "serial")
         hdmi = next(x for x in groups if x["hdmi_capture"])
-        self.assertTrue(hdmi["inputs"][0]["friendly"].startswith("HDMI capture input 1"))
+        self.assertTrue(hdmi["inputs"][0]["friendly"].startswith("HDMI-Aufnahmeeingang 1"))
         monitor = next(x for x in groups if "Monitor" in x["name"])
         self.assertTrue(monitor["outputs"][0]["speakers"])
 
@@ -105,11 +105,11 @@ class ConfigIdentityTests(unittest.TestCase):
 
     def test_human_names(self):
         cfg = parse(tomllib.loads(MINIMAL + '\n[labels]\nheadset_a = "Anna"\nhdmi = "PlayStation"\n'))
-        self.assertEqual(human(cfg, "headset_a_mic"), "Anna microphone")
-        self.assertEqual(human(cfg, "headset_a_out"), "Anna headphones")
+        self.assertEqual(human(cfg, "headset_a_mic"), "Anna Mikrofon")
+        self.assertEqual(human(cfg, "headset_a_out"), "Anna Kopfhörer")
         self.assertEqual(human(cfg, "hdmi"), "PlayStation")
-        self.assertEqual(human(cfg, "headset_b_out"), "Headset B headphones")
-        self.assertEqual(human(cfg, "obs_mic"), "OBS stream")
+        self.assertEqual(human(cfg, "headset_b_out"), "Headset B Kopfhörer")
+        self.assertEqual(human(cfg, "obs_mic"), "OBS-Stream")
         self.assertEqual(human(None, "hdmi_1"), "HDMI 1")
 
 
@@ -161,7 +161,7 @@ to = "obs_mic"
         self.assertTrue(st["routes"]["a_to_b"]["connected"])
         self.assertEqual(st["devices"]["a_mic"]["identity"]["strategy"], "port")
         self.assertEqual(st["devices"]["j_out"]["identity"]["strategy"], "serial")
-        self.assertEqual(st["routes"]["a_to_b"]["label"], "Anna microphone → Ben headphones")
+        self.assertEqual(st["routes"]["a_to_b"]["label"], "Anna Mikrofon → Ben Kopfhörer")
 
     def test_unplug_and_replug_in_same_port(self):
         router, backend = self.make()
@@ -197,8 +197,8 @@ to = "obs_mic"
         router.reconcile()
         missing = [p for p in router.problems() if p["code"] == "device_missing"]
         self.assertTrue(missing)
-        self.assertIn("USB port 7", missing[0]["why"])
-        self.assertIn("USB port 2", missing[0]["fix"])
+        self.assertIn("USB-Anschluss 7", missing[0]["why"])
+        self.assertIn("USB-Anschluss 2", missing[0]["fix"])
 
     def test_serial_device_moves_ports_freely(self):
         router, backend = self.make()
@@ -221,7 +221,7 @@ to = "obs_mic"
         node.mute = True
         probs = {p["code"]: p for p in router.problems()}
         self.assertIn("device_muted", probs)
-        self.assertTrue(probs["device_muted"]["title"].startswith("Anna microphone"))
+        self.assertTrue(probs["device_muted"]["title"].startswith("Anna Mikrofon"))
         self.assertTrue(probs["device_muted"]["fixable"])
         router.fix_device("a_mic")
         self.assertFalse(backend.graph().by_name("alsa_input.usb-Logitech-01.mono-fallback").mute)
@@ -265,7 +265,7 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(set(saved.routes), {"a_to_b", "b_to_a", "a_to_obs", "b_to_obs", "game_to_a", "game_to_b"})
             self.assertIn("game_quiet", saved.presets)
             self.assertTrue(all(r["connected"] for r in status["routes"].values()), status["routes"])
-            self.assertEqual(status["routes"]["a_to_b"]["label"], "Anna microphone → Ben headphones")
+            self.assertEqual(status["routes"]["a_to_b"]["label"], "Anna Mikrofon → Ben Kopfhörer")
             self.assertEqual(status["devices"]["headset_a_mic"]["identity"]["strategy"], "port")
             self.assertEqual(status["devices"]["headset_b_mic"]["identity"]["strategy"], "serial")
 

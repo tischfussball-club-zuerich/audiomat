@@ -79,8 +79,13 @@ UI opens the setup wizard automatically. `tfcz-audio init-config
 ## Web UI
 
 Open <http://127.0.0.1:8787/> on the streaming PC (or from the LAN if you
-change `listen` and set a `token`). The page is written for people who do
-not care about audio plumbing:
+change `listen` and set a `token`). The page follows the TFCZ brand guide
+(<https://design.tfcz.ch/brandguide>): navy frosted panels on the club's
+blue and gold, Nunito Sans, the blue-over-gold brand line, Lucide icons
+and no emoji anywhere, custom dropdowns instead of native selects, hover
+as an inset brand frame and selection in gold. It speaks German in the
+Du-form, like the rest of the club's interfaces. It is written for people
+who do not care about audio plumbing:
 
 * **Status** at the top: "Everything is working", or a list of problems in
   plain language, each with *why*, *effect* and *what to do*. Problems the
@@ -105,6 +110,11 @@ Everything the command line offers is reachable from that page:
 `selftest`, and the log viewer shows what the router has been doing,
 either since the last start or the full history from the system journal.
 Output is plain text you can copy into a message.
+
+Fonts are not fetched from the internet: the page asks for Nunito Sans and
+falls back to the system's geometric sans if it is not installed locally.
+The background swirl module from the brand guide is a website component
+and is deliberately not duplicated here.
 
 Every UI change rewrites `config.toml` (comments in the file are not kept)
 and hot-reloads the daemon. Hand edits to the file still work; restart the

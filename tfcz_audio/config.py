@@ -500,16 +500,16 @@ def _reject_cycles(cfg: Config) -> None:
 def human(cfg: Config | None, alias: str) -> str:
     """Friendly name for an alias: user label first, then a readable fallback."""
     if alias == OBS_MIC:
-        return "OBS stream"
+        return "OBS-Stream"
     labels = cfg.labels if cfg else {}
     if alias in labels:
         return labels[alias]
     base, _, kind = alias.rpartition("_")
-    suffix = {"mic": "microphone", "out": "headphones"}.get(kind)
+    suffix = {"mic": "Mikrofon", "out": "Kopfhörer"}.get(kind)
     if base and suffix and base in labels:
         return f"{labels[base]} {suffix}"
     words = alias.replace("-", "_").split("_")
     acr = {"hdmi": "HDMI", "obs": "OBS", "usb": "USB", "pc": "PC", "tv": "TV", "a": "A", "b": "B", "c": "C", "d": "D"}
     out = " ".join(acr.get(w, w) for w in words)
-    out = out.replace(" mic", " microphone").replace(" out", " headphones")
+    out = out.replace(" mic", " Mikrofon").replace(" out", " Kopfhörer")
     return out[:1].upper() + out[1:]

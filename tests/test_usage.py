@@ -65,7 +65,7 @@ class TakenProblemTests(unittest.TestCase):
         backend.graph().by_name("alsa_input.usb-Logitech-01.mono-fallback").props["tfcz.fake.owner"] = "obs"
         probs = {p["code"]: p for p in router.problems()}
         self.assertIn("device_taken", probs)
-        self.assertTrue(probs["device_taken"]["title"].startswith("Anna microphone is taken over by OBS"))
+        self.assertTrue(probs["device_taken"]["title"].startswith("Anna Mikrofon ist von OBS übernommen"))
         self.assertIn("Audio Input Capture (PipeWire)", probs["device_taken"]["fix"])
         self.assertEqual(router.status()["devices"]["a_mic"]["taken_by"], "obs")
         self.assertFalse(router.status()["ok"])

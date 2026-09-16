@@ -927,18 +927,18 @@ class Router:
         node = graph.by_name(res.node) if res.node else None
         info = describe_node(node, graph) if node else None
         if spec.is_static:
-            how = {"strategy": "name", "text": "Recognised by its fixed name in the audio system.", "port": info["port"] if info else ""}
+            how = {"strategy": "name", "text": "Wird am festen Namen im Tonsystem erkannt.", "port": info["port"] if info else ""}
         else:
             key = "device.serial" if "device.serial" in spec.match else "device.bus-path" if "device.bus-path" in spec.match else "match"
             how = {
                 "strategy": {"device.serial": "serial", "device.bus-path": "port"}.get(key, "match"),
                 "port": (info["port"] if info else "") or (self._port_from_match(spec.match)),
                 "text": (
-                    "Recognised by its serial number. Any USB port works."
+                    "Wird an der Seriennummer erkannt. Jeder USB-Anschluss funktioniert."
                     if key == "device.serial"
-                    else f"Recognised by the USB port it is plugged into ({self._port_from_match(spec.match)}). It must stay in that port."
+                    else f"Wird am USB-Anschluss erkannt, in dem es steckt ({self._port_from_match(spec.match)}). Es muss dort stecken bleiben."
                     if key == "device.bus-path"
-                    else "Recognised by matching hardware properties."
+                    else "Wird über passende Hardware-Eigenschaften erkannt."
                 ),
             }
         usage = info["usage"] if info else {"exclusive": False, "owner": ""}
@@ -993,33 +993,33 @@ class Router:
             out.append({"level": level, "code": code, "what": what, "title": title, "why": why, "effect": effect, "fix": fix, **extra})
 
         if self.config_error:
-            add("error", "config_invalid", "config", "The settings file could not be read",
+            add("error", "config_invalid", "config", "Die Einstellungsdatei konnte nicht gelesen werden",
                 self.config_error,
-                "The router runs with whatever it could recover; some or all connections may be missing.",
-                f"Run Setup in this page to write a fresh settings file, or fix {cfg.path} by hand and restart the service.")
+                "Der Router läuft mit dem, was zu retten war; einzelne oder alle Verbindungen können fehlen.",
+                f"Richte die Geräte auf dieser Seite neu ein, das schreibt eine frische Einstellungsdatei. Oder repariere {cfg.path} von Hand und starte den Dienst neu.")
 
         if not graph.nodes:
-            add("error", "no_audio_system", "daemon", "The computer's audio system is not reachable",
-                self.last_error or "PipeWire did not answer.",
-                "Nothing can be routed until it is back.",
-                "Log out and in again, or run: systemctl --user restart pipewire wireplumber")
+            add("error", "no_audio_system", "daemon", "Das Tonsystem des Computers antwortet nicht",
+                self.last_error or "PipeWire hat nicht geantwortet.",
+                "Solange es weg ist, kann nichts geleitet werden.",
+                "Ab- und wieder anmelden, oder: systemctl --user restart pipewire wireplumber")
             return out
 
         if graph.nodes and not graph.has_default_metadata and "WirePlumber" not in graph.clients:
-            add("error", "no_session_manager", "daemon", "The audio session manager is not running",
-                "PipeWire answers, but WirePlumber (which connects streams to devices) is not there. Nothing gets linked, no matter what this router does.",
-                "All connections stay silent.",
-                "systemctl --user restart wireplumber   (then: systemctl --user restart tfcz-audio). If it keeps dying, check 'journalctl --user -u wireplumber' for an error in a configuration rule.")
+            add("error", "no_session_manager", "daemon", "Die Tonverwaltung läuft nicht",
+                "PipeWire antwortet, aber WirePlumber fehlt. Das ist der Teil, der Ströme mit Geräten verbindet. Ohne ihn wird nichts verbunden, egal was dieser Router tut.",
+                "Alle Verbindungen bleiben stumm.",
+                "systemctl --user restart wireplumber   (danach: systemctl --user restart tfcz-audio). Stirbt er immer wieder, zeigt 'journalctl --user -u wireplumber' den Fehler, meist in einer Konfigurationsregel.")
 
         if graph.by_name(cfg.virtual.obs_mic_name) is None:
-            add("error", "obs_mic_missing", "obs_mic", "The OBS microphone does not exist right now",
-                "The virtual microphone is created by this router and it is currently being recreated.",
-                "OBS records silence until it is back (a few seconds).",
-                "Nothing to do unless it stays like this for a minute; then restart: systemctl --user restart tfcz-audio")
+            add("error", "obs_mic_missing", "obs_mic", "Das OBS-Mikrofon gibt es gerade nicht",
+                "Dieses virtuelle Mikrofon wird vom Router erzeugt und im Moment neu angelegt.",
+                "OBS nimmt Stille auf, bis es wieder da ist (ein paar Sekunden).",
+                "Nichts zu tun, ausser es bleibt eine Minute lang so; dann: systemctl --user restart tfcz-audio")
 
         if not cfg.routes and not self.config_error:
-            add("warning", "no_routes", "routes", "No connections set up yet", "", "No sound goes anywhere.",
-                "Use Setup to connect your headsets.")
+            add("warning", "no_routes", "routes", "Noch keine Verbindungen eingerichtet", "", "Es geht kein Ton irgendwohin.",
+                "Nutze «Geräte einrichten», um die Headsets zu verbinden.")
 
         physical = physical_devices(graph)
         used_aliases = {a for r in cfg.routes.values() for a in (r.source_ref, r.sink_ref) if a in cfg.devices}
@@ -1030,65 +1030,65 @@ class Router:
             routes_using = [self._route_label(r) for r in cfg.routes.values() if alias in (r.source_ref, r.sink_ref)]
             label = self._label(alias)
             if node is None:
-                why = "The computer does not see this device: it may be unplugged, switched off, or it was replaced by another model."
-                fix = "Plug it in or switch it on; it reconnects by itself. If it is a new device, assign it under Setup."
+                why = "Der Computer sieht dieses Gerät nicht: vielleicht ausgesteckt, ausgeschaltet oder durch ein anderes Modell ersetzt."
+                fix = "Einstecken oder einschalten; es verbindet sich von selbst wieder. Ist es ein neues Gerät, richte es unter «Geräte einrichten» zu."
                 if "device.bus-path" in spec.match:
                     port = self._port_from_match(spec.match)
                     twin = self._same_model_elsewhere(spec, physical)
                     if twin:
-                        why = f"{label} is recognised by its USB port ({port}), and a device of that kind is now in {twin} instead."
-                        fix = f"Move it back to {port}, or run Setup again to accept the new port."
+                        why = f"{label} wird an seinem USB-Anschluss erkannt ({port}), und ein solches Gerät steckt jetzt stattdessen in {twin}."
+                        fix = f"Zurück in {port} stecken, oder die Geräte neu einrichten, damit der neue Anschluss übernommen wird."
                     else:
-                        why = f"{label} is recognised by its USB port ({port}) and nothing is plugged in there."
-                        fix = f"Plug it into {port}. Identical headsets without serial numbers can only be told apart by the port."
-                add("error", "device_missing", alias, f"{label} is not connected", why,
-                    "These connections are silent: " + ", ".join(routes_using), fix, routes=routes_using)
+                        why = f"{label} wird an seinem USB-Anschluss erkannt ({port}), und dort steckt nichts."
+                        fix = f"In {port} einstecken. Gleiche Headsets ohne Seriennummer lassen sich nur am Anschluss unterscheiden."
+                add("error", "device_missing", alias, f"{label} ist nicht angeschlossen", why,
+                    "Diese Verbindungen sind stumm: " + ", ".join(routes_using), fix, routes=routes_using)
                 continue
             info = describe_node(node, graph)
             usage = info["usage"]
             if usage["exclusive"]:
-                owner = usage["owner"] or "another program"
+                owner = usage["owner"] or "ein anderes Programm"
                 pretty = {"obs": "OBS", "obs64": "OBS"}.get(owner.lower(), owner)
-                add("error", "device_taken", alias, f"{label} is taken over by {pretty}",
-                    f"{pretty} opened the device directly, bypassing the computer's audio system. Only one program can do that, and it locks everyone else out.",
-                    "Silent for all connections using it, and for the level bar. " + ("OBS still hears it, nobody else does." if pretty == "OBS" else ""),
-                    f"In {pretty}, use a source that goes through the audio system: in OBS pick 'Audio Input Capture (PipeWire)' instead of 'ALSA Input Capture' for this device. Or close {pretty}.",
+                add("error", "device_taken", alias, f"{label} ist von {pretty} übernommen",
+                    f"{pretty} hat das Gerät direkt geöffnet und dabei das Tonsystem umgangen. Das kann nur ein Programm gleichzeitig, und es sperrt alle anderen aus.",
+                    "Stumm für alle Verbindungen, die es nutzen, und für den Pegelbalken. " + ("OBS hört es weiterhin, sonst niemand." if pretty == "OBS" else ""),
+                    f"Nutze in {pretty} eine Quelle, die über das Tonsystem geht: in OBS «Audio Input Capture (PipeWire)» statt «ALSA Input Capture» für dieses Gerät. Oder schliesse {pretty}.",
                     owner=owner)
             elif node.state == "error" or info["error"]:
-                add("error", "device_error", alias, f"The audio system cannot use {label}",
-                    f"The device reports an error: {info['error'] or 'unknown'}. Usually another program holds it, or the driver is stuck.",
-                    "Silent for all connections using it.",
-                    "Close other audio programs; unplug and replug the device; if it persists, restart the audio system: systemctl --user restart pipewire wireplumber")
+                add("error", "device_error", alias, f"Das Tonsystem kann {label} nicht benutzen",
+                    f"Das Gerät meldet einen Fehler: {info['error'] or 'unbekannt'}. Meist hält es ein anderes Programm fest, oder der Treiber hängt.",
+                    "Stumm für alle Verbindungen, die es nutzen.",
+                    "Andere Tonprogramme schliessen; Gerät aus- und wieder einstecken; hilft das nicht: systemctl --user restart pipewire wireplumber")
             if res.ambiguous:
-                add("warning", "device_ambiguous", alias, f"More than one device matches {label}",
-                    f"{res.candidates} connected devices look the same to the computer.",
-                    "The router picked one of them; it may be the wrong one.",
-                    "Run Setup again while both devices are plugged in so they get told apart by USB port.")
+                add("warning", "device_ambiguous", alias, f"Mehr als ein Gerät passt auf {label}",
+                    f"{res.candidates} angeschlossene Geräte sehen für den Computer gleich aus.",
+                    "Der Router hat eines davon genommen; es kann das falsche sein.",
+                    "Richte die Geräte neu ein, solange beide eingesteckt sind, dann werden sie am USB-Anschluss unterschieden.")
             if node.mute:
-                add("warning", "device_muted", alias, f"{label} is muted by the system",
-                    "The device itself is muted in the computer's sound settings; this is separate from the switches on this page.",
-                    "Everything from or to it is silent even though the arrows look fine.",
-                    "Click Fix, or unmute it in the sound settings.", fixable=True)
+                add("warning", "device_muted", alias, f"{label} ist im System stummgeschaltet",
+                    "Das Gerät selbst ist in den Toneinstellungen des Computers stumm; das ist unabhängig von den Schaltern auf dieser Seite.",
+                    "Alles von und zu ihm ist still, obwohl die Pfeile in Ordnung aussehen.",
+                    "Auf «Beheben» klicken, oder es in den Toneinstellungen laut schalten.", fixable=True)
             elif node.volume is not None and node.volume < 0.05:
-                add("warning", "device_silent", alias, f"{label} is turned all the way down by the system",
-                    "The device's own volume in the computer's sound settings is at 0.",
-                    "Everything from or to it is nearly silent.",
-                    "Click Fix to set it to 100 %, or raise it in the sound settings.", fixable=True)
+                add("warning", "device_silent", alias, f"{label} ist im System ganz heruntergedreht",
+                    "Die eigene Lautstärke des Geräts steht in den Toneinstellungen des Computers auf 0.",
+                    "Alles von und zu ihm ist fast still.",
+                    "Auf «Beheben» klicken für 100 %, oder in den Toneinstellungen hochdrehen.", fixable=True)
 
         # system default output/input pointing at our virtual nodes
         for key, label in (("default.audio.sink", "output"), ("default.audio.source", "input")):
             target = graph.defaults.get(key, "")
             if target.startswith("tfcz."):
                 if label == "output":
-                    add("error", "default_into_obs", "obs_mic", "System sounds are going into the OBS microphone",
-                        "The computer's default output is the router's mix bus (probably because no other output is connected right now). Notification sounds, browser audio and so on end up on the stream.",
-                        "Your viewers hear the computer's sounds through the microphone channel.",
-                        "Plug the headsets in, or choose another output device in the system sound settings (wpctl set-default <id>).")
+                    add("error", "default_into_obs", "obs_mic", "Systemtöne landen im OBS-Mikrofon",
+                        "Der Standard-Ausgang des Computers ist die Mischspur des Routers, vermutlich weil gerade kein anderer Ausgang angeschlossen ist. Hinweistöne, Browserton und so weiter gehen damit auf den Stream.",
+                        "Deine Zuschauer hören die Töne des Computers über den Mikrofonkanal.",
+                        "Headsets einstecken, oder in den Toneinstellungen einen anderen Ausgang wählen (wpctl set-default <id>).")
                 else:
-                    add("warning", "default_source_is_obs", "obs_mic", "The computer's default microphone is the OBS microphone",
-                        "Programs that just use 'the default microphone' now record the router's mix.",
-                        "Usually harmless; OBS should select 'TFCZ OBS Mic' explicitly anyway.",
-                        "Pick a real microphone as default in the sound settings if another program needs it.")
+                    add("warning", "default_source_is_obs", "obs_mic", "Das Standard-Mikrofon des Computers ist das OBS-Mikrofon",
+                        "Programme, die einfach «das Standard-Mikrofon» nehmen, nehmen jetzt die Mischung des Routers auf.",
+                        "Meist harmlos; OBS sollte ohnehin «TFCZ OBS Mic» ausdrücklich auswählen.",
+                        "Wähle in den Toneinstellungen ein echtes Mikrofon als Standard, falls ein anderes Programm es braucht.")
 
         # streams linked to the wrong device (remembered manual moves)
         for name, route in cfg.routes.items():
@@ -1102,53 +1102,53 @@ class Router:
                 and not st["connected"]
                 and unlinked_for >= self.relink_after
             ):
-                add("warning", "still_connecting", name, f"Connection {self._route_label(route)} is not connected yet",
-                    "Both devices are there, but the audio system has not linked the router's stream to them.",
-                    "This connection is silent in the meantime.",
-                    "The router retries by itself. If it stays like this, restart the audio system: systemctl --user restart wireplumber tfcz-audio")
+                add("warning", "still_connecting", name, f"Verbindung {self._route_label(route)} ist noch nicht verbunden",
+                    "Beide Geräte sind da, aber das Tonsystem hat den Strom des Routers noch nicht mit ihnen verbunden.",
+                    "Diese Verbindung ist solange stumm.",
+                    "Der Router versucht es von selbst weiter. Bleibt es so: systemctl --user restart wireplumber tfcz-audio")
             if self._relink_attempts.get(name, 0) >= 3 and not st["misrouted_to"] and st["source_present"] and st["sink_present"]:
-                add("error", "not_linking", name, f"Connection {self._route_label(route)} cannot be established",
-                    "Both devices are present, but the audio system does not connect the router's stream to them, even after several retries.",
-                    "This connection is silent.",
-                    "Restart the audio system: systemctl --user restart pipewire wireplumber tfcz-audio. If it persists, check 'journalctl --user -u tfcz-audio' and 'pw-link -l'.")
+                add("error", "not_linking", name, f"Verbindung {self._route_label(route)} kommt nicht zustande",
+                    "Beide Geräte sind da, aber das Tonsystem verbindet den Strom des Routers auch nach mehreren Versuchen nicht mit ihnen.",
+                    "Diese Verbindung ist stumm.",
+                    "Tonsystem neu starten: systemctl --user restart pipewire wireplumber tfcz-audio. Hilft das nicht, zeigen 'journalctl --user -u tfcz-audio' und 'pw-link -l' mehr.")
             if st["misrouted_to"]:
-                add("error", "misrouted", name, f"Connection {self._route_label(route)} is linked to the wrong device",
-                    "The audio system connected this stream to " + ", ".join(st["misrouted_to"]) + " instead of the chosen device (a remembered manual move in a mixer app, or a fallback because the device was missing).",
-                    "The router muted this connection for safety: wrong routing could leak a microphone or feed the OBS microphone back into itself.",
-                    "The router forgets the remembered target and rebuilds the connection by itself. If it stays wrong: systemctl --user restart wireplumber, and as a last resort remove the remembered choices with 'rm ~/.local/state/wireplumber/restore-stream' followed by 'systemctl --user restart wireplumber tfcz-audio'.")
+                add("error", "misrouted", name, f"Verbindung {self._route_label(route)} hängt am falschen Gerät",
+                    "Das Tonsystem hat diesen Strom mit " + ", ".join(st["misrouted_to"]) + " verbunden statt mit dem gewählten Gerät. Meist eine von Hand gemerkte Umstellung aus einem Mischpult-Programm, oder ein Ausweichen, weil das Gerät fehlte.",
+                    "Der Router hat diese Verbindung zur Sicherheit stummgeschaltet: falsches Leiten kann ein Mikrofon irgendwohin tragen oder das OBS-Mikrofon in sich selbst zurückführen.",
+                    "Der Router vergisst das gemerkte Ziel und baut die Verbindung selbst neu auf. Bleibt es falsch: systemctl --user restart wireplumber, und zur Not die gemerkten Zuordnungen löschen mit 'rm ~/.local/state/wireplumber/restore-stream', danach 'systemctl --user restart wireplumber tfcz-audio'.")
 
         if self._drift_count.get("virtual", 0) >= self.drift_alert_after:
-            add("warning", "virtual_fought", "obs_mic", "Another program keeps changing the OBS microphone level",
-                "Something outside this router repeatedly mutes or turns down the OBS microphone (often a mixer app, or OBS itself with 'Monitor and Output' set on a source).",
-                "The level jumps around; the router puts it back, but you may hear the difference on the stream.",
-                "Find the program that does it (usually a sound settings or mixer window) and leave the 'TFCZ OBS Mic' alone; the router keeps it at 100 %.")
+            add("warning", "virtual_fought", "obs_mic", "Ein anderes Programm verstellt dauernd den Pegel des OBS-Mikrofons",
+                "Etwas ausserhalb dieses Routers schaltet das OBS-Mikrofon immer wieder stumm oder dreht es herunter. Oft ein Mischpult-Programm, oder OBS selbst mit «Monitor and Output» auf einer Quelle.",
+                "Der Pegel springt; der Router stellt ihn zurück, aber man hört es womöglich auf dem Stream.",
+                "Finde das Programm, das es tut (meist ein Toneinstellungs- oder Mischpultfenster), und lass «TFCZ OBS Mic» in Ruhe; der Router hält es auf 100 %.")
         for name in sorted(n for n, c in self._drift_count.items() if n != "virtual" and c >= self.drift_alert_after):
             if name in cfg.routes:
-                add("warning", "volume_fought", name, f"Another program keeps changing the volume of {self._route_label(cfg.routes[name])}",
-                    "Something outside this router repeatedly changes this connection's volume.",
-                    "The volume you set here does not stay put.",
-                    "Close mixer apps that touch 'TFCZ' streams. The router keeps correcting it, but less often now.")
+                add("warning", "volume_fought", name, f"Ein anderes Programm verstellt dauernd die Lautstärke von {self._route_label(cfg.routes[name])}",
+                    "Etwas ausserhalb dieses Routers ändert die Lautstärke dieser Verbindung immer wieder.",
+                    "Was du hier einstellst, bleibt nicht stehen.",
+                    "Schliesse Mischpult-Programme, die «TFCZ»-Ströme anfassen. Der Router korrigiert weiter, aber seltener.")
 
         # routes to OBS
         obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref == OBS_MIC]
         live_obs = [n for n, _ in obs_routes if n in self.desired and not self.desired[n].mute and self.desired[n].volume > 0]
         if cfg.routes and not obs_routes:
-            add("warning", "obs_unconnected", "obs_mic", "Nothing is connected to the OBS stream",
-                "No arrow points to the OBS stream.", "Your viewers hear no microphones.",
-                "Add a connection from each headset microphone to the OBS stream, or run Setup.")
+            add("warning", "obs_unconnected", "obs_mic", "Nichts ist mit dem OBS-Stream verbunden",
+                "Kein Pfeil zeigt auf den OBS-Stream.", "Deine Zuschauer hören kein Mikrofon.",
+                "Lege von jedem Headset-Mikrofon eine Verbindung zum OBS-Stream an, oder richte die Geräte neu ein.")
         elif obs_routes and not live_obs:
-            add("warning", "obs_all_off", "obs_mic", "All connections to the OBS stream are switched off",
-                "Every arrow to OBS is off or at 0 %.", "Your viewers hear no microphones.",
-                "Switch on at least one microphone → OBS stream connection.")
+            add("warning", "obs_all_off", "obs_mic", "Alle Verbindungen zum OBS-Stream sind ausgeschaltet",
+                "Jeder Pfeil zu OBS ist aus oder auf 0 %.", "Deine Zuschauer hören kein Mikrofon.",
+                "Schalte mindestens eine Verbindung Mikrofon zum OBS-Stream ein.")
 
         # risky combinations
         dev_of_node = {n["name"]: g for g in physical for n in g["inputs"] + g["outputs"]}
         for name, route in cfg.routes.items():
             proc = self.procs.get(name)
             if proc is None or proc.poll() is not None:
-                add("warning", "route_restarting", name, f"Connection {self._route_label(route)} is restarting",
-                    "Its helper process stopped and is being started again automatically.",
-                    "A short interruption on this path.", "Nothing to do; if it repeats, check the log.")
+                add("warning", "route_restarting", name, f"Verbindung {self._route_label(route)} startet neu",
+                    "Ihr Hilfsprozess hat gestoppt und wird automatisch wieder gestartet.",
+                    "Eine kurze Unterbrechung auf diesem Weg.", "Nichts zu tun; wiederholt es sich, schau ins Protokoll.")
             if route.sink_ref == OBS_MIC:
                 continue
             src_node = self._ref_node(route.source_ref, graph)
@@ -1156,21 +1156,21 @@ class Router:
             if dst_node is not None:
                 info = describe_node(dst_node, graph)
                 if info["speakers"] and src_node is not None and not describe_node(src_node, graph)["hdmi_capture"]:
-                    add("warning", "feedback_risk", name, f"{self._route_label(route)} sends a microphone to loudspeakers",
-                        "The output looks like loudspeakers (TV/monitor/built-in), not headphones. The microphone can pick the sound up again.",
-                        "Echo or a loud howling feedback tone is likely.",
-                        "Use headphones as the output, or switch this connection off.")
+                    add("warning", "feedback_risk", name, f"{self._route_label(route)} schickt ein Mikrofon auf Lautsprecher",
+                        "Der Ausgang sieht nach Lautsprechern aus (Fernseher, Bildschirm, eingebaut), nicht nach Kopfhörern. Das Mikrofon kann den Ton wieder aufnehmen.",
+                        "Echo oder lautes Pfeifen ist wahrscheinlich.",
+                        "Nimm Kopfhörer als Ausgang, oder schalte diese Verbindung aus.")
                 if info["bus"] == "Bluetooth":
-                    add("info", "bluetooth_delay", name, f"{self._label(route.sink_ref)} is a Bluetooth device",
-                        "Bluetooth audio arrives about 0.15 to 0.3 seconds late.",
-                        "Fine for talking to each other; distracting if someone hears their own voice through it.",
-                        "Prefer a USB headset for anyone who needs to hear themselves.")
+                    add("info", "bluetooth_delay", name, f"{self._label(route.sink_ref)} ist ein Bluetooth-Gerät",
+                        "Bluetooth-Ton kommt ungefähr 0,15 bis 0,3 Sekunden zu spät an.",
+                        "Zum Miteinanderreden in Ordnung; störend, wenn jemand die eigene Stimme darüber hört.",
+                        "Für alle, die sich selbst hören müssen, lieber ein USB-Headset.")
             if src_node is not None and dst_node is not None:
                 g1, g2 = dev_of_node.get(src_node.name), dev_of_node.get(dst_node.name)
                 if g1 is not None and g1 is g2:
-                    add("info", "sidetone", name, f"{self._route_label(route)}: this person hears their own voice",
-                        "Microphone and headphones belong to the same headset.", "Some people like the sidetone, others find it distracting.",
-                        "Switch it off or turn it down if it bothers them.")
+                    add("info", "sidetone", name, f"{self._route_label(route)}: diese Person hört die eigene Stimme",
+                        "Mikrofon und Kopfhörer gehören zum selben Headset.", "Manche mögen das, andere finden es störend.",
+                        "Ausschalten oder leiser stellen, wenn es stört.")
 
         # identity hints: port-bound devices are worth knowing about (once per headset)
         seen_ports: dict[tuple[str, str], str] = {}
@@ -1184,10 +1184,10 @@ class Router:
                     continue
                 seen_ports[key] = alias
                 name = human(cfg, group) if kind in ("mic", "out") else self._label(alias)
-                what = f"{name}'s headset" if kind in ("mic", "out") else name
-                add("info", "port_bound", alias, f"{what} must stay in {key[1]}",
-                    "It is recognised by its USB port because identical devices report no serial number.",
-                    "If it is moved to another port it counts as missing.", "Label the plug and the port.")
+                what = f"Headset von {name}" if kind in ("mic", "out") else name
+                add("info", "port_bound", alias, f"{what} muss in {key[1]} bleiben",
+                    "Es wird am USB-Anschluss erkannt, weil gleiche Geräte keine Seriennummer melden.",
+                    "In einem anderen Anschluss gilt es als fehlend.", "Beschrifte Stecker und Anschluss.")
 
         if self.last_error and not any(p["level"] == "error" for p in out):
             add("warning", "daemon", "daemon", self.last_error)

@@ -313,7 +313,7 @@ class MeterManager:
         self.disabled_reason = ""
         if spawn is _default_spawn and not pw_record_supports_raw():
             self.enabled = False
-            self.disabled_reason = "pw-record does not support --raw (PipeWire too old); level bars are off, routing is unaffected"
+            self.disabled_reason = "pw-record kennt --raw nicht (PipeWire zu alt); die Pegelbalken sind aus, das Leiten des Tons bleibt unberührt"
             log.warning(self.disabled_reason)
 
     def watch(self, nodes: list[dict[str, Any]], seconds: float | None = None) -> list[str]:
@@ -383,9 +383,9 @@ class MeterManager:
         if not self.enabled:
             return {
                 "level": "info", "code": "meters_off", "what": "meters",
-                "title": "The level bars are switched off",
-                "why": self.disabled_reason or "Level metering is disabled.",
-                "effect": "No moving bars; everything else works normally.",
+                "title": "Die Pegelbalken sind ausgeschaltet",
+                "why": self.disabled_reason or "Die Pegelmessung ist deaktiviert.",
+                "effect": "Keine bewegten Balken; alles andere läuft normal.",
                 "fix": "",
             }
         now = time.monotonic()
@@ -399,20 +399,20 @@ class MeterManager:
         if live:
             return None
         if failing:
-            detail = (errors[0][:200] if errors else "the helper exits immediately")
+            detail = (errors[0][:200] if errors else "das Hilfsprogramm beendet sich sofort")
             return {
                 "level": "warning", "code": "meters_broken", "what": "meters",
-                "title": "The level bars are not working",
-                "why": f"The level meter helper (pw-record) does not run on this system: {detail}",
-                "effect": "The bars stay empty. Routing and the OBS microphone are not affected.",
-                "fix": "Run 'tfcz-audio selftest' to see the exact command and its error, or start the service with --no-meters to switch metering off.",
+                "title": "Die Pegelbalken funktionieren nicht",
+                "why": f"Das Hilfsprogramm für die Pegel (pw-record) läuft auf diesem System nicht: {detail}",
+                "effect": "Die Balken bleiben leer. Das Leiten des Tons und das OBS-Mikrofon sind nicht betroffen.",
+                "fix": "Führe unter «Erweitert» den Tonweg-Test aus, dort stehen der genaue Befehl und sein Fehler. Oder setze in der Einstellungsdatei [audio] meters = false.",
             }
         return {
             "level": "info", "code": "meters_silent", "what": "meters",
-            "title": "The level bars show no sound",
-            "why": "The meters run but no audio data arrives from the devices.",
-            "effect": "The bars stay empty even while someone talks.",
-            "fix": "Run 'tfcz-audio selftest': it records from each device and reports what arrives.",
+            "title": "Die Pegelbalken zeigen keinen Ton",
+            "why": "Die Messung läuft, aber von den Geräten kommen keine Tondaten an.",
+            "effect": "Die Balken bleiben leer, auch wenn jemand spricht.",
+            "fix": "Führe unter «Erweitert» den Tonweg-Test aus: er nimmt von jedem Gerät auf und zeigt, was ankommt.",
         }
 
     def stop(self, deadline: float = 3.0) -> None:

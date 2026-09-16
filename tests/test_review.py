@@ -366,8 +366,8 @@ class SecondReviewTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             edit.setup(router, {"headset_a": a, "headset_b": b, "game": b["out"]})
         st = edit.setup(router, {"headset_a": a, "headset_b": b, "game": "alsa_input.pci-0000_03_00.0.hws-1", "game_label": "Switch"})
-        self.assertEqual(router.cfg.routes["a_to_b"].description, "Anna talks to Ben")
-        self.assertEqual(router.cfg.routes["game_to_b"].description, "Switch for Ben")
+        self.assertEqual(router.cfg.routes["a_to_b"].description, "Anna spricht zu Ben")
+        self.assertEqual(router.cfg.routes["game_to_b"].description, "Switch für Ben")
         self.assertTrue(st["routes"]["game_to_b"]["connected"])
 
 
@@ -401,7 +401,7 @@ class SystemEdgeTests(unittest.TestCase):
         self.assertFalse(router.desired["a_to_obs"].mute, "the user's own setting is untouched")
         codes = {p["code"]: p for p in router.problems()}
         self.assertIn("misrouted", codes)
-        self.assertIn("feed the OBS microphone", codes["misrouted"]["effect"])
+        self.assertIn("OBS-Mikrofon", codes["misrouted"]["effect"])
         # device comes back and the wrong link goes away: safety mute lifted
         g = backend.graph()
         cap = g.by_name("tfcz.a_to_obs.in")
@@ -502,7 +502,7 @@ class SelfHealingTests(unittest.TestCase):
         self.assertIs(router.procs["a_to_b"], proc, "stopped recycling after 3 attempts")
         problems = {p["code"]: p for p in router.problems()}
         self.assertIn("not_linking", problems)
-        self.assertIn("restart the audio system", problems["not_linking"]["fix"].lower())
+        self.assertIn("tonsystem neu starten", problems["not_linking"]["fix"].lower())
 
     def test_pass_deadline_stops_volume_work(self):
         router, backend = make_router()

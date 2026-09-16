@@ -42,37 +42,37 @@ hdmi_1        = "alsa_input.pci-0000_03_00.0.analog-stereo"
 # Routes: one pw-loopback each. "to" may be a device alias, a raw node.name,
 # or the special value "obs_mic" (the virtual microphone OBS captures).
 [routes.a_to_b]
-description = "Headset A mic -> Headset B ears"
+description = "Headset A spricht zu Headset B"
 from = "headset_a_mic"
 to = "headset_b_out"
 volume = 1.0
 
 [routes.b_to_a]
-description = "Headset B mic -> Headset A ears"
+description = "Headset B spricht zu Headset A"
 from = "headset_b_mic"
 to = "headset_a_out"
 volume = 1.0
 
 [routes.hdmi_to_a]
-description = "HDMI program audio -> Headset A"
+description = "Spielton für Headset A"
 from = "hdmi_1"
 to = "headset_a_out"
 volume = 0.6
 
 [routes.hdmi_to_b]
-description = "HDMI program audio -> Headset B"
+description = "Spielton für Headset B"
 from = "hdmi_1"
 to = "headset_b_out"
 volume = 0.6
 
 [routes.a_to_obs]
-description = "Headset A mic -> OBS virtual mic"
+description = "Headset A auf dem Stream"
 from = "headset_a_mic"
 to = "obs_mic"
 volume = 1.0
 
 [routes.b_to_obs]
-description = "Headset B mic -> OBS virtual mic"
+description = "Headset B auf dem Stream"
 from = "headset_b_mic"
 to = "obs_mic"
 volume = 1.0

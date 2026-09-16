@@ -1,271 +1,508 @@
 <!doctype html>
-<html lang="en">
+<html lang="de-CH">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TFCZ Audio</title>
 <style>
+  /* ---------------------------------------------------------------- Tokens */
   :root {
-    color-scheme: light dark;
-    --bg: #f4f4f5; --card: #ffffff; --text: #18181b; --muted: #71717a; --line: #e4e4e7; --soft: #f4f4f5;
-    --accent: #2563eb; --ok: #16a34a; --ok-soft: #dcfce7; --bad: #dc2626; --bad-soft: #fee2e2; --warn: #d97706; --warn-soft: #fef3c7;
-    --obs: #7c3aed; --obs-soft: #ede9fe; --info-soft: #dbeafe;
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #18181b; --card: #27272a; --text: #fafafa; --muted: #a1a1aa; --line: #3f3f46; --soft: #3f3f46;
-            --ok-soft: #14532d; --bad-soft: #7f1d1d; --warn-soft: #78350f; --obs-soft: #4c1d95; --info-soft: #1e3a8a; }
+    --navy: #0d273d;
+    --blue-logo: #4489c7;
+    --blue: #5ca7dc;
+    --blue-2: #005a94;
+    --gold: #cda857;
+    --gold-light: #e9c475;
+    --sand: #e6e3da;
+    --green: #3b7657;
+    --red: #c2453f;
+
+    --ink: var(--sand);
+    --ink-strong: #ffffff;
+    --ink-muted: rgba(230, 227, 218, .62);
+    --card-brd: rgba(92, 167, 220, .20);
+    --card-bg: linear-gradient(180deg, rgba(13, 39, 61, .74), rgba(0, 90, 148, .20));
+    --field-bg: rgba(7, 22, 36, .55);
+
+    --r-xs: 4px; --r-sm: 6px; --r-md: 9px; --r-lg: 12px; --r-xl: 16px; --r-pill: 999px;
+    --btn-radius: 12px;
+
+    --ease: cubic-bezier(.2, .7, .2, 1);
+    --bounce: cubic-bezier(.34, 1.56, .64, 1);
+    --t-fast: .15s;
+    --t-base: .3s;
+
+    --e-2: 0 10px 30px rgba(0, 0, 0, .38);
+    --brand-hover: inset 0 2px 0 var(--blue), inset 0 -2px 0 var(--gold);
+    --brand-select: inset 0 0 0 2px var(--gold);
+
+    color-scheme: dark;
+    font-family: "Nunito Sans", "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); padding: 16px; max-width: 1000px; margin-inline: auto; line-height: 1.4; }
-  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-  h1 { font-size: 22px; margin: 0; }
-  h2 { font-size: 17px; margin: 0 0 4px; }
-  h3 { font-size: 15px; margin: 16px 0 6px; }
-  .hint { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
-  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
-  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; font-weight: 600; font-size: 15px; }
-  .pill.ok { background: var(--ok-soft); color: var(--ok); }
-  .pill.bad { background: var(--bad-soft); color: var(--bad); }
-  .pill.warn { background: var(--warn-soft); color: var(--warn); }
-  .pill.off { background: var(--soft); color: var(--muted); }
-  .problem { border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; border: 1px solid transparent; }
-  .problem.error { background: var(--bad-soft); border-color: var(--bad); }
-  .problem.warning { background: var(--warn-soft); border-color: var(--warn); }
-  .problem.info { background: var(--info-soft); border-color: transparent; }
-  .problem .t { font-weight: 600; display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .problem dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; font-size: 14px; }
-  .problem dt { color: var(--muted); }
-  .problem dd { margin: 0; }
-  .obsline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--soft); }
-  .obsline .big { font-size: 17px; font-weight: 600; }
-  .meter { position: relative; height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; flex: 1; min-width: 120px; }
-  .meter > i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--ok); transition: width .12s linear; }
-  .meter.obs > i { background: var(--obs); }
-  #diagram { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  #diagram svg { width: 100%; min-width: 640px; height: auto; display: block; }
-  .preset { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
-  .preset .cap { color: var(--muted); font-size: 12px; max-width: 220px; }
-  svg text { font-family: inherit; }
-  .legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 13px; margin-top: 8px; }
-  .legend span::before { content: ""; display: inline-block; width: 22px; height: 0; border-top: 3px solid var(--ok); margin-right: 6px; vertical-align: middle; }
-  .legend .off::before { border-top: 3px dashed var(--muted); }
-  .legend .miss::before { border-top: 3px dashed var(--bad); }
-  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
-  .card { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--card); transition: box-shadow .2s; }
-  .card.selected { box-shadow: 0 0 0 3px var(--accent); }
-  .card.off { opacity: .75; }
-  .card .title { font-weight: 600; margin-bottom: 2px; }
-  .card .path { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
-  .card .path b { color: var(--text); font-weight: 500; }
-  .vol { display: flex; gap: 10px; align-items: center; }
-  input[type=range] { flex: 1; accent-color: var(--accent); height: 28px; }
-  .vol output { width: 52px; text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .scale { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; margin: -4px 62px 8px 0; }
-  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; font-weight: 600; }
-  .switch .track { width: 44px; height: 24px; border-radius: 12px; background: var(--muted); position: relative; transition: background .15s; }
-  .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left .15s; }
-  .switch.on .track { background: var(--ok); }
-  .switch.on .track::after { left: 23px; }
-  .card .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
-  .card .state { font-size: 13px; color: var(--muted); }
-  .card .state.bad { color: var(--bad); font-weight: 600; }
-  button, select, input[type=text], input[type=number], input[type=password] {
-    font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--soft); color: var(--text); padding: 8px 12px;
+  body {
+    margin: 0; color: var(--ink); font-weight: 400; line-height: 1.5; min-height: 100vh;
+    background:
+      radial-gradient(1100px 700px at 12% -10%, rgba(0, 90, 148, .55), transparent 60%),
+      radial-gradient(900px 620px at 100% 0%, rgba(68, 137, 199, .22), transparent 55%),
+      linear-gradient(180deg, #0d273d 0%, #081c2d 100%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
   }
-  button { cursor: pointer; }
-  button.big { padding: 12px 18px; font-weight: 600; font-size: 15px; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-  button.danger { color: var(--bad); }
-  button:disabled { opacity: .5; cursor: default; }
-  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-  .grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; }
-  select { max-width: 100%; }
-  details > summary { cursor: pointer; font-weight: 600; font-size: 17px; list-style: none; }
-  details > summary::before { content: "▸ "; color: var(--muted); }
-  details[open] > summary::before { content: "▾ "; }
-  details .inner { margin-top: 12px; }
-  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 5px; vertical-align: middle; }
-  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
-  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 10px 16px; border-radius: 8px; background: var(--text); color: var(--bg); opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; z-index: 10; }
-  #toast.show { opacity: 1; }
-  #toast.error { background: var(--bad); color: #fff; }
-  code { font-size: 12px; }
-  pre.report { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
-    max-height: 340px; overflow: auto; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
-  pre.report .ok { color: var(--ok); }
-  pre.report .bad { color: var(--bad); font-weight: 600; }
-  pre.report .warn { color: var(--warn); }
-  pre.report .dim { color: var(--muted); }
-  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--muted); border-top-color: transparent;
-    border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  .wrap { max-width: 1160px; margin-inline: auto; padding: 0 22px 48px; }
+
+  h1, h2, h3 { color: var(--ink-strong); margin: 0; }
+  h2 { font-size: 19px; font-weight: 800; }
+  h3 { font-size: 15px; font-weight: 700; margin: 24px 0 8px; }
+  p { margin: 0; }
+  .hint { color: var(--ink-muted); font-size: 14px; margin: 4px 0 16px; }
+  .eyebrow { display: block; font-weight: 900; text-transform: uppercase; letter-spacing: .16em; font-size: 11px; color: var(--blue); margin-bottom: 4px; }
+  code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 12px; color: var(--gold-light); }
+
+  /* --------------------------------------------------------------- Header */
+  header {
+    position: sticky; top: 0; z-index: 30;
+    background: linear-gradient(180deg, rgba(8, 24, 38, .96), rgba(8, 24, 38, .84));
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--card-brd);
+    box-shadow: var(--e-2);
+  }
+  header::after {
+    content: ""; position: absolute; left: 22px; right: 22px; bottom: -1px; height: 3px;
+    background: linear-gradient(90deg, var(--blue), var(--gold)); border-radius: 0 0 var(--r-xl) var(--r-xl);
+  }
+  .head-in { max-width: 1160px; margin-inline: auto; padding: 12px 22px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .wordmark { flex: none; display: flex; align-items: baseline; gap: 9px; }
+  .wordmark b { font-weight: 900; font-size: 20px; letter-spacing: .02em; color: var(--ink-strong); }
+  .wordmark span { font-weight: 900; font-size: 11px; color: var(--blue); text-transform: uppercase; letter-spacing: .18em; }
+  .grow { flex: 1 1 auto; }
+
+  /* ----------------------------------------------------------------- Icons */
+  .i { width: 17px; height: 17px; display: block; flex: none; }
+  .i-lg { width: 21px; height: 21px; }
+  .i-sm { width: 14px; height: 14px; }
+  .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+  /* ---------------------------------------------------------------- Panels */
+  section.panel {
+    background: var(--card-bg); backdrop-filter: blur(10px);
+    border: 1px solid var(--card-brd); border-radius: var(--r-xl);
+    padding: 20px 20px 24px; margin-top: 16px;
+  }
+
+  /* ---------------------------------------------------------------- Status */
+  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--r-pill); font-weight: 700; font-size: 14px; border: 1px solid transparent; }
+  .pill.ok { background: rgba(59, 118, 87, .22); border-color: rgba(59, 118, 87, .55); color: #9bd8b4; }
+  .pill.bad { background: rgba(194, 69, 63, .20); border-color: rgba(194, 69, 63, .55); color: #f0a6a2; }
+  .pill.warn { background: rgba(205, 168, 87, .18); border-color: rgba(205, 168, 87, .5); color: var(--gold-light); }
+  .pill.off { background: rgba(230, 227, 218, .08); border-color: var(--card-brd); color: var(--ink-muted); }
+
+  .problem { border: 1px solid var(--card-brd); border-radius: var(--r-lg); padding: 14px 16px; margin-bottom: 8px; background: rgba(7, 22, 36, .5); }
+  .problem.error { border-color: rgba(194, 69, 63, .5); background: rgba(194, 69, 63, .10); }
+  .problem.warning { border-color: rgba(205, 168, 87, .45); background: rgba(205, 168, 87, .08); }
+  .problem.info { border-color: rgba(92, 167, 220, .35); background: rgba(92, 167, 220, .07); }
+  .problem .t { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--ink-strong); }
+  .problem.error .t > .i { color: var(--red); }
+  .problem.warning .t > .i { color: var(--gold); }
+  .problem.info .t > .i { color: var(--blue); }
+  .problem dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 8px 0 0; font-size: 14px; }
+  .problem dt { color: var(--ink-muted); font-weight: 700; }
+  .problem dd { margin: 0; }
+
+  /* --------------------------------------------------------------- Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; justify-content: center;
+    font: inherit; font-weight: 700; font-size: 14px; padding: 9px 16px;
+    border-radius: var(--btn-radius); border: 1px solid var(--card-brd);
+    background: rgba(230, 227, 218, .06); color: var(--ink); cursor: pointer;
+    transition: background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+  }
+  .btn:hover:not(:disabled) { box-shadow: var(--brand-hover); background: rgba(230, 227, 218, .10); }
+  .btn:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--gold); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn-blue { background: var(--blue-2); border-color: var(--blue-logo); color: #fff; }
+  .btn-blue:hover:not(:disabled) { background: #0a6ba9; }
+  .btn-ghost { background: transparent; }
+  .btn-sm { padding: 6px 11px; font-size: 13px; }
+  .btn-icon { width: 34px; height: 34px; padding: 0; border-radius: var(--r-pill); }
+  .btn-icon.i-close { color: var(--red); border-color: rgba(194, 69, 63, .4); }
+
+  /* ----------------------------------------------------------------- Forms */
+  input[type=text], input[type=number], input[type=password] {
+    font: inherit; font-size: 14px; color: var(--ink); background: var(--field-bg);
+    border: 1px solid var(--card-brd); border-radius: var(--r-md); padding: 9px 12px;
+  }
+  input::placeholder { color: rgba(230, 227, 218, .38); }
+  input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+  input[type=checkbox] { accent-color: var(--blue); width: 15px; height: 15px; }
+  label.check { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-muted); font-size: 14px; cursor: pointer; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .grid { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; align-items: center; }
+
+  /* -------------------------------------------------- Custom select (.csel) */
+  .csel { position: relative; min-width: 190px; }
+  .csel-btn {
+    width: 100%; display: flex; align-items: center; gap: 10px; font: inherit; font-size: 14px;
+    text-align: left; color: var(--ink); background: var(--field-bg);
+    border: 1px solid var(--card-brd); border-radius: var(--r-md); padding: 9px 12px; cursor: pointer;
+    transition: box-shadow var(--t-fast) var(--ease);
+  }
+  .csel-btn .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .csel-btn:hover { box-shadow: var(--brand-hover); }
+  .csel-btn:focus-visible { outline: none; border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+  .csel[data-open="1"] .csel-btn { border-color: var(--gold); }
+  .csel-chev { color: var(--blue); transition: transform var(--t-fast) var(--ease); }
+  .csel[data-open="1"] .csel-chev { transform: rotate(180deg); }
+  .csel-list {
+    position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 6px); display: none;
+    background: linear-gradient(180deg, #0d273d, #0a2034); border: 1px solid var(--card-brd);
+    border-radius: var(--r-lg); box-shadow: var(--e-2); padding: 8px 6px; max-height: 320px; overflow: auto;
+  }
+  .csel-list::before, .csel-list::after { content: ""; position: absolute; left: 10px; right: 10px; height: 2px; border-radius: var(--r-pill); }
+  .csel-list::before { top: 0; background: var(--blue); }
+  .csel-list::after { bottom: 0; background: var(--gold); }
+  .csel[data-open="1"] .csel-list { display: block; animation: cascade var(--t-base) var(--ease); }
+  @keyframes cascade { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .csel-opt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; font-size: 14px; }
+  .csel-opt:hover { background: rgba(92, 167, 220, .16); }
+  .csel-opt .csel-check { color: var(--gold); visibility: hidden; }
+  .csel-opt[aria-selected="true"] { color: var(--gold-light); font-weight: 700; }
+  .csel-opt[aria-selected="true"] .csel-check { visibility: visible; }
+
+  /* --------------------------------------------------------------- Diagram */
+  #diagram { overflow-x: auto; }
+  #diagram svg { width: 100%; min-width: 680px; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 18px; color: var(--ink-muted); font-size: 13px; margin-top: 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .legend i { display: block; width: 22px; height: 0; border-top: 3px solid var(--blue); border-radius: 3px; }
+  .legend .off i { border-top-style: dashed; border-color: rgba(230, 227, 218, .45); }
+  .legend .miss i { border-top-style: dashed; border-color: var(--red); }
+
+  .obsline { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 16px; padding: 14px 16px;
+    border-radius: var(--r-lg); background: rgba(7, 22, 36, .5); border: 1px solid var(--card-brd); }
+  .obsline > .i { color: var(--gold); }
+  .obsline .big { font-weight: 800; color: var(--ink-strong); font-size: 16px; }
+
+  .meter { position: relative; height: 10px; border-radius: var(--r-pill); background: rgba(230, 227, 218, .12); overflow: hidden; flex: 1 1 140px; min-width: 110px; }
+  .meter > i { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: var(--blue); transition: width .12s linear; }
+  .meter.gold > i { background: linear-gradient(90deg, var(--gold), var(--gold-light)); }
+
+  /* ----------------------------------------------------------------- Cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--card-brd); border-radius: var(--r-lg); padding: 14px 16px;
+    background: rgba(7, 22, 36, .45); transition: box-shadow var(--t-fast) var(--ease); }
+  .card:hover { box-shadow: var(--brand-hover); }
+  .card.selected { box-shadow: var(--brand-select); }
+  .card.off { opacity: .72; }
+  .card .title { font-weight: 800; color: var(--ink-strong); }
+  .card .path { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--ink-muted); font-size: 13px; margin: 2px 0 12px; }
+  .card .path b { color: var(--ink); font-weight: 600; }
+  .card .path .pair { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .card .path .i { color: var(--blue); }
+  .vol { display: flex; gap: 12px; align-items: center; }
+  .vol output { width: 56px; text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--ink-strong); }
+  input[type=range] { flex: 1; accent-color: var(--blue); height: 28px; }
+  input[type=range]:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  .scale { display: flex; justify-content: space-between; color: var(--ink-muted); font-size: 11px; margin: -2px 68px 10px 0; }
+  .foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; }
+  .switch { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; font-weight: 700; font-size: 14px; }
+  .switch .track { width: 44px; height: 24px; border-radius: var(--r-pill); background: rgba(230, 227, 218, .22); position: relative; transition: background var(--t-fast) var(--ease); }
+  .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--sand); transition: left var(--t-base) var(--bounce); }
+  .switch.on .track { background: var(--blue-2); }
+  .switch.on .track::after { left: 23px; background: #fff; }
+  .state { font-size: 13px; color: var(--ink-muted); }
+  .state.bad { color: #f0a6a2; font-weight: 700; }
+
+  /* --------------------------------------------------------------- Presets */
+  .presets { display: flex; flex-wrap: wrap; gap: 12px; }
+  .preset { display: flex; flex-direction: column; gap: 4px; max-width: 250px; }
+  .preset .cap { color: var(--ink-muted); font-size: 12px; }
+
+  /* -------------------------------------------------------------- Advanced */
+  details.adv > summary { cursor: pointer; list-style: none; font-weight: 800; font-size: 17px; color: var(--ink-strong); display: flex; align-items: center; gap: 10px; }
+  details.adv > summary::-webkit-details-marker { display: none; }
+  details.adv > summary .i { color: var(--blue); transition: transform var(--t-fast) var(--ease); }
+  details.adv[open] > summary .i.chev { transform: rotate(180deg); }
+  details.adv .inner { margin-top: 12px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-muted); flex: none; }
+  .dot.ok { background: #6fbf8e; }
+  .dot.bad { background: var(--red); }
+
+  pre.report {
+    background: rgba(5, 17, 28, .7); border: 1px solid var(--card-brd); border-radius: var(--r-lg);
+    padding: 12px 14px; max-height: 340px; overflow: auto; margin: 10px 0 0; color: var(--ink);
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 12px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  pre.report .ok { color: #6fbf8e; }
+  pre.report .bad { color: #f0a6a2; font-weight: 700; }
+  pre.report .warn { color: var(--gold-light); }
+  pre.report .dim { color: var(--ink-muted); }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid rgba(230, 227, 218, .3); border-top-color: var(--gold); border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -2px; }
   @keyframes sp { to { transform: rotate(360deg); } }
-  /* wizard */
-  #wizard { border: 2px solid var(--accent); }
-  .steps { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-  .steps span { padding: 4px 10px; border-radius: 999px; background: var(--soft); color: var(--muted); font-size: 13px; }
-  .steps span.cur { background: var(--accent); color: #fff; }
-  .steps span.done { background: var(--ok-soft); color: var(--ok); }
-  .choice { display: flex; gap: 12px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; cursor: pointer; }
-  .choice.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
-  .choice.taken { opacity: .5; cursor: default; }
-  .choice .ic { font-size: 26px; }
-  .choice .body { flex: 1; min-width: 0; }
-  .choice .nm { font-weight: 600; }
-  .choice .sub { color: var(--muted); font-size: 13px; }
-  .choice .meter { max-width: 200px; }
-  .wizbtns { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-  .summary { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 8px 0; }
-  .summary b { font-weight: 600; }
-  @media (max-width: 600px) {
-    body { padding: 10px; } section { padding: 12px; }
-    .summary, .problem dl, .grid { grid-template-columns: 1fr; }
-    select, input[type=text] { min-width: 0; max-width: 100%; }
-    .choice { flex-wrap: wrap; } .choice .meter { flex-basis: 100%; max-width: none; }
-    .row > * { max-width: 100%; }
+
+  /* ---------------------------------------------------------------- Wizard */
+  #wizard { border-color: rgba(205, 168, 87, .45); }
+  .steps { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 16px; }
+  .steps span { padding: 5px 12px; border-radius: var(--r-pill); background: rgba(230, 227, 218, .07); color: var(--ink-muted); font-size: 13px; font-weight: 700; }
+  .steps span.cur { background: var(--blue-2); color: #fff; }
+  .steps span.done { background: rgba(205, 168, 87, .18); color: var(--gold-light); }
+  .choice { display: flex; gap: 14px; align-items: center; padding: 13px 15px; margin-bottom: 9px;
+    border: 1px solid var(--card-brd); border-radius: var(--r-lg); background: rgba(7, 22, 36, .45);
+    cursor: pointer; transition: box-shadow var(--t-fast) var(--ease); }
+  .choice:hover { box-shadow: var(--brand-hover); }
+  .choice.sel { box-shadow: var(--brand-select); }
+  .choice.taken { opacity: .45; cursor: default; }
+  .choice.taken:hover { box-shadow: none; }
+  .choice > .i { color: var(--blue); }
+  .choice .body { flex: 1 1 auto; min-width: 0; }
+  .choice .nm { font-weight: 800; color: var(--ink-strong); }
+  .choice .sub { color: var(--ink-muted); font-size: 13px; }
+  .wizbtns { display: flex; justify-content: space-between; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+  .summary { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 10px 0 14px; }
+  .summary b { color: var(--gold-light); font-weight: 800; }
+
+  /* ----------------------------------------------------------------- Toast */
+  #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); padding: 12px 18px;
+    border-radius: var(--r-lg); max-width: 90vw; z-index: 60; background: linear-gradient(180deg, #0d273d, #0a2034);
+    border: 1px solid var(--card-brd); color: var(--ink); box-shadow: var(--e-2); opacity: 0; pointer-events: none;
+    transition: opacity var(--t-base) var(--ease); display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 14px; }
+  #toast.show { opacity: 1; }
+  #toast .i { color: #6fbf8e; }
+  #toast.error { border-color: rgba(194, 69, 63, .6); }
+  #toast.error .i { color: var(--red); }
+
+  /* ------------------------------------------------------------ Responsive */
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px 32px; }
+    .head-in { padding: 10px 16px; }
+    header::after { left: 16px; right: 16px; }
+    section.panel { padding: 16px 14px 20px; }
+    .grid, .summary, .problem dl { grid-template-columns: 1fr; }
+    .csel { min-width: 0; width: 100%; }
+    .choice { flex-wrap: wrap; }
+    .choice .meter { flex-basis: 100%; max-width: none; }
+    .scale { margin-right: 60px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   }
 </style>
 </head>
 <body>
+
+<svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="9" y="2" width="6" height="13" rx="3"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/>
+  </symbol>
+  <symbol id="i-headphones" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>
+  </symbol>
+  <symbol id="i-gamepad" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 11h4"/><path d="M8 9v4"/><path d="M15 12h.01"/><path d="M18 10h.01"/>
+    <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.544-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z"/>
+  </symbol>
+  <symbol id="i-tower" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4.9 16.1C1 12.2 1 5.8 4.9 1.9"/><path d="M7.8 4.7a6.14 6.14 0 0 0-.8 7.5"/><circle cx="12" cy="9" r="2"/>
+    <path d="M16.2 4.8c2 2 2.26 5.11.8 7.47"/><path d="M19.1 1.9a9.96 9.96 0 0 1 0 14.1"/><path d="M9.5 18h5"/><path d="m8 22 4-11 4 11"/>
+  </symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="2" width="16" height="20" rx="2"/><circle cx="12" cy="14" r="4"/><path d="M12 6h.01"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 6 9 17l-5-5"/>
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+  </symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>
+  </symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>
+  </symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12h14"/><path d="M12 5v14"/>
+  </symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m6 9 6 6 6-6"/>
+  </symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+  </symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>
+  </symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+  </symbol>
+  <symbol id="i-checks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>
+  </symbol>
+  <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+    <path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>
+  </symbol>
+  <symbol id="i-plug" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>
+  </symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+  </symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+  </symbol>
+  <symbol id="i-ban" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>
+  </symbol>
+</svg>
+
 <header>
-  <div>
-    <h1>TFCZ Audio</h1>
-    <div class="hint" style="margin:0">Two headsets talk to each other, hear the game, and go out to OBS.</div>
-  </div>
-  <div class="row">
-    <button id="open-wizard">Set up devices</button>
-    <span id="overall" class="pill off">Connecting…</span>
+  <div class="head-in">
+    <div class="wordmark"><b>TFCZ</b><span>Audio</span></div>
+    <div class="grow"></div>
+    <button class="btn btn-ghost" id="open-wizard"><svg class="i"><use href="#i-plug"/></svg>Geräte einrichten</button>
+    <span id="overall" class="pill off">Verbinde …</span>
   </div>
 </header>
 
-<div id="problems"></div>
+<div class="wrap">
+  <div id="problems" style="margin-top:16px"></div>
 
-<section id="wizard" hidden>
-  <h2 id="wiz-title">Set up your devices</h2>
-  <div class="steps" id="wiz-steps"></div>
-  <div id="wiz-body"></div>
-  <div class="wizbtns">
-    <button id="wiz-cancel">Cancel</button>
-    <div class="row">
-      <button id="wiz-back">Back</button>
-      <button id="wiz-next" class="primary">Next</button>
+  <section class="panel" id="wizard" hidden>
+    <span class="eyebrow">TFCZ · Zürich</span>
+    <h2>Geräte einrichten</h2>
+    <div class="steps" id="wiz-steps"></div>
+    <div id="wiz-body"></div>
+    <div class="wizbtns">
+      <button class="btn btn-ghost" id="wiz-cancel">Abbrechen</button>
+      <div class="row">
+        <button class="btn btn-ghost" id="wiz-back">Zurück</button>
+        <button class="btn btn-blue" id="wiz-next">Weiter</button>
+      </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<section>
-  <h2>How the sound flows</h2>
-  <p class="hint">Left: where sound comes in. Right: where it goes out. Every arrow is one connection you can adjust below. Click an arrow to jump to its control. Green bars show live sound.</p>
-  <div id="diagram"></div>
-  <div class="legend"><span>Sound flows</span><span class="off">Turned off</span><span class="miss">Device missing or blocked</span></div>
-  <div class="obsline">
-    <span style="font-size:22px">📡</span>
-    <div style="flex:1;min-width:200px">
-      <div class="big" id="obs-text">Checking the OBS microphone…</div>
-      <div class="hint" style="margin:0">This is what OBS records as "TFCZ OBS Mic". If this bar moves, your viewers can hear it.</div>
+  <section class="panel">
+    <span class="eyebrow">Übersicht</span>
+    <h2>So fliesst der Ton</h2>
+    <p class="hint">Links kommt der Ton herein, rechts geht er hinaus. Jeder Pfeil ist eine Verbindung, die du unten
+      einstellen kannst. Klick auf einen Pfeil, um zu seinem Regler zu springen. Die Balken zeigen echten Ton.</p>
+    <div id="diagram"></div>
+    <div class="legend">
+      <span><i></i>Ton fliesst</span>
+      <span class="off"><i></i>Ausgeschaltet</span>
+      <span class="miss"><i></i>Gerät fehlt oder ist blockiert</span>
     </div>
-    <div class="meter obs" style="max-width:260px"><i id="obs-meter"></i></div>
-  </div>
-</section>
-
-<section>
-  <h2>Volume controls</h2>
-  <p class="hint">One card per arrow. 100% is the normal level. Switch a connection off instead of dragging it to 0%.</p>
-  <div class="cards" id="cards"></div>
-</section>
-
-<section id="presets-section">
-  <h2>Quick settings</h2>
-  <p class="hint">Apply several volumes at once. Each button says what it changes.</p>
-  <div class="row" id="presets"></div>
-</section>
-
-<section>
-  <details id="advanced">
-    <summary>Advanced: names, devices, connections, defaults</summary>
-    <div class="inner">
-      <p class="hint">Changes here are written to the config file and applied immediately. Only connections that use a changed device restart briefly.</p>
-
-      <h3>Checks and log</h3>
-      <p class="hint">Run the same checks the command line offers, and read what the router has been doing.
-        Use these when something does not work; you can copy the result into a message.</p>
-      <div class="row">
-        <button id="run-doctor">Check the system</button>
-        <button id="run-selftest">Test the sound path</button>
-        <span class="hint" id="diag-state" style="margin:0"></span>
+    <div class="obsline">
+      <svg class="i i-lg"><use href="#i-tower"/></svg>
+      <div style="flex:1 1 220px">
+        <div class="big" id="obs-text">OBS-Mikrofon wird geprüft …</div>
+        <p class="hint" style="margin:2px 0 0">Das nimmt OBS als «TFCZ OBS Mic» auf. Wenn sich dieser Balken bewegt, hören es deine Zuschauer.</p>
       </div>
-      <pre class="report" id="diag-output" hidden></pre>
-      <div class="row" style="margin-top:10px">
-        <label class="hint" style="margin:0" for="log-level">Log</label>
-        <select id="log-level">
-          <option value="INFO">everything</option>
-          <option value="WARNING">warnings and errors</option>
-          <option value="ERROR">errors only</option>
-        </select>
-        <select id="log-source">
-          <option value="memory">since the last start</option>
-          <option value="journal">full history</option>
-        </select>
-        <button id="log-refresh">Show</button>
-        <label class="hint" style="margin:0"><input type="checkbox" id="log-follow"> keep updating</label>
-      </div>
-      <pre class="report" id="log-output" hidden></pre>
-
-      <h3>Names</h3>
-      <p class="hint">What the people and sources are called on this page.</p>
-      <div class="grid" id="labels"></div>
-      <div class="row" style="margin-top:8px"><button class="primary" id="save-labels">Save names</button></div>
-
-      <h3>Devices</h3>
-      <p class="hint">Which real device is behind each name, and how it is recognised again after a restart or replug. Only devices that are currently plugged in are listed.</p>
-      <div class="grid" id="devices"></div>
-      <div class="row" style="margin-top:10px">
-        <input type="text" id="new-alias" placeholder="new name, e.g. headset_c_out" pattern="[a-z0-9_]+" style="width:230px">
-        <select id="new-alias-node"></select>
-        <button id="add-alias">Add device</button>
-        <button class="primary" id="save-devices">Save devices</button>
-      </div>
-
-      <h3>Connections</h3>
-      <p class="hint">Add a new arrow, or type the name of an existing one to change where it goes. Delete arrows with the ✕ on their card.</p>
-      <div class="row">
-        <input type="text" id="r-name" placeholder="name (a-z 0-9 _ -)" style="width:170px">
-        <select id="r-from"></select>
-        <span>→</span>
-        <select id="r-to"></select>
-        <input type="number" id="r-volume" min="0" max="150" step="5" value="100" style="width:80px" title="volume in %"><span class="hint" style="margin:0">%</span>
-        <input type="text" id="r-desc" placeholder="description (optional)" style="flex:1;min-width:160px">
-        <button class="primary" id="r-save">Save connection</button>
-      </div>
-
-      <h3>Sound quality (buffer size)</h3>
-      <p class="hint">How much sound the computer carries per trip. Smaller means less delay but more risk of
-        dropouts, which sound like crackling. This is a setting of the whole audio system, not just of this
-        router. Try a value and listen; nothing restarts.</p>
-      <div class="row">
-        <select id="quantum"></select>
-        <button class="primary" id="quantum-apply">Try it now</button>
-        <label class="hint" style="margin:0"><input type="checkbox" id="quantum-persist"> keep after restart</label>
-        <button id="dropout-check">Check for dropouts</button>
-      </div>
-      <p class="hint" id="quantum-state" style="margin-top:6px"></p>
-      <div id="dropout-result"></div>
-
-      <h3>Defaults</h3>
-      <div class="row">
-        <button id="save-defaults" title="The current volumes and on/off switches become the values used after a restart">Save current volumes as defaults</button>
-        <button id="reset" title="Go back to the saved defaults">Reset to defaults</button>
-      </div>
-
-      <h3>Access</h3>
-      <div class="row">
-        <label class="hint" style="margin:0" for="token">API token (only needed if one is set in the config)</label>
-        <input type="password" id="token" placeholder="token" autocomplete="off">
-      </div>
-      <p class="hint">Config file: <code id="cfgpath"></code></p>
+      <div class="meter gold" style="max-width:260px"><i id="obs-meter"></i></div>
     </div>
-  </details>
-</section>
+  </section>
+
+  <section class="panel">
+    <span class="eyebrow">Regler</span>
+    <h2>Lautstärke</h2>
+    <p class="hint">Eine Karte pro Pfeil. 100 % ist die normale Lautstärke. Schalte eine Verbindung aus, statt sie auf 0 % zu ziehen.</p>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section class="panel" id="presets-section">
+    <span class="eyebrow">Voreinstellungen</span>
+    <h2>Schnell umschalten</h2>
+    <p class="hint">Mehrere Lautstärken auf einmal. Jeder Knopf sagt, was er ändert.</p>
+    <div class="presets" id="presets"></div>
+  </section>
+
+  <section class="panel">
+    <details class="adv" id="advanced">
+      <summary><svg class="i chev"><use href="#i-chevron"/></svg>Erweitert: Prüfungen, Klang, Namen, Geräte, Verbindungen</summary>
+      <div class="inner">
+        <p class="hint">Änderungen hier werden in die Einstellungsdatei geschrieben und sofort angewendet.
+          Nur Verbindungen, deren Gerät sich ändert, starten kurz neu.</p>
+
+        <h3>Prüfungen und Protokoll</h3>
+        <p class="hint">Dieselben Prüfungen wie auf der Kommandozeile, und was der Router bisher gemacht hat.
+          Nutze sie, wenn etwas nicht funktioniert; das Ergebnis lässt sich kopieren.</p>
+        <div class="row">
+          <button class="btn" id="run-doctor"><svg class="i"><use href="#i-checks"/></svg>System prüfen</button>
+          <button class="btn" id="run-selftest"><svg class="i"><use href="#i-activity"/></svg>Tonweg testen</button>
+          <span class="hint" style="margin:0" id="diag-state"></span>
+        </div>
+        <pre class="report" id="diag-output" hidden></pre>
+        <div class="row" style="margin-top:12px">
+          <svg class="i"><use href="#i-file"/></svg>
+          <div id="log-level-mount"></div>
+          <div id="log-source-mount"></div>
+          <button class="btn btn-sm" id="log-refresh"><svg class="i i-sm"><use href="#i-refresh"/></svg>Anzeigen</button>
+          <label class="check"><input type="checkbox" id="log-follow"> laufend aktualisieren</label>
+        </div>
+        <pre class="report" id="log-output" hidden></pre>
+
+        <h3>Klangqualität (Puffergrösse)</h3>
+        <p class="hint">Wie viel Ton der Computer pro Runde trägt. Kleiner heisst weniger Verzögerung, aber mehr Gefahr
+          von Aussetzern, die wie Knacken klingen. Das ist eine Einstellung des ganzen Tonsystems, nicht nur dieses
+          Routers. Probier einen Wert und hör hin; nichts startet neu.</p>
+        <div class="row">
+          <div id="quantum-mount"></div>
+          <button class="btn btn-blue" id="quantum-apply">Jetzt ausprobieren</button>
+          <label class="check"><input type="checkbox" id="quantum-persist"> nach Neustart behalten</label>
+          <button class="btn" id="dropout-check"><svg class="i"><use href="#i-activity"/></svg>Auf Aussetzer prüfen</button>
+        </div>
+        <p class="hint" id="quantum-state" style="margin-top:8px"></p>
+        <div id="dropout-result"></div>
+
+        <h3>Namen</h3>
+        <p class="hint">Wie die Personen und Quellen auf dieser Seite heissen.</p>
+        <div class="grid" id="labels"></div>
+        <div class="row" style="margin-top:10px"><button class="btn btn-blue" id="save-labels">Namen speichern</button></div>
+
+        <h3>Geräte</h3>
+        <p class="hint">Welches echte Gerät hinter jedem Namen steckt und wie es nach einem Neustart oder Umstecken
+          wiedererkannt wird. Aufgeführt sind nur Geräte, die gerade angeschlossen sind.</p>
+        <div class="grid" id="devices"></div>
+        <div class="row" style="margin-top:12px">
+          <input type="text" id="new-alias" placeholder="neuer Name, z.B. headset_c_out" style="width:230px">
+          <div id="new-alias-mount"></div>
+          <button class="btn" id="add-alias"><svg class="i i-sm"><use href="#i-plus"/></svg>Gerät hinzufügen</button>
+          <button class="btn btn-blue" id="save-devices">Geräte speichern</button>
+        </div>
+
+        <h3>Verbindungen</h3>
+        <p class="hint">Neuen Pfeil anlegen, oder den Namen eines bestehenden eintippen, um ihn zu ändern.
+          Pfeile löschst du mit dem Papierkorb auf ihrer Karte.</p>
+        <div class="row">
+          <input type="text" id="r-name" placeholder="Name (a-z 0-9 _ -)" style="width:170px">
+          <div id="r-from-mount"></div>
+          <svg class="i"><use href="#i-arrow"/></svg>
+          <div id="r-to-mount"></div>
+          <input type="number" id="r-volume" min="0" max="150" step="5" value="100" style="width:84px"><span class="hint" style="margin:0">%</span>
+          <input type="text" id="r-desc" placeholder="Beschreibung (optional)" style="flex:1;min-width:170px">
+          <button class="btn btn-blue" id="r-save">Verbindung speichern</button>
+        </div>
+
+        <h3>Standardwerte</h3>
+        <div class="row">
+          <button class="btn" id="save-defaults">Aktuelle Lautstärken als Standard speichern</button>
+          <button class="btn btn-ghost" id="reset">Auf Standard zurücksetzen</button>
+        </div>
+
+        <h3>Zugang</h3>
+        <div class="row">
+          <label class="check" for="token">API-Token (nur nötig, wenn in der Einstellungsdatei eines gesetzt ist)</label>
+          <input type="password" id="token" placeholder="Token" autocomplete="off">
+        </div>
+        <p class="hint" style="margin-top:10px">Einstellungsdatei: <code id="cfgpath"></code></p>
+      </div>
+    </details>
+  </section>
+</div>
 
 <div id="toast"></div>
 
@@ -273,12 +510,14 @@
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
   const state = { status: null, config: null, devices: [], hardware: [], levels: {}, levelsAvailable: undefined,
-                  dragging: new Set(), pending: new Map(), selected: null, failures: 0, wiz: null };
+                  dragging: new Set(), pending: new Map(), selected: null, failures: 0, wiz: null, audio: null };
+  const ICON = { mic: 'i-mic', out: 'i-headphones', game: 'i-gamepad', obs: 'i-tower', speaker: 'i-speaker' };
+  const svg = (name, cls) => `<svg class="i ${cls || ''}"><use href="#${name}"/></svg>`;
+
   const tokenInput = $('#token');
   try { tokenInput.value = localStorage.getItem('tfcz-token') || ''; } catch (e) {}
   tokenInput.addEventListener('change', () => { try { localStorage.setItem('tfcz-token', tokenInput.value); } catch (e) {} refresh(true); });
 
-  // ------------------------------------------------------------ helpers
   async function api(method, path, body) {
     const headers = { 'Content-Type': 'application/json' };
     if (tokenInput.value) headers['Authorization'] = 'Bearer ' + tokenInput.value;
@@ -291,60 +530,116 @@
   let toastTimer;
   function toast(msg, isError) {
     const t = $('#toast');
-    t.textContent = msg; t.className = 'show' + (isError ? ' error' : '');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', isError ? 6000 : 2500);
+    t.innerHTML = svg(isError ? 'i-alert' : 'i-check') + '<span></span>';
+    t.querySelector('span').textContent = msg;
+    t.className = 'show' + (isError ? ' error' : '');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = '', isError ? 6000 : 2600);
   }
   const fail = e => toast(e.message || String(e), true);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const pct = v => Math.round(v * 100) + '%';
+  const pct = v => Math.round(v * 100) + ' %';
   function human(alias) {
-    if (alias === 'obs_mic') return 'OBS stream';
+    if (alias === 'obs_mic') return 'OBS-Stream';
     const names = (state.config && state.config.names) || {};
     if (names[alias]) return names[alias];
-    return alias.replace(/_/g, ' ').replace(/\bmic\b/, 'microphone').replace(/\bout\b/, 'headphones').replace(/^./, c => c.toUpperCase());
+    return alias.replace(/_/g, ' ').replace(/\bmic\b/, 'Mikrofon').replace(/\bout\b/, 'Kopfhörer').replace(/^./, c => c.toUpperCase());
   }
-  const isGame = alias => /hdmi|game|tv|pc|console|play/.test(alias) || ((state.status && state.status.devices[alias] || {}).friendly || '').includes('HDMI');
-  const icon = (alias, kind) => alias === 'obs_mic' ? '📡' : isGame(alias) ? '🎮' : kind === 'in' ? '🎤' : '🎧';
+  const isGame = alias => /hdmi|game|tv|pc|konsole|spiel|play/i.test(alias) || ((state.status && state.status.devices[alias] || {}).friendly || '').includes('HDMI');
+  const iconFor = (alias, kind) => alias === 'obs_mic' ? ICON.obs : isGame(alias) ? ICON.game : kind === 'in' ? ICON.mic : ICON.out;
   const levelWidth = lvl => (!lvl || !lvl.active) ? 0 : Math.max(0, Math.min(1, (lvl.db + 60) / 60)) * 100;
-  const identityShort = dev => !dev || !dev.identity ? '' : dev.identity.strategy === 'port' ? 'must stay in ' + (dev.identity.port || 'its USB port') : dev.identity.strategy === 'serial' ? 'any USB port' : '';
+  const identityShort = dev => !dev || !dev.identity ? '' : dev.identity.strategy === 'port' ? 'muss in ' + (dev.identity.port || 'seinem USB-Anschluss') + ' bleiben' : dev.identity.strategy === 'serial' ? 'jeder USB-Anschluss' : '';
 
-  // ---------------------------------------------------------- overall
+  // Brandguide: jede Auswahl-Liste nutzt das eigene Dropdown, nie ein natives select.
+  let openCsel = null;
+  function makeCsel(items, value, onChange) {
+    const root = document.createElement('div');
+    root.className = 'csel';
+    root.innerHTML = `<button type="button" class="csel-btn" aria-haspopup="listbox" aria-expanded="false">
+        <span class="grow"></span>${svg('i-chevron', 'csel-chev')}</button>
+      <div class="csel-list" role="listbox"></div>`;
+    const btn = root.querySelector('.csel-btn');
+    const list = root.querySelector('.csel-list');
+    let current = value;
+    function paint() {
+      const hit = (root._items || []).find(i => i.value === current);
+      btn.querySelector('.grow').textContent = hit ? hit.label : ((root._items || [])[0] || {}).label || '';
+      [...list.children].forEach(opt => opt.setAttribute('aria-selected', String(opt.dataset.value === current)));
+    }
+    function close() { root.dataset.open = '0'; btn.setAttribute('aria-expanded', 'false'); if (openCsel === root) openCsel = null; }
+    function open() {
+      if (openCsel && openCsel !== root) openCsel.dataset.open = '0';
+      openCsel = root; root.dataset.open = '1'; btn.setAttribute('aria-expanded', 'true');
+    }
+    root.setItems = (items, newValue) => {
+      root._items = items;
+      if (newValue !== undefined) current = newValue;
+      if (!items.some(i => i.value === current) && items.length) current = items[0].value;
+      list.innerHTML = items.map(i =>
+        `<div class="csel-opt" role="option" data-value="${esc(i.value)}"><span class="grow">${esc(i.label)}</span>${svg('i-check', 'csel-check')}</div>`).join('');
+      [...list.children].forEach(opt => opt.addEventListener('click', () => {
+        current = opt.dataset.value; paint(); close(); if (onChange) onChange(current);
+      }));
+      paint();
+    };
+    Object.defineProperty(root, 'value', { get: () => current, set: v => { current = v; paint(); } });
+    btn.addEventListener('click', e => { e.stopPropagation(); root.dataset.open === '1' ? close() : open(); });
+    root.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { close(); btn.focus(); }
+      else if ((e.key === 'Enter' || e.key === ' ') && root.dataset.open !== '1') { e.preventDefault(); open(); }
+      else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const items = root._items || [];
+        const at = Math.max(0, items.findIndex(i => i.value === current));
+        const next = items[Math.min(items.length - 1, Math.max(0, at + (e.key === 'ArrowDown' ? 1 : -1)))];
+        if (next) { current = next.value; paint(); if (onChange) onChange(current); }
+      }
+    });
+    root.setItems(items, value);
+    return root;
+  }
+  document.addEventListener('click', () => { if (openCsel) { openCsel.dataset.open = '0'; openCsel = null; } });
+  function mountCsel(mountId, items, value, onChange) {
+    const mount = $('#' + mountId);
+    if (mount._csel) { mount._csel.setItems(items, value); return mount._csel; }
+    const el = makeCsel(items, value, onChange);
+    mount.appendChild(el); mount._csel = el;
+    return el;
+  }
+
+  const LEVEL_ICON = { error: 'i-x', warning: 'i-alert', info: 'i-info' };
   function renderOverall() {
-    const st = state.status;
-    const pill = $('#overall');
-    const box = $('#problems');
+    const st = state.status, pill = $('#overall'), box = $('#problems');
     const problems = st.problems || [];
     const errors = problems.filter(p => p.level === 'error');
     const warnings = problems.filter(p => p.level === 'warning');
-    if (!errors.length && !warnings.length) { pill.className = 'pill ok'; pill.textContent = '✓ Everything is working'; }
-    else if (errors.length) { pill.className = 'pill bad'; pill.textContent = '✗ ' + errors.length + (errors.length === 1 ? ' problem' : ' problems'); }
-    else { pill.className = 'pill warn'; pill.textContent = '! ' + warnings.length + (warnings.length === 1 ? ' thing to check' : ' things to check'); }
+    if (!errors.length && !warnings.length) { pill.className = 'pill ok'; pill.innerHTML = svg('i-check') + 'Alles läuft'; }
+    else if (errors.length) { pill.className = 'pill bad'; pill.innerHTML = svg('i-x') + errors.length + ' Fehler'; }
+    else { pill.className = 'pill warn'; pill.innerHTML = svg('i-alert') + warnings.length + (warnings.length === 1 ? ' Hinweis' : ' Hinweise'); }
     box.innerHTML = problems.map(p => `
       <div class="problem ${esc(p.level)}">
-        <div class="t"><span>${p.level === 'error' ? '✗' : p.level === 'warning' ? '!' : 'ℹ'} ${esc(p.title)}</span>
-          ${p.fixable ? `<button data-fix="${esc(p.what)}">Fix</button>` : ''}</div>
-        <dl>${p.why ? `<dt>Why</dt><dd>${esc(p.why)}</dd>` : ''}${p.effect ? `<dt>Effect</dt><dd>${esc(p.effect)}</dd>` : ''}${p.fix ? `<dt>What to do</dt><dd>${esc(p.fix)}</dd>` : ''}</dl>
+        <div class="t">${svg(LEVEL_ICON[p.level] || 'i-info')}<span class="grow">${esc(p.title)}</span>
+          ${p.fixable ? `<button class="btn btn-sm" data-fix="${esc(p.what)}">${svg('i-wrench', 'i-sm')}Beheben</button>` : ''}</div>
+        <dl>${p.why ? `<dt>Warum</dt><dd>${esc(p.why)}</dd>` : ''}${p.effect ? `<dt>Folge</dt><dd>${esc(p.effect)}</dd>` : ''}${p.fix ? `<dt>Was tun</dt><dd>${esc(p.fix)}</dd>` : ''}</dl>
       </div>`).join('');
     box.querySelectorAll('button[data-fix]').forEach(b => b.addEventListener('click', () =>
-      api('POST', `/fix/device/${encodeURIComponent(b.dataset.fix)}`).then(() => { toast('fixed'); refresh(false); }, fail)));
+      api('POST', `/fix/device/${encodeURIComponent(b.dataset.fix)}`).then(() => { toast('behoben'); refresh(false); }, fail)));
   }
   function renderUnreachable() {
-    $('#overall').className = 'pill bad'; $('#overall').textContent = '✗ Router not reachable';
-    $('#problems').innerHTML = '<div class="problem error"><div class="t">Cannot reach the audio router</div><dl><dt>Why</dt><dd>The service is restarting or stopped. The audio itself may still be flowing; only this page cannot talk to it.</dd><dt>What to do</dt><dd>Wait a few seconds, this page reconnects by itself. If it stays like this: <code>systemctl --user restart tfcz-audio</code></dd></dl></div>';
+    $('#overall').className = 'pill bad';
+    $('#overall').innerHTML = svg('i-x') + 'Router nicht erreichbar';
+    $('#problems').innerHTML = `<div class="problem error"><div class="t">${svg('i-x')}<span class="grow">Der Audio-Router antwortet nicht</span></div>
+      <dl><dt>Warum</dt><dd>Der Dienst startet gerade neu oder ist gestoppt. Der Ton kann trotzdem weiterlaufen; nur diese Seite erreicht ihn nicht.</dd>
+      <dt>Was tun</dt><dd>Kurz warten, die Seite verbindet sich von selbst wieder. Bleibt es so: <code>systemctl --user restart tfcz-audio</code></dd></dl></div>`;
   }
 
-  // ---------------------------------------------------------- diagram
   function routeInfo(name) {
-    // /status is refreshed every 2 s and always carries from/to/description/label;
-    // /config may lag behind right after a save. Never depend on config for a route.
     const r = state.status.routes[name] || {};
     const c = (state.config && state.config.routes && state.config.routes[name]) || {};
     return { from: r.from || c.from, to: r.to || c.to, description: r.description || c.description || '', label: r.label || '' };
   }
   function endpoints() {
-    const routes = state.status.routes;
     const ins = [], outs = [];
-    for (const name of Object.keys(routes)) {
+    for (const name of Object.keys(state.status.routes)) {
       const r = routeInfo(name);
       if (!ins.includes(r.from)) ins.push(r.from);
       if (r.to !== 'obs_mic' && !outs.includes(r.to)) outs.push(r.to);
@@ -354,96 +649,104 @@
   }
   function boxStatus(alias, kind, ok, taken, dev, lvl) {
     const meterKnown = state.levelsAvailable && lvl && (lvl.running || lvl.active);
-    return !ok ? 'not connected' : taken ? ('⚠ taken over by ' + taken) : (dev && dev.error) ? '⚠ audio system error'
-      : (lvl && lvl.active ? (lvl.signal ? (kind === 'in' ? 'sound coming in' : 'sound going out') : 'quiet') : (meterKnown ? 'no signal' : 'connected'));
+    if (!ok) return 'nicht angeschlossen';
+    if (taken) return 'übernommen von ' + taken;
+    if (dev && dev.error) return 'Fehler im Tonsystem';
+    if (lvl && lvl.active) return lvl.signal ? (kind === 'in' ? 'Ton kommt herein' : 'Ton geht hinaus') : 'ruhig';
+    return meterKnown ? 'kein Signal' : 'verbunden';
   }
   function updateMeters() {
-    // cheap in-place update of the level bars and status words; no SVG rebuild
     document.querySelectorAll('#diagram rect[data-meter]').forEach(r => {
-      const alias = r.dataset.meter; const lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
+      const alias = r.dataset.meter, lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
       r.setAttribute('width', (parseFloat(r.dataset.full) * levelWidth(lvl) / 100).toFixed(1));
     });
     document.querySelectorAll('#diagram text[data-status]').forEach(t => {
       if (t.dataset.broken === '1') return;
-      const alias = t.dataset.status; const lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
-      const dev = state.status.devices[alias];
-      t.textContent = boxStatus(alias, t.dataset.kind, true, null, dev, lvl);
+      const alias = t.dataset.status, lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
+      t.textContent = boxStatus(alias, t.dataset.kind, true, null, state.status.devices[alias], lvl);
     });
   }
   function renderDiagram() {
     const { ins, outs } = endpoints();
     const routes = state.status.routes, devs = state.status.devices;
-    if (state.selected && !routes[state.selected]) state.selected = null;  // deleted while selected
+    if (state.selected && !routes[state.selected]) state.selected = null;
     if (!Object.keys(routes).length) {
-      $('#diagram').innerHTML = '<p class="hint">No connections yet. Click <b>Set up devices</b> at the top to connect your headsets in three steps.</p>';
+      $('#diagram').innerHTML = '<p class="hint">Noch keine Verbindungen. Klick oben auf <b>Geräte einrichten</b>, dann sind deine Headsets in drei Schritten verbunden.</p>';
       return;
     }
-    const W = 900, colW = 280, nodeH = 74, gap = 16, top = 34, obsH = 90;
+    const W = 920, colW = 288, nodeH = 76, gap = 16, top = 34, obsH = 92;
     const rows = Math.max(ins.length, outs.length);
-    const H = top + rows * (nodeH + gap) + (obsH - nodeH) + 10;
+    const H = top + rows * (nodeH + gap) + (obsH - nodeH) + 12;
     const pos = {};
-    ins.forEach((a, i) => pos['in:' + a] = { x: 10, y: top + i * (nodeH + gap), w: colW, h: nodeH });
-    outs.forEach((a, i) => pos['out:' + a] = { x: W - colW - 10, y: top + i * (nodeH + gap), w: colW, h: a === 'obs_mic' ? obsH : nodeH });
+    ins.forEach((a, i) => pos['in:' + a] = { x: 8, y: top + i * (nodeH + gap), w: colW, h: nodeH });
+    outs.forEach((a, i) => pos['out:' + a] = { x: W - colW - 8, y: top + i * (nodeH + gap), w: colW, h: a === 'obs_mic' ? obsH : nodeH });
     const present = alias => alias === 'obs_mic' ? state.status.virtual_mic.present : (devs[alias] || {}).present !== false;
+    const takenOrErr = a => devs[a] && (devs[a].taken_by || devs[a].error);
+    const COLOUR = { blue: '#5ca7dc', gold: '#cda857', red: '#c2453f', muted: 'rgba(230,227,218,.45)' };
 
-    let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="audio flow diagram">
-      <defs>${['ok', 'obs', 'bad', 'muted'].map(c => `<marker id="arr-${c}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--${c})"/></marker>`).join('')}</defs>
-      <text x="10" y="18" font-size="13" fill="var(--muted)" font-weight="600">SOUND COMES IN FROM</text>
-      <text x="${W - 10}" y="18" font-size="13" fill="var(--muted)" font-weight="600" text-anchor="end">SOUND GOES OUT TO</text>`;
+    let out = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Diagramm des Tonflusses">
+      <defs>${Object.entries(COLOUR).map(([k, v]) => `<marker id="a-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${v}"/></marker>`).join('')}</defs>
+      <style>
+        .dev-name { font: 700 15px "Nunito Sans", system-ui, sans-serif; }
+        .dev-sub { font: 400 12px "Nunito Sans", system-ui, sans-serif; }
+        .dev-sub2 { font: 400 11px "Nunito Sans", system-ui, sans-serif; fill: rgba(230,227,218,.42); }
+        .col-head { font: 900 11px "Nunito Sans", system-ui, sans-serif; fill: #5ca7dc; letter-spacing: .16em; }
+        .flow-label { font: 800 12px "Nunito Sans", system-ui, sans-serif; }
+      </style>
+      <text x="8" y="16" class="col-head">TON KOMMT VON</text>
+      <text x="${W - 8}" y="16" class="col-head" text-anchor="end">TON GEHT ZU</text>`;
 
     Object.keys(routes).forEach((name, idx) => {
       const r = routes[name], c = routeInfo(name);
       const a = pos['in:' + c.from], b = pos['out:' + c.to];
       if (!a || !b) return;
       const x1 = a.x + a.w, y1 = a.y + a.h / 2, x2 = b.x, y2 = b.y + b.h / 2;
-      const takenOrErr = a => devs[a] && (devs[a].taken_by || devs[a].error);
-      const missing = !present(c.from) || !present(c.to) || takenOrErr(c.from) || takenOrErr(c.to);
+      const broken = !present(c.from) || !present(c.to) || takenOrErr(c.from) || takenOrErr(c.to);
       const off = r.mute || r.volume === 0;
-      const flowing = !missing && !off;
-      const colorName = missing ? 'bad' : flowing ? (c.to === 'obs_mic' ? 'obs' : 'ok') : 'muted';
-      const color = `var(--${colorName})`;
-      const width = flowing ? 2 + 4 * Math.min(1.5, r.volume) : 2;
-      const dash = flowing ? '' : 'stroke-dasharray="8 6"';
+      const flowing = !broken && !off;
+      const key = broken ? 'red' : flowing ? (c.to === 'obs_mic' ? 'gold' : 'blue') : 'muted';
+      const stroke = COLOUR[key];
+      const width = flowing ? 2 + 3.5 * Math.min(1.5, r.volume) : 2;
+      const dash = flowing ? '' : 'stroke-dasharray="9 6"';
       const t = idx % 2 ? 0.66 : 0.34;
       const mx = (x1 + x2) / 2;
       const lx = (1 - t) ** 3 * x1 + 3 * (1 - t) ** 2 * t * mx + 3 * (1 - t) * t * t * mx + t ** 3 * x2;
       const ly = (1 - t) ** 3 * y1 + 3 * (1 - t) ** 2 * t * y1 + 3 * (1 - t) * t * t * y2 + t ** 3 * y2;
-      const label = (takenOrErr(c.from) || takenOrErr(c.to)) ? 'blocked' : missing ? 'missing' : r.mute ? 'off' : pct(r.volume);
+      const label = (takenOrErr(c.from) || takenOrErr(c.to)) ? 'blockiert' : broken ? 'fehlt' : r.mute ? 'aus' : pct(r.volume);
       const sel = state.selected === name;
-      svg += `<g class="route" data-route="${esc(name)}" style="cursor:pointer" opacity="${sel || !state.selected ? 1 : 0.35}">
-        <path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="transparent" stroke-width="18"/>
-        <path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="${width}" ${dash} marker-end="url(#arr-${colorName})" stroke-linecap="round"/>
-        <rect x="${lx - 30}" y="${ly - 12}" width="60" height="24" rx="12" fill="var(--card)" stroke="${color}" stroke-width="${sel ? 3 : 1.5}"/>
-        <text x="${lx}" y="${ly + 5}" font-size="13" font-weight="600" text-anchor="middle" fill="${color}">${esc(label)}</text>
+      out += `<g class="route" data-route="${esc(name)}" style="cursor:pointer" opacity="${sel || !state.selected ? 1 : .3}">
+        <path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="transparent" stroke-width="20"/>
+        <path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${stroke}" stroke-width="${width}" ${dash} marker-end="url(#a-${key})" stroke-linecap="round"/>
+        <rect x="${lx - 34}" y="${ly - 12}" width="68" height="24" rx="12" fill="#0b2134" stroke="${stroke}" stroke-width="${sel ? 2.5 : 1.4}"/>
+        <text x="${lx}" y="${ly + 5}" class="flow-label" text-anchor="middle" fill="${stroke}">${esc(label)}</text>
       </g>`;
     });
 
     const box = (key, alias, kind) => {
       const p = pos[key], ok = present(alias), isObs = alias === 'obs_mic';
+      const dev = devs[alias], taken = dev && dev.taken_by;
       const lvl = state.levels[isObs ? 'obs' : alias];
-      const lw = levelWidth(lvl);
-      const dev = devs[alias];
-      const taken = dev && dev.taken_by;
+      const bad = !ok || taken || (dev && dev.error);
       const status = boxStatus(alias, kind, ok, taken, dev, lvl);
-      const sub2 = isObs ? 'what your viewers hear' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
-      const broken = !ok || taken || (dev && dev.error);
-      const stroke = broken ? 'var(--bad)' : isObs ? 'var(--obs)' : 'var(--line)';
-      const fill = isObs ? 'var(--obs-soft)' : 'var(--card)';
+      const sub2 = isObs ? 'was deine Zuschauer hören' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
+      const stroke = bad ? COLOUR.red : isObs ? COLOUR.gold : 'rgba(92,167,220,.28)';
+      const accent = bad ? COLOUR.red : isObs ? COLOUR.gold : COLOUR.blue;
       return `<g>
-        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="${fill}" stroke="${stroke}" stroke-width="${broken || isObs ? 2.5 : 1.5}" ${!ok ? 'stroke-dasharray="6 4"' : ''}/>
-        <text x="${p.x + 14}" y="${p.y + 30}" font-size="22">${icon(alias, kind)}</text>
-        <text x="${p.x + 48}" y="${p.y + 24}" font-size="15" font-weight="600" fill="${!ok ? 'var(--bad)' : 'var(--text)'}">${esc(human(alias))}</text>
-        <text x="${p.x + 48}" y="${p.y + 41}" font-size="12" fill="${broken ? 'var(--bad)' : 'var(--muted)'}" data-status="${esc(alias)}" data-kind="${kind}" data-broken="${broken ? 1 : 0}">${esc(status)}</text>
-        <text x="${p.x + 48}" y="${p.y + 55}" font-size="11" fill="var(--muted)">${esc(sub2.slice(0, 44))}</text>
-        ${ok ? `<rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${p.w - 62}" height="6" rx="3" fill="var(--line)"/>
-        <rect x="${p.x + 48}" y="${p.y + p.h - 13}" width="${(p.w - 62) * lw / 100}" height="6" rx="3" fill="${isObs ? 'var(--obs)' : 'var(--ok)'}" data-meter="${esc(alias)}" data-full="${p.w - 62}"/>` : ''}
+        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="rgba(7,22,36,.62)" stroke="${stroke}" stroke-width="${bad || isObs ? 2 : 1.2}" ${!ok ? 'stroke-dasharray="7 5"' : ''}/>
+        <use href="#${iconFor(alias, kind)}" x="${p.x + 15}" y="${p.y + 16}" width="20" height="20" style="color:${accent}"/>
+        <text x="${p.x + 48}" y="${p.y + 25}" class="dev-name" fill="${bad ? COLOUR.red : '#fff'}">${esc(human(alias))}</text>
+        <text x="${p.x + 48}" y="${p.y + 43}" class="dev-sub" data-status="${esc(alias)}" data-kind="${kind}" data-broken="${bad ? 1 : 0}" fill="${bad ? COLOUR.red : 'rgba(230,227,218,.62)'}">${esc(status)}</text>
+        <text x="${p.x + 48}" y="${p.y + 58}" class="dev-sub2">${esc(sub2.slice(0, 42))}</text>
+        ${ok ? `<rect x="${p.x + 48}" y="${p.y + p.h - 14}" width="${p.w - 64}" height="6" rx="3" fill="rgba(230,227,218,.14)"/>
+        <rect x="${p.x + 48}" y="${p.y + p.h - 14}" width="0" height="6" rx="3" fill="${isObs ? COLOUR.gold : COLOUR.blue}" data-meter="${esc(alias)}" data-full="${p.w - 64}"/>` : ''}
       </g>`;
     };
-    ins.forEach(a => svg += box('in:' + a, a, 'in'));
-    outs.forEach(a => svg += box('out:' + a, a, 'out'));
-    svg += '</svg>';
-    $('#diagram').innerHTML = svg;
+    ins.forEach(a => out += box('in:' + a, a, 'in'));
+    outs.forEach(a => out += box('out:' + a, a, 'out'));
+    out += '</svg>';
+    $('#diagram').innerHTML = out;
     $('#diagram').querySelectorAll('g.route').forEach(g => g.addEventListener('click', () => selectRoute(g.dataset.route, true)));
+    updateMeters();
   }
   function selectRoute(name, scroll) {
     state.selected = state.selected === name ? null : name;
@@ -454,26 +757,23 @@
     }
   }
 
-  // ------------------------------------------------------------ OBS line
   function renderObs() {
-    const vm = state.status.virtual_mic;
-    const lvl = state.levels.obs;
-    const text = $('#obs-text');
+    const vm = state.status.virtual_mic, lvl = state.levels.obs, text = $('#obs-text');
     const anyToObs = Object.entries(state.status.routes).some(([n, r]) => routeInfo(n).to === 'obs_mic' && !r.mute && r.volume > 0 && r.source_present);
-    if (!vm.present) { text.textContent = '✗ The OBS microphone is missing. OBS gets no sound right now.'; text.style.color = 'var(--bad)'; }
-    else if (!Object.keys(state.status.routes).length) { text.textContent = 'Nothing set up yet. Use "Set up devices" above.'; text.style.color = 'var(--muted)'; }
-    else if (!anyToObs) { text.textContent = '✗ Nothing is connected to OBS. Switch on an arrow to the OBS stream.'; text.style.color = 'var(--bad)'; }
-    else if (lvl && lvl.signal) { text.textContent = '✓ Sound is reaching OBS right now'; text.style.color = 'var(--ok)'; }
-    else if (lvl && lvl.active) { text.textContent = '✓ Ready. Quiet at the moment: nobody is talking.'; text.style.color = 'var(--text)'; }
-    else if (state.levelsAvailable && lvl && lvl.running) { text.textContent = '? OBS microphone exists but no sound data arrives. Check the microphones on the left.'; text.style.color = 'var(--warn)'; }
-    else { text.textContent = '✓ The OBS microphone is available. Microphones are connected to it.' + (state.levelsAvailable === false ? ' Level bars are off on this system' + (state.levelsReason ? ': ' + state.levelsReason : '.') : ''); text.style.color = 'var(--ok)'; }
+    let msg, colour = 'var(--ink-strong)';
+    if (!vm.present) { msg = 'Das OBS-Mikrofon fehlt. OBS bekommt gerade keinen Ton.'; colour = '#f0a6a2'; }
+    else if (!Object.keys(state.status.routes).length) { msg = 'Noch nichts eingerichtet. Nutze oben «Geräte einrichten».'; colour = 'var(--ink-muted)'; }
+    else if (!anyToObs) { msg = 'Nichts ist mit OBS verbunden. Schalte einen Pfeil zum OBS-Stream ein.'; colour = '#f0a6a2'; }
+    else if (lvl && lvl.signal) { msg = 'Ton erreicht OBS gerade'; colour = '#9bd8b4'; }
+    else if (lvl && lvl.active) { msg = 'Bereit. Gerade ruhig: niemand spricht.'; }
+    else if (state.levelsAvailable && lvl && lvl.running) { msg = 'OBS-Mikrofon ist da, aber es kommen keine Tondaten an. Prüf die Mikrofone links.'; colour = 'var(--gold-light)'; }
+    else { msg = 'Das OBS-Mikrofon ist verfügbar, die Mikrofone sind damit verbunden.' + (state.levelsAvailable === false ? ' Die Pegelbalken sind auf diesem System aus' + (state.levelsReason ? ': ' + state.levelsReason : '.') : ''); colour = '#9bd8b4'; }
+    text.textContent = msg; text.style.color = colour;
     $('#obs-meter').style.width = levelWidth(lvl) + '%';
   }
 
-  // -------------------------------------------------------------- cards
   function renderCards() {
-    const box = $('#cards');
-    const routes = state.status.routes;
+    const box = $('#cards'), routes = state.status.routes;
     const names = Object.keys(routes);
     const existing = [...box.querySelectorAll('.card')].map(c => c.dataset.name);
     if (!box.children.length || existing.join() !== names.join()) {
@@ -482,33 +782,40 @@
           <div class="title"></div>
           <div class="path"></div>
           <div class="vol"><input type="range" min="0" max="150" step="1"><output></output></div>
-          <div class="scale"><span>off</span><span>quiet</span><span>normal</span><span>loud</span></div>
-          <div class="foot"><label class="switch"><span class="track"></span><span class="lbl"></span></label><span class="state"></span><button class="danger del" title="delete this connection">✕</button></div>
-        </div>`).join('') || '<p class="hint">No connections yet.</p>';
+          <div class="scale"><span>aus</span><span>leise</span><span>normal</span><span>laut</span></div>
+          <div class="foot">
+            <label class="switch"><span class="track"></span><span class="lbl"></span></label>
+            <span class="state"></span>
+            <button class="btn btn-icon i-close del" title="Verbindung löschen">${svg('i-trash', 'i-sm')}</button>
+          </div>
+        </div>`).join('') || '<p class="hint">Noch keine Verbindungen.</p>';
       for (const card of box.querySelectorAll('.card')) bindCard(card);
     }
     for (const card of box.querySelectorAll('.card')) {
       const name = card.dataset.name, r = routes[name], c = routeInfo(name);
       card.className = 'card' + (state.selected === name ? ' selected' : '') + (r.mute ? ' off' : '');
-      card.querySelector('.title').textContent = c.description || c.label || (human(c.from) + ' → ' + human(c.to));
-      card.querySelector('.path').innerHTML = `${icon(c.from, 'in')} <b>${esc(human(c.from))}</b> → ${icon(c.to, 'out')} <b>${esc(human(c.to))}</b>`;
+      card.querySelector('.title').textContent = c.description || c.label || (human(c.from) + ' zu ' + human(c.to));
+      // icon and name must never be split by a line break
+      card.querySelector('.path').innerHTML =
+        `<span class="pair">${svg(iconFor(c.from, 'in'), 'i-sm')}<b>${esc(human(c.from))}</b></span>` +
+        svg('i-arrow', 'i-sm') +
+        `<span class="pair">${svg(iconFor(c.to, 'out'), 'i-sm')}<b>${esc(human(c.to))}</b></span>`;
       const slider = card.querySelector('input[type=range]');
       if (!state.dragging.has(name)) { slider.value = Math.round(r.volume * 100); card.querySelector('output').textContent = pct(r.volume); }
       slider.disabled = r.mute;
       const sw = card.querySelector('.switch');
       sw.className = 'switch' + (r.mute ? '' : ' on');
-      sw.querySelector('.lbl').textContent = r.mute ? 'Off' : 'On';
-      const st = card.querySelector('.state');
-      const devs = state.status.devices || {};
+      sw.querySelector('.lbl').textContent = r.mute ? 'Aus' : 'Ein';
+      const st = card.querySelector('.state'), devs = state.status.devices || {};
       const blocked = [c.from, c.to].map(a => devs[a]).find(d => d && (d.taken_by || d.error));
       const missing = !r.source_present ? human(c.from) : !r.sink_present ? human(c.to) : null;
-      if (blocked) { st.textContent = blocked.taken_by ? 'blocked by ' + blocked.taken_by : 'blocked: audio system error'; st.className = 'state bad'; }
-      else if (r.misrouted_to && r.misrouted_to.length) { st.textContent = 'linked to the wrong device'; st.className = 'state bad'; }
-      else if (missing) { st.textContent = missing + ' missing'; st.className = 'state bad'; }
-      else if (!r.running) { st.textContent = 'restarting…'; st.className = 'state bad'; }
-      else if (r.mute) { st.textContent = 'switched off'; st.className = 'state'; }
-      else if (r.connected) { st.textContent = 'sound flows'; st.className = 'state'; }
-      else { st.textContent = 'connecting…'; st.className = 'state'; }
+      if (blocked) { st.textContent = blocked.taken_by ? 'blockiert von ' + blocked.taken_by : 'blockiert: Fehler im Tonsystem'; st.className = 'state bad'; }
+      else if (r.misrouted_to && r.misrouted_to.length) { st.textContent = 'falsch verbunden'; st.className = 'state bad'; }
+      else if (missing) { st.textContent = missing + ' fehlt'; st.className = 'state bad'; }
+      else if (!r.running) { st.textContent = 'startet neu …'; st.className = 'state bad'; }
+      else if (r.mute) { st.textContent = 'ausgeschaltet'; st.className = 'state'; }
+      else if (r.connected) { st.textContent = 'Ton fliesst'; st.className = 'state'; }
+      else { st.textContent = 'verbindet …'; st.className = 'state'; }
     }
   }
   function bindCard(card) {
@@ -516,46 +823,56 @@
     const slider = card.querySelector('input[type=range]');
     const out = card.querySelector('output');
     slider.addEventListener('input', () => {
-      state.dragging.add(name); out.textContent = slider.value + '%';
+      state.dragging.add(name); out.textContent = slider.value + ' %';
       if (!state.pending.has(name)) state.pending.set(name, setTimeout(() => { state.pending.delete(name); sendVolume(name, slider.value); }, 150));
     });
-    const done = () => { sendVolume(name, slider.value); setTimeout(() => state.dragging.delete(name), 500); };
-    slider.addEventListener('change', done);
+    slider.addEventListener('change', () => { sendVolume(name, slider.value); setTimeout(() => state.dragging.delete(name), 500); });
     card.querySelector('.switch').addEventListener('click', e => { e.preventDefault(); api('POST', `/routes/${encodeURIComponent(name)}/toggle`).then(() => refresh(false), fail); });
     card.querySelector('.del').addEventListener('click', () => {
       const c = routeInfo(name);
-      if (!confirm(`Delete the connection ${human(c.from)} → ${human(c.to)}?\nThe sound on this path stops immediately. You can add it again under Advanced.`)) return;
-      api('DELETE', `/config/routes/${encodeURIComponent(name)}`).then(() => { toast('connection deleted'); refresh(true); }, fail);
+      if (!confirm(`Verbindung ${human(c.from)} zu ${human(c.to)} löschen?\nDer Ton auf diesem Weg hört sofort auf. Unter «Erweitert» kannst du sie wieder anlegen.`)) return;
+      api('DELETE', `/config/routes/${encodeURIComponent(name)}`).then(() => { toast('Verbindung gelöscht'); refresh(true); }, fail);
     });
     card.addEventListener('click', e => { if (e.target.closest('input,button,label')) return; selectRoute(name, false); });
   }
   const sendVolume = (name, value) => api('PUT', `/routes/${encodeURIComponent(name)}`, { volume: parseInt(value, 10) / 100 }).then(() => refresh(false), fail);
 
-  // ------------------------------------------------------------- presets
+  const PRESET_NAMES = {
+    default: 'Standard', everything_on: 'Alles ein',
+    mics_off_air: 'Mikrofone aus', mics_on_air: 'Mikrofone ein',
+    game_off: 'Spielton aus', game_on: 'Spielton ein', game_quiet: 'Spielton leise',
+    hdmi_off: 'Spielton aus', hdmi_on: 'Spielton ein', hdmi_quiet: 'Spielton leise',
+  };
+  const presetName = p => PRESET_NAMES[p] || p.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
   function renderPresets() {
-    const box = $('#presets');
-    const presets = state.config.presets || {};
+    const box = $('#presets'), presets = state.config.presets || {};
     const names = Object.keys(presets);
-    $('#presets-section').style.display = names.length ? '' : 'none';
+    $('#presets-section').hidden = !names.length;
     box.innerHTML = '';
     for (const p of names) {
       const wrap = document.createElement('div'); wrap.className = 'preset';
-      const b = document.createElement('button');
-      b.className = 'big';
-      b.textContent = p.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+      const b = document.createElement('button'); b.className = 'btn'; b.textContent = presetName(p);
       const lines = Object.entries(presets[p]).map(([r, v]) => {
-        const c = state.config.routes[r]; const label = c ? human(c.from) + ' → ' + human(c.to) : r;
-        if (typeof v === 'object') return `${label}: ${'mute' in v ? (v.mute ? 'off' : 'on') : ''}${'volume' in v ? ' ' + pct(v.volume) : ''}`.trim();
+        const c = state.config.routes[r], label = c ? human(c.from) + ' zu ' + human(c.to) : r;
+        if (typeof v === 'object') return `${label}: ${'mute' in v ? (v.mute ? 'aus' : 'ein') : ''}${'volume' in v ? ' ' + pct(v.volume) : ''}`.trim();
         return `${label}: ${pct(v)}`;
       });
       b.title = lines.join('\n');
-      const cap = document.createElement('div'); cap.className = 'cap'; cap.textContent = lines.slice(0, 3).join(' · ') + (lines.length > 3 ? ' · …' : '');
-      b.addEventListener('click', () => api('POST', `/presets/${encodeURIComponent(p)}`).then(() => { toast('applied: ' + b.textContent); refresh(false); }, fail));
+      const cap = document.createElement('div'); cap.className = 'cap';
+      cap.textContent = lines.slice(0, 3).join(' · ') + (lines.length > 3 ? ' · …' : '');
+      b.addEventListener('click', () => api('POST', `/presets/${encodeURIComponent(p)}`).then(() => { toast('angewendet: ' + presetName(p)); refresh(false); }, fail));
       wrap.appendChild(b); wrap.appendChild(cap); box.appendChild(wrap);
     }
   }
 
-  // ------------------------------------------------------ names (labels)
+  const EDITABLE = new Set(['INPUT', 'TEXTAREA']);
+  const editing = root => { const a = document.activeElement; return !!(root && a && root.contains(a) && EDITABLE.has(a.tagName) && a.type !== 'range'); };
+  let advancedDirty = false;
+  document.addEventListener('focusout', () => {
+    if (advancedDirty && state.config && !editing($('#advanced'))) { advancedDirty = false; renderLabels(); renderRouteForm(); renderDevices(true); }
+    if (state.wiz && state.hardwareKey !== lastHardwareKey) setTimeout(() => renderWizard(), 50);
+  });
+
   function labelGroups() {
     const groups = [];
     for (const alias of Object.keys(state.config.devices)) {
@@ -569,15 +886,15 @@
     const grid = $('#labels');
     if (editing($('#labels'))) { advancedDirty = true; return; }
     const labels = state.config.labels || {};
-    grid.innerHTML = labelGroups().map(k => `<label for="lbl-${esc(k)}">${esc(k)}</label><input type="text" id="lbl-${esc(k)}" data-label="${esc(k)}" value="${esc(labels[k] || '')}" placeholder="${esc(human(k + (state.config.devices[k] ? '' : '_mic')).replace(/ microphone$/, ''))}">`).join('');
+    grid.innerHTML = labelGroups().map(k =>
+      `<label for="lbl-${esc(k)}">${esc(k)}</label><input type="text" id="lbl-${esc(k)}" data-label="${esc(k)}" value="${esc(labels[k] || '')}" placeholder="${esc(human(k))}">`).join('');
   }
   $('#save-labels').addEventListener('click', () => {
     const labels = {};
     $('#labels').querySelectorAll('input[data-label]').forEach(i => { if (i.value.trim()) labels[i.dataset.label] = i.value.trim(); });
-    api('PUT', '/config/labels', labels).then(() => { toast('names saved'); refresh(true); }, fail);
+    api('PUT', '/config/labels', labels).then(() => { toast('Namen gespeichert'); refresh(true); }, fail);
   });
 
-  // ------------------------------------------------------------- devices
   const SOURCE_CLASSES = ['Audio/Source', 'Audio/Source/Virtual', 'Audio/Duplex'];
   const SINK_CLASSES = ['Audio/Sink', 'Audio/Duplex'];
   function aliasUsage() {
@@ -588,93 +905,97 @@
     }
     return usage;
   }
-  function deviceOptions(kind, current) {
+  function deviceItems(kind, current) {
     const allowed = kind === 'from' ? SOURCE_CLASSES : kind === 'to' ? SINK_CLASSES : null;
     const nodes = state.devices.filter(d => !d.virtual && (!allowed || allowed.includes(d.media_class)));
-    const opts = nodes.map(d => `<option value="${esc(d.name)}" ${d.name === current ? 'selected' : ''}>${esc(d.friendly || d.description || d.name)}${d.port ? ' — ' + esc(d.port) : ''}</option>`);
-    if (current && !nodes.some(d => d.name === current)) opts.unshift(`<option value="${esc(current)}" selected>(not connected) ${esc(current)}</option>`);
-    if (!current) opts.unshift('<option value="" selected>(not connected right now)</option>');
-    if (!opts.length) opts.push('<option value="">(no device found)</option>');
-    return opts.join('');
+    const items = nodes.map(d => ({ value: d.name, label: (d.friendly || d.description || d.name) + (d.port ? ' — ' + d.port : '') }));
+    if (current && !nodes.some(d => d.name === current)) items.unshift({ value: current, label: '(nicht angeschlossen) ' + current });
+    if (!items.length) items.push({ value: '', label: '(kein Gerät gefunden)' });
+    return items;
   }
-  const EDITABLE = new Set(['INPUT', 'SELECT', 'TEXTAREA']);
-  const editing = root => { const a = document.activeElement; return !!(root && a && root.contains(a) && EDITABLE.has(a.tagName) && a.type !== 'range'); };
-  let advancedDirty = false;
-  document.addEventListener('focusout', () => { if (advancedDirty && state.config && !editing($('#advanced'))) { advancedDirty = false; renderLabels(); renderRouteForm(); renderDevices(true); } });
   let lastDevicesKey = '';
   function renderDevices(force) {
     const grid = $('#devices');
-    // rebuild only when the underlying data changed, and never while the user is
-    // interacting with one of these controls (a rebuild would undo their choice)
-    const key = JSON.stringify([state.config.devices, state.devices.map(d => [d.name, d.friendly, d.port]), Object.entries(state.status.devices || {}).map(([a, d]) => [a, d.node, d.present, d.taken_by, d.identity && d.identity.text])]);
+    const key = JSON.stringify([state.config.devices, state.devices.map(d => [d.name, d.friendly, d.port]),
+      Object.entries(state.status.devices || {}).map(([a, d]) => [a, d.node, d.present, d.taken_by, d.identity && d.identity.text])]);
     if (!force && key === lastDevicesKey) return;
     if (!force && editing($('#devices'))) { advancedDirty = true; return; }
     lastDevicesKey = key;
-    const usage = aliasUsage();
-    const devs = state.status.devices || {};
+    const usage = aliasUsage(), devs = state.status.devices || {};
     grid.innerHTML = '';
     for (const alias of Object.keys(state.config.devices)) {
-      const use = usage[alias]; const kind = use && use.size === 1 ? [...use][0] : null;
+      const use = usage[alias], kind = use && use.size === 1 ? [...use][0] : null;
       const d = devs[alias] || {};
       const cfgVal = state.config.devices[alias];
-      const pendingNode = cfgVal && typeof cfgVal === 'object' && cfgVal.node ? cfgVal.node : (typeof cfgVal === 'string' && !d.node ? cfgVal : null);
-      grid.insertAdjacentHTML('beforeend',
-        `<label title="${esc(d.node || '')}"><span class="dot ${d.present ? 'ok' : 'bad'}"></span>${esc(human(alias))} <span class="hint" style="margin:0;display:inline">${kind === 'from' ? '(input)' : kind === 'to' ? '(output)' : ''}</span></label>
-         <div><div class="row"><select data-alias="${esc(alias)}" style="flex:1">${deviceOptions(kind, pendingNode || d.node)}</select>
-         <button class="danger" data-remove="${esc(alias)}" title="${use ? 'in use by a connection' : 'remove'}" ${use ? 'disabled' : ''}>✕</button></div>
-         <div class="hint" style="margin:2px 0 0">${d.taken_by ? `<span style="color:var(--bad)">Taken over by ${esc(d.taken_by)}. </span>` : ''}${esc(d.identity ? d.identity.text : '')}</div></div>`);
+      const pending = cfgVal && typeof cfgVal === 'object' && cfgVal.node ? cfgVal.node : (typeof cfgVal === 'string' && !d.node ? cfgVal : null);
+      const label = document.createElement('label');
+      label.innerHTML = `<span class="row" style="gap:8px"><span class="dot ${d.present ? 'ok' : 'bad'}"></span>${esc(human(alias))}
+        <span class="hint" style="margin:0">${kind === 'from' ? '(Eingang)' : kind === 'to' ? '(Ausgang)' : ''}</span></span>`;
+      const cell = document.createElement('div');
+      const row = document.createElement('div'); row.className = 'row';
+      const sel = makeCsel(deviceItems(kind, pending || d.node), pending || d.node || '');
+      sel.dataset.alias = alias; sel.style.flex = '1 1 240px';
+      const rm = document.createElement('button');
+      rm.className = 'btn btn-icon i-close';
+      rm.title = use ? 'wird von einer Verbindung benutzt' : 'entfernen';
+      rm.innerHTML = svg('i-x', 'i-sm'); rm.disabled = !!use;
+      rm.addEventListener('click', () => { captureDeviceChoices(); delete state.config.devices[alias]; renderDevices(true); renderRouteForm(); });
+      row.appendChild(sel); row.appendChild(rm);
+      const note = document.createElement('div'); note.className = 'hint'; note.style.margin = '4px 0 0';
+      note.innerHTML = (d.taken_by ? `<span style="color:#f0a6a2">Übernommen von ${esc(d.taken_by)}. </span>` : '') + esc(d.identity ? d.identity.text : '');
+      cell.appendChild(row); cell.appendChild(note);
+      grid.appendChild(label); grid.appendChild(cell);
     }
-    grid.querySelectorAll('button[data-remove]').forEach(b => b.addEventListener('click', () => {
-      captureDeviceChoices(); delete state.config.devices[b.dataset.remove]; renderDevices(true); renderRouteForm();
-    }));
-    $('#new-alias-node').innerHTML = deviceOptions(null, null).replace('<option value="" selected>(not connected right now)</option>', '');
+    mountCsel('new-alias-mount', deviceItems(null, null), '');
   }
   function captureDeviceChoices() {
-    // unsaved dropdown choices survive a rebuild of the grid
     const devs = state.status.devices || {};
-    $('#devices').querySelectorAll('select[data-alias]').forEach(sel => {
+    $('#devices').querySelectorAll('.csel[data-alias]').forEach(sel => {
       const alias = sel.dataset.alias;
       if (sel.value && !(devs[alias] && devs[alias].node === sel.value)) state.config.devices[alias] = { node: sel.value };
     });
   }
   $('#add-alias').addEventListener('click', () => {
-    const alias = $('#new-alias').value.trim(); const node = $('#new-alias-node').value;
-    if (!/^[a-z0-9_]+$/.test(alias)) return toast('name: lowercase letters, digits, underscore', true);
-    if (!node) return toast('pick a device', true);
-    captureDeviceChoices(); state.config.devices[alias] = node; $('#new-alias').value = ''; renderDevices(true); renderRouteForm();
+    const alias = $('#new-alias').value.trim();
+    const node = $('#new-alias-mount')._csel ? $('#new-alias-mount')._csel.value : '';
+    if (!/^[a-z0-9_]+$/.test(alias)) return toast('Name: Kleinbuchstaben, Ziffern, Unterstrich', true);
+    if (!node) return toast('Wähle ein Gerät', true);
+    captureDeviceChoices(); state.config.devices[alias] = node; $('#new-alias').value = '';
+    renderDevices(true); renderRouteForm();
   });
   $('#save-devices').addEventListener('click', () => {
-    const devices = {};
-    const devs = state.status.devices || {};
-    $('#devices').querySelectorAll('select[data-alias]').forEach(s => {
+    const devices = {}, devs = state.status.devices || {};
+    $('#devices').querySelectorAll('.csel[data-alias]').forEach(s => {
       const alias = s.dataset.alias;
       if (!s.value) { if (state.config.devices[alias]) devices[alias] = state.config.devices[alias]; return; }
       const cur = state.config.devices[alias];
-      devices[alias] = (devs[alias] && devs[alias].node === s.value && cur && !(cur.node)) ? cur : (cur && cur.node === s.value ? cur : { node: s.value });
+      devices[alias] = (devs[alias] && devs[alias].node === s.value && cur && !cur.node) ? cur : (cur && cur.node === s.value ? cur : { node: s.value });
     });
-    api('PUT', '/config/devices', devices).then(() => { toast('devices saved'); refresh(true); }, fail);
+    api('PUT', '/config/devices', devices).then(() => { toast('Geräte gespeichert'); refresh(true); }, fail);
   });
 
-  // ---------------------------------------------------------- route form
   function renderRouteForm() {
-    if (editing($('#r-from')) || editing($('#r-to')) || editing($('#r-name')) || editing($('#r-desc'))) { advancedDirty = true; return; }
-    const aliases = Object.keys(state.config.devices);
-    const usage = aliasUsage();
-    const opt = (a, sel, label) => `<option value="${esc(a)}" ${a === sel ? 'selected' : ''}>${esc(label || human(a))}</option>`;
-    const from = $('#r-from'), to = $('#r-to');
-    const fsel = from.value, tsel = to.value;
-    const fromAliases = aliases.filter(a => !usage[a] || usage[a].has('from') || !usage[a].has('to'));
-    const toAliases = aliases.filter(a => !usage[a] || usage[a].has('to') || !usage[a].has('from'));
-    from.innerHTML = fromAliases.map(a => opt(a, fsel)).join('');
-    to.innerHTML = opt('obs_mic', tsel, 'OBS stream (what viewers hear)') + toAliases.map(a => opt(a, tsel)).join('');
+    const fromMount = $('#r-from-mount'), toMount = $('#r-to-mount');
+    if (editing($('#advanced')) && fromMount._csel) { advancedDirty = true; return; }
+    const aliases = Object.keys(state.config.devices), usage = aliasUsage();
+    const fromItems = aliases.filter(a => !usage[a] || usage[a].has('from') || !usage[a].has('to')).map(a => ({ value: a, label: human(a) }));
+    const toItems = [{ value: 'obs_mic', label: 'OBS-Stream (was Zuschauer hören)' }]
+      .concat(aliases.filter(a => !usage[a] || usage[a].has('to') || !usage[a].has('from')).map(a => ({ value: a, label: human(a) })));
+    mountCsel('r-from-mount', fromItems, fromMount._csel ? fromMount._csel.value : (fromItems[0] || {}).value);
+    mountCsel('r-to-mount', toItems, toMount._csel ? toMount._csel.value : 'obs_mic');
   }
   $('#r-save').addEventListener('click', () => {
     const name = $('#r-name').value.trim();
-    if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) return toast('name: lowercase letters, digits, _ or -', true);
-    const body = { from: $('#r-from').value, to: $('#r-to').value, volume: parseFloat($('#r-volume').value || '100') / 100, description: $('#r-desc').value.trim() };
-    api('PUT', `/config/routes/${encodeURIComponent(name)}`, body).then(() => { toast('connection saved'); $('#r-name').value = ''; $('#r-desc').value = ''; refresh(true); }, fail);
+    if (!/^[a-z0-9][a-z0-9_-]*$/.test(name)) return toast('Name: Kleinbuchstaben, Ziffern, _ oder -', true);
+    const body = { from: $('#r-from-mount')._csel.value, to: $('#r-to-mount')._csel.value,
+                   volume: parseFloat($('#r-volume').value || '100') / 100, description: $('#r-desc').value.trim() };
+    api('PUT', `/config/routes/${encodeURIComponent(name)}`, body).then(() => {
+      toast('Verbindung gespeichert'); $('#r-name').value = ''; $('#r-desc').value = ''; refresh(true);
+    }, fail);
   });
-  // ------------------------------------------------------ checks and log
+  $('#save-defaults').addEventListener('click', () => api('POST', '/config/save-defaults').then(() => { toast('als Standard gespeichert'); refresh(true); }, fail));
+  $('#reset').addEventListener('click', () => api('POST', '/reset').then(() => { toast('zurück auf Standard'); refresh(false); }, fail));
+
   function reportHtml(text) {
     return text.split('\n').map(line => {
       let cls = '';
@@ -688,13 +1009,12 @@
   let diagTimer = null;
   function showDiag(d) {
     const out = $('#diag-output');
-    const label = d.kind === 'selftest' ? 'sound path test' : 'system check';
+    const label = d.kind === 'selftest' ? 'Tonweg-Test' : 'Systemcheck';
     if (d.running) {
-      $('#diag-state').innerHTML = `<span class="spin"></span>running the ${esc(label)}… (${d.seconds}s)`;
+      $('#diag-state').innerHTML = `<span class="spin"></span> ${esc(label)} läuft … (${d.seconds}s)`;
       out.hidden = !d.output;
     } else if (d.kind) {
-      const verdict = d.rc === 0 ? 'no problems found' : 'problems found, see below';
-      $('#diag-state').textContent = `${label}: ${verdict}`;
+      $('#diag-state').textContent = `${label}: ${d.rc === 0 ? 'keine Probleme gefunden' : 'Probleme gefunden, siehe unten'}`;
       out.hidden = false;
     }
     if (d.output) out.innerHTML = reportHtml(d.output);
@@ -709,7 +1029,7 @@
 
   let logTimer = null;
   function loadLog() {
-    const level = $('#log-level').value, source = $('#log-source').value;
+    const level = $('#log-level-mount')._csel.value, source = $('#log-source-mount')._csel.value;
     return api('GET', `/logs?level=${level}&source=${source}&limit=300`).then(d => {
       const out = $('#log-output');
       out.hidden = false;
@@ -718,62 +1038,51 @@
         const text = `${e.time}  ${e.message}`;
         return cls ? `<span class="${cls}">${esc(text)}</span>` : esc(text);
       });
-      out.innerHTML = lines.join('\n') || `<span class="dim">nothing logged (${esc(d.note || '')})</span>`;
+      out.innerHTML = lines.join('\n') || `<span class="dim">nichts protokolliert (${esc(d.note || '')})</span>`;
       out.scrollTop = out.scrollHeight;
     }, fail);
   }
   $('#log-refresh').addEventListener('click', loadLog);
-  $('#log-level').addEventListener('change', loadLog);
-  $('#log-source').addEventListener('change', loadLog);
   $('#log-follow').addEventListener('change', e => {
     if (logTimer) { clearInterval(logTimer); logTimer = null; }
     if (e.target.checked) { loadLog(); logTimer = setInterval(loadLog, 3000); }
   });
 
-  // ---------------------------------------------------------- buffer size
   function renderAudio(a) {
     state.audio = a;
-    const sel = $('#quantum');
-    if (!editing($('#quantum'))) {
-      sel.innerHTML = (a.choices || []).map(c =>
-        `<option value="${c.frames}" ${c.frames === (a.forced ? a.quantum : 0) ? 'selected' : ''}>${c.frames ? c.frames + ' frames (' + c.ms + ' ms)' : 'Automatic (recommended)'}</option>`).join('');
-    }
+    const items = (a.choices || []).map(c => ({ value: String(c.frames), label: c.frames ? `${c.frames} Werte (${c.ms} ms)` : 'Automatisch (empfohlen)' }));
+    mountCsel('quantum-mount', items, String(a.forced ? a.quantum : 0));
     $('#quantum-persist').checked = !!a.saved;
-    const bits = [`now running at ${a.quantum} frames (${a.ms} ms) at ${a.rate} Hz`];
-    bits.push(a.forced ? 'set by hand' : 'chosen by the system');
-    if (a.saved) bits.push(`${a.saved} frames saved for the next start`);
-    if (a.router_request && a.router_request !== 'auto') bits.push(`this router additionally asks for ${a.router_request}`);
+    const bits = [`läuft mit ${a.quantum} Werten (${a.ms} ms) bei ${a.rate} Hz`, a.forced ? 'von Hand gesetzt' : 'vom System gewählt'];
+    if (a.saved) bits.push(`${a.saved} für den nächsten Start gespeichert`);
+    if (a.router_request && a.router_request !== 'auto') bits.push(`dieser Router verlangt zusätzlich ${a.router_request}`);
     $('#quantum-state').textContent = bits.join(' · ');
   }
   $('#quantum-apply').addEventListener('click', () => {
-    const frames = parseInt($('#quantum').value, 10);
+    const frames = parseInt($('#quantum-mount')._csel.value, 10);
     api('PUT', '/audio', { quantum: frames, persist: $('#quantum-persist').checked })
-      .then(a => { renderAudio(a); toast(frames ? `buffer set to ${frames} frames` : 'buffer back to automatic'); }, fail);
+      .then(a => { renderAudio(a); toast(frames ? `Puffer auf ${frames} Werte gesetzt` : 'Puffer wieder automatisch'); }, fail);
   });
   $('#dropout-check').addEventListener('click', () => {
     const box = $('#dropout-result');
-    box.innerHTML = '<p class="hint">measuring…</p>';
+    box.innerHTML = '<p class="hint"><span class="spin"></span> wird gemessen …</p>';
     api('POST', '/audio/dropouts', { seconds: 3 }).then(r => {
       if (!r.available) {
-        box.innerHTML = `<div class="problem info"><div class="t">Cannot measure</div><dl><dd>${esc(r.error || 'pw-top is not available (part of pipewire-bin).')}</dd></dl></div>`;
+        box.innerHTML = `<div class="problem info"><div class="t">${svg('i-info')}<span class="grow">Messung nicht möglich</span></div><dl><dd>${esc(r.error || 'pw-top ist nicht verfügbar (Teil von pipewire-bin).')}</dd></dl></div>`;
         return;
       }
       if (!r.errors) {
-        box.innerHTML = '<div class="problem info"><div class="t">✓ No dropouts</div><dl><dd>Nothing was lost while measuring. If the sound is still bad, the buffer size is not the cause.</dd></dl></div>';
+        box.innerHTML = `<div class="problem info"><div class="t">${svg('i-check')}<span class="grow">Keine Aussetzer</span></div><dl><dd>Während der Messung ging nichts verloren. Klingt der Ton trotzdem schlecht, liegt es nicht an der Puffergrösse.</dd></dl></div>`;
         return;
       }
       const worst = (r.nodes || []).slice(0, 5).map(n => `${esc(n.name)} (${n.errors})`).join(', ');
-      box.innerHTML = `<div class="problem warning"><div class="t">! ${r.errors} dropout(s) while measuring</div><dl>` +
-        `<dt>Where</dt><dd>${worst}</dd>` +
-        '<dt>What to do</dt><dd>Pick a bigger buffer above and measure again. If dropouts persist at the biggest setting, the computer is not keeping up (check realtime priority with <code>tfcz-audio doctor</code>).</dd></dl></div>';
+      box.innerHTML = `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">${r.errors} Aussetzer während der Messung</span></div><dl>
+        <dt>Wo</dt><dd>${worst}</dd>
+        <dt>Was tun</dt><dd>Oben eine grössere Puffergrösse wählen und nochmals messen. Bleiben die Aussetzer beim grössten Wert, kommt der Computer nicht nach (Echtzeit-Priorität mit <code>tfcz-audio doctor</code> prüfen).</dd></dl></div>`;
     }, fail);
   });
 
-  $('#save-defaults').addEventListener('click', () => api('POST', '/config/save-defaults').then(() => { toast('saved as defaults'); refresh(true); }, fail));
-  $('#reset').addEventListener('click', () => api('POST', '/reset').then(() => { toast('back to defaults'); refresh(false); }, fail));
-
-  // -------------------------------------------------------------- wizard
-  const STEPS = ['Person A', 'Person B', 'Game sound', 'Check & connect'];
+  const STEPS = ['1. Person A', '2. Person B', '3. Spielton', '4. Prüfen & verbinden'];
   function openWizard() {
     const labels = (state.config && state.config.labels) || {};
     state.wiz = { step: 0, a: null, b: null, game: null, noGame: false,
@@ -791,65 +1100,76 @@
       const nodes = [];
       for (const g of state.hardware) { for (const n of g.inputs) nodes.push({ name: n.name, kind: 'input' }); }
       if (nodes.length) api('POST', '/meters/watch', { nodes }).catch(() => {});
-      const key = JSON.stringify(state.hardware.map(g => [g.id, g.name, g.port, g.inputs.map(n => n.name), g.outputs.map(n => n.name), g.identity && g.identity.strategy]));
-      state.hardwareKey = key;
-      return key !== lastHardwareKey;  // committed by renderWizard once it actually draws
+      state.hardwareKey = JSON.stringify(state.hardware.map(g => [g.id, g.name, g.port, g.inputs.map(n => n.name), g.outputs.map(n => n.name), g.identity && g.identity.strategy]));
+      return state.hardwareKey !== lastHardwareKey;
     } catch (e) { fail(e); return false; }
   }
   const hwById = id => state.hardware.find(g => g.id === id);
   function headsetChoice(g, selected, taken, showMeter) {
     const lvl = g.inputs.length ? state.levels[g.inputs[0].name] : null;
     const assigned = [...g.inputs, ...g.outputs].map(n => n.assigned_label).find(Boolean);
-    const idText = g.identity && g.identity.strategy === 'port' ? `Recognised by ${g.port}. Identical headsets can only be told apart by the port, so keep it there.` :
-                   g.identity && g.identity.strategy === 'serial' ? 'Has its own serial number: any USB port works.' : '';
+    const idText = g.identity && g.identity.strategy === 'port'
+      ? `Wird an ${g.port} erkannt. Zwei gleiche Headsets lassen sich nur am Anschluss unterscheiden, lass es also dort stecken.`
+      : g.identity && g.identity.strategy === 'serial' ? 'Hat eine eigene Seriennummer: jeder USB-Anschluss funktioniert.' : '';
+    const kind = g.hdmi_capture ? ICON.game : g.headset ? ICON.out : g.inputs.length ? ICON.mic : ICON.speaker;
+    const what = g.inputs.length && g.outputs.length ? (g.speakers ? 'Mikrofon + Lautsprecher' : 'Mikrofon + Kopfhörer')
+      : g.inputs.length ? 'nur Mikrofon' : (g.speakers ? 'Lautsprecher' : 'nur Kopfhörer');
     return `<div class="choice ${selected ? 'sel' : ''} ${taken ? 'taken' : ''}" data-id="${esc(g.id)}">
-      <span class="ic">${g.hdmi_capture ? '🎮' : g.headset ? '🎧' : g.inputs.length ? '🎤' : '🔈'}</span>
+      ${svg(kind, 'i-lg')}
       <div class="body">
-        <div class="nm">${esc(g.name)} ${assigned ? `<span class="hint" style="display:inline;margin:0">(currently: ${esc(assigned)})</span>` : ''}</div>
-        <div class="sub">${esc([g.bus, g.port, g.inputs.length && g.outputs.length ? (g.speakers ? 'microphone + speakers' : 'microphone + headphones') : g.inputs.length ? 'microphone only' : (g.speakers ? 'speakers' : 'headphones only')].filter(Boolean).join(' · '))}</div>
+        <div class="nm">${esc(g.name)} ${assigned ? `<span class="hint" style="margin:0">(aktuell: ${esc(assigned)})</span>` : ''}</div>
+        <div class="sub">${esc([g.bus, g.port, what].filter(Boolean).join(' · '))}</div>
         ${idText ? `<div class="sub">${esc(idText)}</div>` : ''}
-        ${taken ? '<div class="sub">already chosen for the other person</div>' : ''}
+        ${taken ? '<div class="sub">bereits für die andere Person gewählt</div>' : ''}
       </div>
-      ${showMeter && g.inputs.length ? `<div class="meter"><i style="width:${levelWidth(lvl)}%"></i></div>` : ''}
+      ${showMeter && g.inputs.length ? `<div class="meter" style="max-width:190px"><i style="width:${levelWidth(lvl)}%"></i></div>` : ''}
     </div>`;
   }
-  document.addEventListener('focusout', () => { if (state.wiz && state.hardwareKey !== lastHardwareKey) setTimeout(() => renderWizard(), 50); });
   function renderWizard() {
     const w = state.wiz; if (!w) return;
-    if (editing($('#wiz-body'))) return;  // do not yank the name field away while typing; redrawn on focusout
+    if (editing($('#wiz-body'))) return;
     lastHardwareKey = state.hardwareKey || lastHardwareKey;
-    const metersOff = state.levelsAvailable === false;  // undefined = not polled yet, do not claim they are off
+    const metersOff = state.levelsAvailable === false;
     const speakHint = metersOff
-      ? `<span style="color:var(--warn)">Level bars are off on this system${state.levelsReason ? ' (' + esc(state.levelsReason) + ')' : ''}; pick the headset by its name and USB port.</span>`
-      : '<b>Speak into it</b>: the bar of the right headset moves.';
-    $('#wiz-steps').innerHTML = STEPS.map((s, i) => `<span class="${i === w.step ? 'cur' : i < w.step ? 'done' : ''}">${i + 1}. ${s}</span>`).join('');
+      ? `<span style="color:var(--gold-light)">Die Pegelbalken sind auf diesem System aus${state.levelsReason ? ' (' + esc(state.levelsReason) + ')' : ''}; wähle das Headset über Name und USB-Anschluss.</span>`
+      : '<b>Sprich hinein</b>: der Balken des richtigen Headsets bewegt sich.';
+    $('#wiz-steps').innerHTML = STEPS.map((s, i) => `<span class="${i === w.step ? 'cur' : i < w.step ? 'done' : ''}">${esc(s)}</span>`).join('');
     const body = $('#wiz-body');
     const headsets = state.hardware.filter(g => g.headset || (g.inputs.length && g.outputs.length && !g.hdmi_capture));
+
     if (w.step === 0 || w.step === 1) {
       const who = w.step === 0 ? 'A' : 'B';
       const other = w.step === 0 ? w.b : w.a;
       const cur = w.step === 0 ? w.a : w.b;
       body.innerHTML = `
-        <p class="hint">Which headset does person ${who} wear? ${speakHint} Give the person a name so the page can talk about "${who === 'A' ? 'Anna' : 'Ben'}" instead of "headset ${who}".</p>
-        ${headsets.length === 1 ? '<div class="problem warning"><div class="t">! Only one headset found</div><dl><dd>Plug in the second headset too; this list updates by itself.</dd></dl></div>' : ''}
-        <div class="row" style="margin-bottom:10px"><label>Name:</label><input type="text" id="wiz-name" value="${esc(who === 'A' ? w.nameA : w.nameB)}" placeholder="e.g. ${who === 'A' ? 'Anna' : 'Ben'}" style="width:200px"></div>
-        ${headsets.length ? headsets.map(g => headsetChoice(g, cur === g.id, other === g.id, !metersOff)).join('') :
-          '<div class="problem warning"><div class="t">No headset found</div><dl><dt>Why</dt><dd>No plugged-in device has both a microphone and headphones.</dd><dt>What to do</dt><dd>Plug the USB headset in and wait a few seconds; this list updates by itself.</dd></dl></div>'}`;
+        <p class="hint">Welches Headset trägt Person ${who}? ${speakHint} Gib der Person einen Namen, damit die Seite von
+          «${who === 'A' ? 'Anna' : 'Ben'}» spricht statt von «Headset ${who}».</p>
+        ${headsets.length === 1 ? `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Nur ein Headset gefunden</span></div><dl><dd>Steck auch das zweite Headset ein; diese Liste aktualisiert sich von selbst.</dd></dl></div>` : ''}
+        <div class="row" style="margin-bottom:12px"><label for="wiz-name">Name:</label>
+          <input type="text" id="wiz-name" value="${esc(who === 'A' ? w.nameA : w.nameB)}" placeholder="z.B. ${who === 'A' ? 'Anna' : 'Ben'}" style="width:220px"></div>
+        ${headsets.length ? headsets.map(g => headsetChoice(g, cur === g.id, other === g.id, !metersOff)).join('')
+          : `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Kein Headset gefunden</span></div><dl>
+             <dt>Warum</dt><dd>Kein angeschlossenes Gerät hat sowohl Mikrofon als auch Kopfhörer.</dd>
+             <dt>Was tun</dt><dd>Steck das USB-Headset ein und warte kurz; diese Liste aktualisiert sich von selbst.</dd></dl></div>`}`;
       body.querySelectorAll('.choice:not(.taken)').forEach(el => el.addEventListener('click', () => {
         if (w.step === 0) w.a = el.dataset.id; else w.b = el.dataset.id;
-        if (w.game && (w.game === w.a || w.game === w.b)) w.game = null;  // a headset cannot also be the game input
+        if (w.game && (w.game === w.a || w.game === w.b)) w.game = null;
         renderWizard();
       }));
       $('#wiz-name').addEventListener('input', e => { if (who === 'A') w.nameA = e.target.value; else w.nameB = e.target.value; });
       $('#wiz-next').disabled = !cur;
-      $('#wiz-next').textContent = 'Next';
+      $('#wiz-next').textContent = 'Weiter';
     } else if (w.step === 2) {
       const used = new Set([w.a, w.b]);
       const inputs = state.hardware.filter(g => g.inputs.length && !used.has(g.id));
       body.innerHTML = `
-        <p class="hint">Where does the game sound come from? Usually one of the HDMI capture inputs. ${metersOff ? speakHint : '<b>Start the game</b>: the bar of the right input moves.'} Both persons will hear it in their headphones.</p>
-        <div class="row" style="margin-bottom:10px"><label>Name:</label><input type="text" id="wiz-game-name" value="${esc(w.nameGame)}" placeholder="e.g. PlayStation" style="width:200px"></div>
-        <div class="choice ${w.noGame ? 'sel' : ''}" data-id="__none__"><span class="ic">🚫</span><div class="body"><div class="nm">No game sound</div><div class="sub">Only the two headsets talk to each other and go to OBS.</div></div></div>
+        <p class="hint">Woher kommt der Spielton? Meist einer der HDMI-Eingänge.
+          ${metersOff ? speakHint : '<b>Starte das Spiel</b>: der Balken des richtigen Eingangs bewegt sich.'}
+          Beide Personen hören ihn dann im Kopfhörer.</p>
+        <div class="row" style="margin-bottom:12px"><label for="wiz-game-name">Name:</label>
+          <input type="text" id="wiz-game-name" value="${esc(w.nameGame)}" placeholder="z.B. PlayStation" style="width:220px"></div>
+        <div class="choice ${w.noGame ? 'sel' : ''}" data-id="__none__">${svg('i-ban', 'i-lg')}
+          <div class="body"><div class="nm">Kein Spielton</div><div class="sub">Nur die zwei Headsets reden miteinander und gehen zu OBS.</div></div></div>
         ${inputs.map(g => headsetChoice(g, w.game === g.id && !w.noGame, false, !metersOff)).join('')}`;
       body.querySelectorAll('.choice').forEach(el => el.addEventListener('click', () => {
         if (el.dataset.id === '__none__') { w.noGame = true; w.game = null; } else { w.noGame = false; w.game = el.dataset.id; }
@@ -857,38 +1177,39 @@
       }));
       $('#wiz-game-name').addEventListener('input', e => w.nameGame = e.target.value);
       $('#wiz-next').disabled = !(w.noGame || w.game);
-      $('#wiz-next').textContent = 'Next';
+      $('#wiz-next').textContent = 'Weiter';
     } else {
       const A = hwById(w.a), B = hwById(w.b), G = w.game ? hwById(w.game) : null;
       if (!A || !B || (w.game && !G)) {
-        toast('A chosen device was unplugged. Please pick again.', true);
+        toast('Ein gewähltes Gerät wurde ausgesteckt. Bitte nochmals wählen.', true);
         w.step = !A ? 0 : !B ? 1 : 2; renderWizard(); return;
       }
-      const nA = w.nameA.trim() || 'Person A', nB = w.nameB.trim() || 'Person B', nG = w.nameGame.trim() || 'Game sound';
-      const ident = g => !g ? '' : g.identity.strategy === 'port' ? `recognised by ${esc(g.port)} (identical headsets have no serial number). <b>Keep it in ${esc(g.port)}</b>; put a sticker on the plug and the port.` :
-                          g.identity.strategy === 'serial' ? 'recognised by its serial number, any USB port works.' : 'recognised by its fixed name.';
+      const nA = w.nameA.trim() || 'Person A', nB = w.nameB.trim() || 'Person B', nG = w.nameGame.trim() || 'Spielton';
+      const ident = g => !g ? '' : g.identity.strategy === 'port'
+        ? `wird an ${esc(g.port)} erkannt (gleiche Headsets haben keine Seriennummer). <b>Lass es in ${esc(g.port)}</b>; kleb einen Punkt auf Stecker und Anschluss.`
+        : g.identity.strategy === 'serial' ? 'wird an der Seriennummer erkannt, jeder USB-Anschluss geht.' : 'wird am festen Namen erkannt.';
       const warnings = [];
-      if (A && B && A.identity.strategy === 'port' && B.identity.strategy === 'port') warnings.push(`${esc(nA)}'s and ${esc(nB)}'s headsets are the same model without serial numbers. If you ever swap their USB ports, the names swap too. Label the ports now.`);
-      if (A && A.speakers || B && B.speakers) warnings.push('One of the chosen outputs looks like loudspeakers, not headphones. A microphone routed to loudspeakers causes echo.');
-      if (G && !G.hdmi_capture) warnings.push(`${esc(nG)} is not an HDMI capture input. If it is a microphone, it will be heard in both headsets.`);
+      if (A.identity.strategy === 'port' && B.identity.strategy === 'port') warnings.push(`Die Headsets von ${esc(nA)} und ${esc(nB)} sind das gleiche Modell ohne Seriennummer. Wenn du die USB-Anschlüsse tauschst, tauschen auch die Namen. Beschrifte die Anschlüsse jetzt.`);
+      if (A.speakers || B.speakers) warnings.push('Einer der gewählten Ausgänge sieht nach Lautsprechern aus, nicht nach Kopfhörern. Ein Mikrofon auf Lautsprecher gibt Echo.');
+      if (G && !G.hdmi_capture) warnings.push(`${esc(nG)} ist kein HDMI-Eingang. Wenn es ein Mikrofon ist, hören es beide Headsets.`);
       body.innerHTML = `
-        <p class="hint">This is what will be set up. Check the names, then press Connect.</p>
+        <p class="hint">Das wird eingerichtet. Prüf die Namen und drück dann auf Verbinden.</p>
         <div class="summary">
-          <b>${esc(nA)}</b><span>${esc(A ? A.name : '?')} — ${ident(A)}</span>
-          <b>${esc(nB)}</b><span>${esc(B ? B.name : '?')} — ${ident(B)}</span>
-          <b>${esc(nG)}</b><span>${G ? esc(G.name) + ' — ' + ident(G) : 'none'}</span>
+          <b>${esc(nA)}</b><span>${esc(A.name)} — ${ident(A)}</span>
+          <b>${esc(nB)}</b><span>${esc(B.name)} — ${ident(B)}</span>
+          <b>${esc(nG)}</b><span>${G ? esc(G.name) + ' — ' + ident(G) : 'keiner'}</span>
         </div>
-        <h3>Sound will flow like this</h3>
-        <ul style="margin:0 0 8px;padding-left:20px">
-          <li>${esc(nA)} hears ${esc(nB)}${G ? ' and the ' + esc(nG) : ''}.</li>
-          <li>${esc(nB)} hears ${esc(nA)}${G ? ' and the ' + esc(nG) : ''}.</li>
-          <li>OBS (your viewers) hears ${esc(nA)} and ${esc(nB)}.${G ? ' The ' + esc(nG) + ' is not sent to OBS by this tool; OBS captures it from the video source.' : ''}</li>
-          <li>Nobody hears their own voice (you can add that later under Advanced).</li>
+        <h3 style="margin-top:8px">So fliesst der Ton danach</h3>
+        <ul style="margin:0 0 10px;padding-left:20px">
+          <li>${esc(nA)} hört ${esc(nB)}${G ? ' und den ' + esc(nG) : ''}.</li>
+          <li>${esc(nB)} hört ${esc(nA)}${G ? ' und den ' + esc(nG) : ''}.</li>
+          <li>OBS (deine Zuschauer) hört ${esc(nA)} und ${esc(nB)}.${G ? ' Der ' + esc(nG) + ' geht nicht über dieses Werkzeug zu OBS; OBS holt ihn von der Videoquelle.' : ''}</li>
+          <li>Niemand hört sich selbst (das kannst du später unter «Erweitert» ergänzen).</li>
         </ul>
-        ${warnings.map(t => `<div class="problem warning"><div class="t">! Good to know</div><dl><dd>${t}</dd></dl></div>`).join('')}
-        <p class="hint">Existing connections are replaced by this standard layout. Volumes of connections that keep their name are kept.</p>`;
-      $('#wiz-next').disabled = !(A && B);
-      $('#wiz-next').textContent = 'Connect everything';
+        ${warnings.map(t => `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Gut zu wissen</span></div><dl><dd>${t}</dd></dl></div>`).join('')}
+        <p class="hint">Bestehende Verbindungen werden durch dieses Standard-Muster ersetzt. Lautstärken von Verbindungen, die ihren Namen behalten, bleiben erhalten.</p>`;
+      $('#wiz-next').disabled = false;
+      $('#wiz-next').textContent = 'Alles verbinden';
     }
     $('#wiz-back').disabled = w.step === 0;
   }
@@ -900,25 +1221,22 @@
     if (w.step < 3) { w.step++; renderWizard(); return; }
     const A = hwById(w.a), B = hwById(w.b), G = w.game ? hwById(w.game) : null;
     if (!A || !B || !A.inputs.length || !A.outputs.length || !B.inputs.length || !B.outputs.length || (w.game && (!G || !G.inputs.length))) {
-      toast('A chosen device is no longer available. Please pick again.', true); w.step = 0; renderWizard(); return;
+      toast('Ein gewähltes Gerät ist nicht mehr da. Bitte nochmals wählen.', true); w.step = 0; renderWizard(); return;
     }
     const body = {
       headset_a: { mic: A.inputs[0].name, out: A.outputs[0].name, label: w.nameA.trim() || 'Person A' },
       headset_b: { mic: B.inputs[0].name, out: B.outputs[0].name, label: w.nameB.trim() || 'Person B' },
-      game: G ? G.inputs[0].name : null, game_label: w.nameGame.trim() || 'Game sound', game_volume: 0.6,
+      game: G ? G.inputs[0].name : null, game_label: w.nameGame.trim() || 'Spielton', game_volume: 0.6,
     };
     $('#wiz-next').disabled = true;
-    try { await api('POST', '/setup', body); toast('connected!'); closeWizard(); refresh(true); }
+    try { await api('POST', '/setup', body); toast('verbunden'); closeWizard(); refresh(true); }
     catch (e) { fail(e); $('#wiz-next').disabled = false; }
   });
 
-  // ---------------------------------------------------------------- loop
   let lastConfig = '';
-  let refreshing = false;
-  let wantConfig = false;
-  let renderErrors = 0;
+  let refreshing = false, wantConfig = false, renderErrors = 0;
   async function refresh(withConfig) {
-    if (refreshing) { wantConfig = wantConfig || !!withConfig; return; }  // never pile up requests; remember a requested config reload
+    if (refreshing) { wantConfig = wantConfig || !!withConfig; return; }
     refreshing = true;
     withConfig = withConfig || wantConfig; wantConfig = false;
     let data;
@@ -929,8 +1247,8 @@
     } catch (e) {
       refreshing = false;
       if (/token/i.test(e.message)) {
-        $('#overall').className = 'pill warn'; $('#overall').textContent = '! API token required';
-        if (!state.tokenPrompted) { state.tokenPrompted = true; $('#advanced').open = true; toast('This router needs an API token: enter it under Advanced → Access', true); }
+        $('#overall').className = 'pill warn'; $('#overall').innerHTML = svg('i-alert') + 'Token nötig';
+        if (!state.tokenPrompted) { state.tokenPrompted = true; $('#advanced').open = true; toast('Dieser Router braucht ein API-Token: unter Erweitert bei «Zugang» eintragen', true); }
         return;
       }
       state.failures++;
@@ -941,20 +1259,22 @@
       state.status = data.status; state.devices = data.devices; state.failures = 0;
       if (data.cfg) {
         const serialized = JSON.stringify(data.cfg);
-        if (serialized !== lastConfig) { lastConfig = serialized; state.config = data.cfg; renderPresets(); renderLabels(); renderRouteForm(); $('#cfgpath').textContent = data.cfg.path || '(none)'; }
-        api('GET', '/audio').then(renderAudio).catch(() => {});
-        api('GET', '/diagnostics').then(d => { if (d.kind) showDiag(d); }).catch(() => {});
+        if (serialized !== lastConfig) {
+          lastConfig = serialized; state.config = data.cfg;
+          renderPresets(); renderLabels(); renderRouteForm();
+          $('#cfgpath').textContent = data.cfg.path || '(keine)';
+          api('GET', '/audio').then(renderAudio).catch(() => {});
+          api('GET', '/diagnostics').then(d => { if (d.kind) showDiag(d); }).catch(() => {});
+        }
       }
-      // a route known to /status but not to our cached /config means the config is stale: reload it next time
       if (state.config && Object.keys(state.status.routes).some(n => !state.config.routes[n])) wantConfig = true;
       renderOverall(); renderDiagram(); renderCards(); renderObs(); renderDevices();
       renderErrors = 0;
       if (state.wiz) loadHardware().then(changed => { if (changed) renderWizard(); });
       if (!state.wiz && !state.autoOpened && (!Object.keys(state.status.routes).length || location.hash === '#setup')) { state.autoOpened = true; openWizard(); }
     } catch (e) {
-      // a rendering bug must never masquerade as a connection problem
-      console.error('render failed', e);
-      if (++renderErrors === 3) toast('Display error: ' + (e.message || e), true);
+      console.error('Darstellung fehlgeschlagen', e);
+      if (++renderErrors === 3) toast('Anzeigefehler: ' + (e.message || e), true);
       wantConfig = true;
     } finally { refreshing = false; }
   }
@@ -963,15 +1283,19 @@
     if (!state.status || !state.config || polling) return;
     polling = true;
     try {
-      const data = await api('GET', '/levels');
-      state.levels = data.levels || {}; state.levelsAvailable = data.available; state.levelsReason = data.reason || '';
+      const d = await api('GET', '/levels');
+      state.levels = d.levels || {}; state.levelsAvailable = d.available; state.levelsReason = d.reason || '';
       renderObs(); updateMeters();
       if (state.wiz) document.querySelectorAll('#wiz-body .choice').forEach(el => {
-        const g = hwById(el.dataset.id); const bar = el.querySelector('.meter > i');
+        const g = hwById(el.dataset.id), bar = el.querySelector('.meter > i');
         if (g && bar && g.inputs.length) bar.style.width = levelWidth(state.levels[g.inputs[0].name]) + '%';
       });
     } catch (e) { state.levels = {}; try { updateMeters(); renderObs(); } catch (_) {} } finally { polling = false; }
   }
+
+  mountCsel('log-level-mount', [{ value: 'INFO', label: 'alles' }, { value: 'WARNING', label: 'Warnungen und Fehler' }, { value: 'ERROR', label: 'nur Fehler' }], 'INFO', loadLog);
+  mountCsel('log-source-mount', [{ value: 'memory', label: 'seit dem letzten Start' }, { value: 'journal', label: 'ganze Geschichte' }], 'memory', loadLog);
+
   refresh(true);
   setInterval(() => refresh(false), 2000);
   setInterval(() => refresh(true), 15000);
