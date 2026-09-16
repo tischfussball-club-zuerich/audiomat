@@ -244,11 +244,16 @@ class SelftestTests(unittest.TestCase):
             args = argparse.Namespace(config=str(path), seconds=0.1, fake=True, verbose=False)
             probes = []
 
-            def fake_probe(cmd, seconds=2.0):
+            def fake_probe(cmd, seconds=2.0, skip_wav=False):
                 probes.append(cmd)
-                # first device delivers audio, the rest fail like a broken pw-record
+                # first device delivers audio; the next refuses --raw once and then
+                # works, the rest fail with something that cannot be dropped
                 if len(probes) == 1:
                     return 9600, 0.5, "", 0
+                if "--raw" in cmd and len(probes) == 2:
+                    return 0, 0.0, "pw-record: unrecognized option '--raw'\nusage...", 1
+                if len(probes) == 3:
+                    return 4800, 0.2, "", 0
                 return 0, 0.0, "pw-record: unrecognized option '--nope'", 1
 
             cli._probe = fake_probe
@@ -260,6 +265,8 @@ class SelftestTests(unittest.TestCase):
         self.assertIn("=== devices ===", text)
         self.assertIn("NO DATA", text)
         self.assertIn("unrecognized option", text, "shows the real error from the helper")
+        self.assertIn("retrying without it", text, "drops a refused option instead of giving up")
+        self.assertTrue(any("--raw" not in c for c in probes), "retried in a reduced shape")
         self.assertIn("command:", text, "shows the exact command so it can be run by hand")
         self.assertIn("=== router streams ===", text)
         self.assertTrue(probes and probes[0][0] == "pw-record")

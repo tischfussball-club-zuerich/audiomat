@@ -272,11 +272,11 @@ def _shutdown_http(server_box: dict[str, Any]) -> None:
 # ----------------------------------------------------------------- selftest
 
 
-def _probe(cmd: list[str], seconds: float = 2.0) -> tuple[int, float, str, int | None]:
+def _probe(cmd: list[str], seconds: float = 2.0, skip_wav: bool = False) -> tuple[int, float, str, int | None]:
     """Run a capture command for a while; return (bytes, peak 0..1, stderr, rc)."""
     import select
 
-    from .meters import peak_of
+    from .meters import peak_of, wav_data_offset
 
     try:
         proc = subprocess.Popen(  # noqa: S603 - fixed argv
@@ -285,6 +285,7 @@ def _probe(cmd: list[str], seconds: float = 2.0) -> tuple[int, float, str, int |
     except OSError as exc:
         return 0, 0.0, str(exc), 127
     total, peak = 0, 0.0
+    header = bytearray()
     deadline = time.monotonic() + seconds
     try:
         while time.monotonic() < deadline:
@@ -293,6 +294,15 @@ def _probe(cmd: list[str], seconds: float = 2.0) -> tuple[int, float, str, int |
                 chunk = proc.stdout.read(8192)
                 if not chunk:
                     break
+                if skip_wav:
+                    header += chunk
+                    at = wav_data_offset(bytes(header))
+                    if at is None:
+                        continue
+                    chunk = bytes(header[at:])
+                    skip_wav = False
+                    if not chunk:
+                        continue
                 total += len(chunk)
                 peak = max(peak, peak_of(chunk))
             elif proc.poll() is not None:
@@ -319,7 +329,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     terrible': it shows whether each device delivers audio at all, what the
     graph looks like, and whether anything is dropping samples.
     """
-    from .meters import MeterSpec, to_db
+    from .meters import UNSUPPORTED_MARKERS, MeterSpec, to_db
     from .router import resolve_devices
 
     cfg = getattr(args, "cfg", None)
@@ -369,16 +379,27 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         node = graph.by_name(res.node)
         is_sink = node is not None and node.media_class.startswith("Audio/Sink")
         spec = MeterSpec(alias, res.node, capture_sink=is_sink)
-        total, peak, err_text, rc = _probe(spec.command(), args.seconds)
         kind = "output (monitored)" if is_sink else "input"
+        # try the full command first, then drop whatever pw-record refuses, the
+        # same way the daemon's meters do
+        total = peak = 0
+        err_text, rc, used = "", None, None
+        for raw, props in ((True, True), (False, True), (False, False)):
+            cmd = spec.command(raw=raw, props=props)
+            total, peak, err_text, rc = _probe(cmd, args.seconds, skip_wav=not raw)
+            used = cmd
+            if total or not any(m in err_text.lower() for m in UNSUPPORTED_MARKERS):
+                break
+            print(f"  [note] {label}: pw-record refused an option, retrying without it ({err_text.splitlines()[0][:90]})")
         if total == 0:
             problems += 1
             print(f"  [NO DATA] {label} ({kind}) -> {res.node}")
-            print(f"            command: {shlex.join(spec.command())}")
-            print(f"            exit {rc}: {err_text[:300] or 'no output, no error message'}")
+            print(f"            command: {shlex.join(used)}")
+            print(f"            exit {rc}: {(err_text.splitlines() or ['no output, no error message'])[0][:200]}")
         else:
             state = "silent" if peak < 0.001 else f"peak {to_db(peak):.1f} dB"
-            print(f"  [ok] {label} ({kind}): {total} bytes in {args.seconds:.0f}s, {state}")
+            shape = "" if used == spec.command() else "  (reduced command shape)"
+            print(f"  [ok] {label} ({kind}): {total} bytes in {args.seconds:.0f}s, {state}{shape}")
             if peak < 0.001:
                 print("       nothing audible happened during the test; talk into the microphone or start the game and run this again")
 
