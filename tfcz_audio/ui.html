@@ -546,8 +546,9 @@
   }
   const isGame = alias => /hdmi|game|tv|pc|konsole|spiel|play/i.test(alias) || ((state.status && state.status.devices[alias] || {}).friendly || '').includes('HDMI');
   const iconFor = (alias, kind) => alias === 'obs_mic' ? ICON.obs : isGame(alias) ? ICON.game : kind === 'in' ? ICON.mic : ICON.out;
+  const ellipsis = (text, max) => text.length <= max ? text : text.slice(0, text.lastIndexOf(' ', max - 1) > max / 2 ? text.lastIndexOf(' ', max - 1) : max - 1).trimEnd() + '…';
   const levelWidth = lvl => (!lvl || !lvl.active) ? 0 : Math.max(0, Math.min(1, (lvl.db + 60) / 60)) * 100;
-  const identityShort = dev => !dev || !dev.identity ? '' : dev.identity.strategy === 'port' ? 'muss in ' + (dev.identity.port || 'seinem USB-Anschluss') + ' bleiben' : dev.identity.strategy === 'serial' ? 'jeder USB-Anschluss' : '';
+  const identityShort = dev => !dev || !dev.identity ? '' : dev.identity.strategy === 'port' ? 'nur ' + (dev.identity.port || 'ein fester USB-Anschluss') : dev.identity.strategy === 'serial' ? 'jeder USB-Anschluss' : '';
 
   // Brandguide: jede Auswahl-Liste nutzt das eigene Dropdown, nie ein natives select.
   let openCsel = null;
@@ -736,7 +737,7 @@
         <use href="#${iconFor(alias, kind)}" x="${p.x + 15}" y="${p.y + 16}" width="20" height="20" style="color:${accent}"/>
         <text x="${p.x + 48}" y="${p.y + 25}" class="dev-name" fill="${bad ? COLOUR.red : '#fff'}">${esc(human(alias))}</text>
         <text x="${p.x + 48}" y="${p.y + 43}" class="dev-sub" data-status="${esc(alias)}" data-kind="${kind}" data-broken="${bad ? 1 : 0}" fill="${bad ? COLOUR.red : 'rgba(230,227,218,.62)'}">${esc(status)}</text>
-        <text x="${p.x + 48}" y="${p.y + 58}" class="dev-sub2">${esc(sub2.slice(0, 42))}</text>
+        <text x="${p.x + 48}" y="${p.y + 58}" class="dev-sub2">${esc(ellipsis(sub2, 44))}</text>
         ${ok ? `<rect x="${p.x + 48}" y="${p.y + p.h - 14}" width="${p.w - 64}" height="6" rx="3" fill="rgba(230,227,218,.14)"/>
         <rect x="${p.x + 48}" y="${p.y + p.h - 14}" width="0" height="6" rx="3" fill="${isObs ? COLOUR.gold : COLOUR.blue}" data-meter="${esc(alias)}" data-full="${p.w - 64}"/>` : ''}
       </g>`;
@@ -767,7 +768,7 @@
     else if (lvl && lvl.signal) { msg = 'Ton erreicht OBS gerade'; colour = '#9bd8b4'; }
     else if (lvl && lvl.active) { msg = 'Bereit. Gerade ruhig: niemand spricht.'; }
     else if (state.levelsAvailable && lvl && lvl.running) { msg = 'OBS-Mikrofon ist da, aber es kommen keine Tondaten an. Prüf die Mikrofone links.'; colour = 'var(--gold-light)'; }
-    else { msg = 'Das OBS-Mikrofon ist verfügbar, die Mikrofone sind damit verbunden.' + (state.levelsAvailable === false ? ' Die Pegelbalken sind auf diesem System aus' + (state.levelsReason ? ': ' + state.levelsReason : '.') : ''); colour = '#9bd8b4'; }
+    else { msg = 'Das OBS-Mikrofon ist verfügbar, die Mikrofone sind damit verbunden. Der Ton läuft; nur die Pegelanzeige fehlt.'; colour = '#9bd8b4'; }
     text.textContent = msg; text.style.color = colour;
     $('#obs-meter').style.width = levelWidth(lvl) + '%';
   }

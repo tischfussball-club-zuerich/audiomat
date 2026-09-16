@@ -107,17 +107,60 @@ class GraphCacheTests(unittest.TestCase):
 
 
 class MeterFallbackTests(unittest.TestCase):
-    def test_disabled_without_raw_support(self):
-        old = meters._RAW_SUPPORT
-        meters._RAW_SUPPORT = False
-        try:
-            mm = meters.MeterManager(lambda: minimal_config())
-            self.assertFalse(mm.enabled)
-            self.assertIn("--raw", mm.disabled_reason)
-            mm.reconcile()  # no-op, must not spawn anything
-            self.assertEqual(mm.meters, {})
-        finally:
-            meters._RAW_SUPPORT = old
+    def test_falls_back_when_pw_record_refuses_raw(self):
+        """The command shape is found out by trying: an option pw-record does
+        not know must not leave the user with empty bars and no explanation."""
+        from tfcz_audio.pw import FakeProcess
+
+        spawned = []
+
+        class Refusing(FakeProcess):
+            def __init__(self, cmd):
+                super().__init__()
+                self.stdout = None
+                self.stderr_tail = "pw-record: unrecognized option '--raw'" if "--raw" in cmd else ""
+                self.returncode = 1 if "--raw" in cmd else None
+
+        def spawn(cmd):
+            spawned.append(cmd)
+            return Refusing(cmd)
+
+        mm = meters.MeterManager(lambda: minimal_config(), spawn=spawn, resolved_getter=lambda: {"a_mic": "alsa_input.a"})
+        mm.reconcile()   # starts with --raw
+        mm.reconcile()   # notices the refusal and drops the option
+        mm.reconcile()   # starts again in the reduced shape
+        self.assertTrue(mm.enabled, "meters stay on")
+        self.assertFalse(mm.use_raw)
+        self.assertTrue(any("--raw" in c for c in spawned))
+        self.assertTrue(any("--raw" not in c for c in spawned), "retried without the refused option")
+
+    def test_gives_up_with_the_real_error(self):
+        from tfcz_audio.pw import FakeProcess
+
+        class Broken(FakeProcess):
+            def __init__(self, cmd):
+                super().__init__()
+                self.stdout = None
+                self.stderr_tail = "pw-record: unknown option '--nonsense'"
+                self.returncode = 1
+
+        mm = meters.MeterManager(lambda: minimal_config(), spawn=Broken, resolved_getter=lambda: {"a_mic": "alsa_input.a"})
+        for _ in range(4):
+            mm.reconcile()
+        self.assertFalse(mm.enabled)
+        self.assertIn("--nonsense", mm.disabled_reason)
+        entry = mm.problem()
+        self.assertEqual(entry["code"], "meters_off")
+
+    def test_wav_header_is_skipped(self):
+        import struct
+
+        fmt = b"\x01\x00\x02\x00" + b"\x00" * 12  # 16 bytes, as the chunk size says
+        header = b"RIFF" + struct.pack("<I", 36) + b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", 8)
+        self.assertEqual(len(header), 44)
+        self.assertEqual(meters.wav_data_offset(header), 44)
+        self.assertIsNone(meters.wav_data_offset(b"RIFF" + struct.pack("<I", 36) + b"WAVEfmt "))
+        self.assertEqual(meters.wav_data_offset(b"\x01\x02\x03\x04"), 0, "raw stream starts at once")
 
     def test_meter_spec_has_no_passive_links(self):
         cmd = meters.MeterSpec("x", "node").command()

@@ -60,9 +60,9 @@ class MeterSpec:
     node: str
     capture_sink: bool = False
 
-    def command(self) -> list[str]:
+    def command(self, raw: bool = True, props: bool = True) -> list[str]:
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", self.key)
-        props = {
+        stream_props = {
             "node.name": f"tfcz.meter.{safe}",
             "node.description": f"TFCZ meter {safe}",
             "node.dont-fallback": "true",
@@ -73,23 +73,23 @@ class MeterSpec:
             "application.name": f"tfcz.meter.{safe}",
         }
         if self.capture_sink:
-            props["stream.capture.sink"] = "true"
+            stream_props["stream.capture.sink"] = "true"
         # target both ways: the command line flag and the stream property. Which
         # of the two a given pw-record honours has changed between versions.
-        props["target.object"] = self.node
-        spa = "{ " + " ".join(f'{k} = "{_spa_escape(v)}"' for k, v in props.items()) + " }"
-        return [
-            "pw-record",
-            "--raw",
-            "--format", "s16",
-            "--rate", str(RATE),
-            "--channels", str(CHANNELS),
-            # no --latency: the default (100 ms) matches the window we read, and
-            # the flag's accepted syntax differs between versions
-            "--target", self.node,
-            "-P", spa,
-            "-",
-        ]
+        stream_props["target.object"] = self.node
+        spa = "{ " + " ".join(f'{k} = "{_spa_escape(v)}"' for k, v in stream_props.items()) + " }"
+        cmd = ["pw-record"]
+        if raw:
+            # without --raw the stream carries a WAV header, which the reader strips
+            cmd.append("--raw")
+        cmd += ["--format", "s16", "--rate", str(RATE), "--channels", str(CHANNELS)]
+        # no --latency: the default (100 ms) matches the window we read, and the
+        # flag's accepted syntax differs between versions
+        cmd += ["--target", self.node]
+        if props:
+            cmd += ["-P", spa]
+        cmd.append("-")
+        return cmd
 
 
 def _spa_escape(value: str) -> str:
@@ -114,9 +114,32 @@ def to_db(peak: float) -> float:
     return max(SILENCE_DB, 20.0 * math.log10(peak))
 
 
+UNSUPPORTED_MARKERS = ("unrecognized option", "unrecognised option", "unknown option", "invalid option", "unknown or invalid")
+
+
+def wav_data_offset(buf: bytes) -> int | None:
+    """Offset of the sample data in a WAV stream, or None if not seen yet."""
+    if len(buf) < 12 or buf[:4] != b"RIFF":
+        return 0 if len(buf) >= 4 else None  # not a WAV: samples start immediately
+    at = 12
+    while at + 8 <= len(buf):
+        chunk = buf[at : at + 4]
+        try:
+            size = int.from_bytes(buf[at + 4 : at + 8], "little")
+        except ValueError:
+            return None
+        if chunk == b"data":
+            return at + 8
+        at += 8 + size + (size & 1)
+    return None
+
+
 class Meter:
-    def __init__(self, spec: MeterSpec, spawn: Callable[[list[str]], Any]):
+    def __init__(self, spec: MeterSpec, spawn: Callable[[list[str]], Any], raw: bool = True, props: bool = True):
         self.spec = spec
+        self.raw = raw
+        self.props = props
+        self.unsupported = ""
         self._spawn = spawn
         self.level = Level()
         self.proc: Any = None
@@ -126,7 +149,7 @@ class Meter:
         self.started_at = 0.0
 
     def start(self) -> bool:
-        cmd = self.spec.command()
+        cmd = self.spec.command(raw=self.raw, props=self.props)
         try:
             self.proc = self._spawn(cmd)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -150,13 +173,23 @@ class Meter:
             return
         try:
             buf = bytearray()
+            header = bytearray()
+            skipping = not self.raw  # a WAV header precedes the samples
             while True:
                 # one pipe read returns a single quantum (~5 ms); collect a whole
                 # window so the level is a real peak and not a random slice
                 chunk = proc.stdout.read(CHUNK_BYTES - len(buf))
                 if not chunk:
                     break
-                buf += chunk
+                if skipping:
+                    header += chunk
+                    at = wav_data_offset(bytes(header))
+                    if at is None:
+                        continue
+                    buf += header[at:]
+                    skipping = False
+                else:
+                    buf += chunk
                 if len(buf) < CHUNK_BYTES:
                     continue
                 peak = peak_of(bytes(buf))
@@ -196,6 +229,8 @@ class Meter:
         if self.proc is not None:
             err = getattr(self.proc, "stderr_tail", "")[-200:]
             log.warning("meter %s exited (%s) %s", self.spec.key, self.proc.poll(), err)
+            if any(marker in err.lower() for marker in UNSUPPORTED_MARKERS):
+                self.unsupported = err.strip()[:200]
             self.proc = None
             self.level.running = False
             self.level.error = err or "exited"
@@ -251,20 +286,6 @@ def _default_spawn(cmd: list[str]) -> Any:
     return _MeterProcess(proc)
 
 
-_RAW_SUPPORT: bool | None = None
-
-
-def pw_record_supports_raw() -> bool:
-    """pw-record --raw exists since PipeWire 0.3.6x; older versions would
-    write a WAV header into our sample stream. Probe once."""
-    global _RAW_SUPPORT  # noqa: PLW0603
-    if _RAW_SUPPORT is None:
-        try:
-            out = subprocess.run(["pw-record", "--help"], capture_output=True, encoding="utf-8", errors="replace", timeout=5, check=False)
-            _RAW_SUPPORT = "--raw" in (out.stdout + out.stderr)
-        except (OSError, subprocess.SubprocessError):
-            _RAW_SUPPORT = False
-    return _RAW_SUPPORT
 
 
 def meter_specs(cfg: Config, resolved: dict[str, str | None] | None = None) -> list[MeterSpec]:
@@ -311,10 +332,10 @@ class MeterManager:
         self._watch: dict[str, tuple[float, bool]] = {}  # node -> (expires, capture_sink)
         self.enabled = True
         self.disabled_reason = ""
-        if spawn is _default_spawn and not pw_record_supports_raw():
-            self.enabled = False
-            self.disabled_reason = "pw-record kennt --raw nicht (PipeWire zu alt); die Pegelbalken sind aus, das Leiten des Tons bleibt unberührt"
-            log.warning(self.disabled_reason)
+        # Which command shape this pw-record accepts is found out by trying,
+        # not by parsing --help: the help text differs between versions.
+        self.use_raw = True
+        self.use_props = True
 
     def watch(self, nodes: list[dict[str, Any]], seconds: float | None = None) -> list[str]:
         """Temporarily meter arbitrary nodes (used by the setup wizard so the
@@ -368,9 +389,36 @@ class MeterManager:
                     self.meters.pop(key).stop()
             for key, spec in wanted.items():
                 if key not in self.meters:
-                    self.meters[key] = Meter(spec, self._spawn)
+                    self.meters[key] = Meter(spec, self._spawn, raw=self.use_raw, props=self.use_props)
             for meter in self.meters.values():
                 meter.reconcile(now)
+            self._degrade_if_needed()
+
+    def _degrade_if_needed(self) -> None:
+        """pw-record refused an option: drop that option and start over, rather
+        than leaving the user with empty bars and a guess about the cause."""
+        complaint = next((m.unsupported for m in self.meters.values() if m.unsupported), "")
+        if not complaint:
+            return
+        low = complaint.lower()
+        if self.use_raw and "raw" in low:
+            self.use_raw = False
+            reason = "die Option --raw"
+        elif self.use_props and ("-p" in low or "propert" in low):
+            self.use_props = False
+            reason = "die Option -P"
+        else:
+            self.enabled = False
+            self.disabled_reason = f"pw-record lässt sich nicht starten: {complaint}"
+            log.error("level meters off: %s", complaint)
+            for meter in self.meters.values():
+                meter.stop()
+            self.meters.clear()
+            return
+        log.warning("pw-record versteht %s nicht; Pegelmessung wird ohne sie neu gestartet (%s)", reason, complaint)
+        for meter in self.meters.values():
+            meter.stop()
+        self.meters.clear()
 
     def levels(self) -> dict[str, Any]:
         now = time.monotonic()
