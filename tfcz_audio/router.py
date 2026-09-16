@@ -1253,6 +1253,111 @@ class Router:
         except PwError as exc:
             return {"available": False, "errors": 0, "nodes": [], "drivers": [], "error": str(exc)}
 
+    def analyse(self, seconds: float = 3.0) -> dict[str, Any]:
+        """A full picture of the audio system: who drives it, at what buffer
+        size, who drops samples, and which nodes belong to this router, to real
+        hardware, to a filter chain someone set up, or to an application."""
+        from .pw import classify_node, describe_node, quantum_state
+
+        graph = self._graph_or_empty()
+        try:
+            top = self.backend.dropouts(seconds)
+        except PwError as exc:
+            top = {"available": False, "rows": [], "errors": 0, "drivers": [], "error": str(exc)}
+
+        by_name = {n.name: n for n in graph.nodes.values()}
+        rows = []
+        for row in top.get("rows", []):
+            node = by_name.get(row["name"])
+            info = describe_node(node, graph) if node else None
+            rows.append({
+                **row,
+                "category": classify_node(row["name"], node, graph),
+                "friendly": (info or {}).get("friendly") or row["name"],
+                "media_class": node.media_class if node else "",
+            })
+        rows.sort(key=lambda r: (-r["errors"], r["name"]))
+
+        totals: dict[str, int] = {}
+        for r in rows:
+            totals[r["category"]] = totals.get(r["category"], 0) + r["errors"]
+        drivers = [r for r in rows if r["driver"] and r["active"]]
+        quanta = sorted({r["quantum"] for r in rows if r["quantum"]})
+
+        findings: list[dict[str, str]] = []
+
+        def add(level: str, title: str, why: str = "", effect: str = "", fix: str = "") -> None:
+            findings.append({"level": level, "title": title, "why": why, "effect": effect, "fix": fix})
+
+        if not top.get("available"):
+            add("warning", "Keine Messung möglich",
+                top.get("error") or "pw-top hat keine Tabelle geliefert (Teil von pipewire-bin).",
+                "Ohne Messung lässt sich nicht sagen, ob Ton verloren geht.",
+                "sudo apt install pipewire-bin")
+            return {"available": False, "rows": rows, "findings": findings, "totals": totals,
+                    "drivers": [], "quanta": quanta, "buffer": quantum_state(graph)}
+
+        total = top.get("errors", 0)
+        if not total:
+            add("info", "Keine Aussetzer", "Während der Messung ging nichts verloren.",
+                "Klingt der Ton trotzdem schlecht, liegt es nicht am Timing.", "")
+        else:
+            worst = rows[0]
+            foreign = [r for r in rows if r["category"] in ("filter", "device", "app") and r["errors"]]
+            add("error" if total > 1000 else "warning",
+                f"{total} verlorene Tonpakete seit dem Start",
+                "Am meisten bei: " + ", ".join(f"{r['name']} ({r['errors']})" for r in rows[:3]),
+                "Verlorene Pakete sind Löcher im Ton. Viele davon klingen wie Knacken oder machen Sprache unverständlich.",
+                "Puffergrösse oben erhöhen und nochmals messen. Bleibt es, liegt es an dem Knoten, der oben in der Liste steht.")
+            if worst["category"] == "filter":
+                add("warning", "Die meisten Aussetzer kommen von einer Filterkette",
+                    f"«{worst['name']}» gehört nicht zu diesem Router. Solche Knoten entstehen durch eine eigene "
+                    "Filterkette in der PipeWire-Konfiguration, zum Beispiel Rauschunterdrückung oder Mithören.",
+                    "Der Ton wird schon kaputt, bevor dieser Router ihn überhaupt anfasst.",
+                    "Filterkette vorübergehend deaktivieren und nochmals hören. Klingt es dann sauber, braucht die "
+                    "Kette eine grössere Puffergrösse oder zu viel Rechenzeit.")
+            elif foreign and totals.get("router", 0) < total / 2:
+                add("info", "Die Aussetzer entstehen nicht in diesem Router",
+                    f"Von {total} verlorenen Paketen entfallen {totals.get('router', 0)} auf Knoten dieses Routers.",
+                    "", "Schau zuerst auf die Knoten oben in der Liste.")
+
+        for d in drivers:
+            node = by_name.get(d["name"])
+            info = describe_node(node, graph) if node else None
+            if info and info.get("hdmi_capture"):
+                add("warning", f"Die Aufnahmekarte gibt den Takt vor ({d['name']})",
+                    f"Dieser Knoten ist Taktgeber der Gruppe und läuft mit {d['quantum']} Werten.",
+                    "Liefert die Karte keinen Ton mehr, etwa weil die Quelle aus ist, kann die ganze Gruppe stehen bleiben.",
+                    "Siehe docs/hdmi-capture.md: der Karte eine tiefere Taktpriorität geben.")
+            elif d["quantum"] and d["quantum"] < 256:
+                add("warning", f"Sehr kleine Puffergrösse bei {d['name']}",
+                    f"Diese Taktgruppe läuft mit {d['quantum']} Werten ({round(d['quantum'] * 1000 / (d['rate'] or 48000), 1)} ms).",
+                    "Je kleiner der Puffer, desto eher geht etwas verloren.",
+                    "Puffergrösse oben erhöhen.")
+
+        filters = sorted({r["name"] for r in rows if r["category"] == "filter"})
+        if filters:
+            add("info", f"{len(filters)} Knoten einer fremden Filterkette",
+                ", ".join(filters[:6]) + (" …" if len(filters) > 6 else ""),
+                "Diese Knoten liegen im Tonweg, gehören aber nicht zu diesem Router.",
+                "Prüfe, ob die Mikrofone über die gereinigte Variante laufen sollen: unter «Geräte» das "
+                "passende Gerät auswählen.")
+
+        if len(quanta) > 2:
+            add("info", "Mehrere Taktgruppen mit verschiedenen Puffergrössen",
+                "Gefunden: " + ", ".join(str(q) for q in quanta),
+                "Das ist normal, wenn Geräte auf eigenen Uhren laufen; PipeWire rechnet dazwischen um.", "")
+
+        return {
+            "available": True,
+            "rows": rows,
+            "findings": findings,
+            "totals": totals,
+            "drivers": [{"name": d["name"], "quantum": d["quantum"], "rate": d["rate"], "errors": d["errors"]} for d in drivers],
+            "quanta": quanta,
+            "buffer": quantum_state(graph),
+        }
+
     def hardware(self) -> list[dict[str, Any]]:
         graph = self._graph_or_empty()
         groups = physical_devices(graph)

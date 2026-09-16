@@ -225,6 +225,13 @@
   details.adv > summary .i { color: var(--blue); transition: transform var(--t-fast) var(--ease); }
   details.adv[open] > summary .i.chev { transform: rotate(180deg); }
   details.adv .inner { margin-top: 12px; }
+  table.an { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+  table.an th { text-align: left; color: var(--ink-muted); font-weight: 700; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--card-brd); }
+  table.an td { padding: 7px 10px; border-bottom: 1px solid rgba(92,167,220,.10); vertical-align: top; }
+  table.an td:last-child, table.an th:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  table.an .sub { color: var(--ink-muted); font-size: 11px; }
+  table.an .bad { color: #f0a6a2; font-weight: 700; }
+  table.an tr.has-err td { background: rgba(194,69,63,.06); }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-muted); flex: none; }
   .dot.ok { background: #6fbf8e; }
   .dot.bad { background: var(--red); }
@@ -457,6 +464,15 @@
         </div>
         <p class="hint" id="quantum-state" style="margin-top:8px"></p>
         <div id="dropout-result"></div>
+
+        <h3>Was läuft im Tonsystem</h3>
+        <p class="hint">Misst kurz mit und zeigt, wer den Takt vorgibt, mit welcher Puffergrösse gearbeitet wird und wo
+          Ton verloren geht. Auch Knoten, die nicht zu diesem Router gehören, etwa eine eigene Filterkette.</p>
+        <div class="row">
+          <button class="btn" id="run-analysis"><svg class="i"><use href="#i-activity"/></svg>Tonsystem analysieren</button>
+          <span class="hint" style="margin:0" id="analysis-state"></span>
+        </div>
+        <div id="analysis"></div>
 
         <h3>Namen</h3>
         <p class="hint">Wie die Personen und Quellen auf dieser Seite heissen.</p>
@@ -1047,6 +1063,50 @@
   $('#log-follow').addEventListener('change', e => {
     if (logTimer) { clearInterval(logTimer); logTimer = null; }
     if (e.target.checked) { loadLog(); logTimer = setInterval(loadLog, 3000); }
+  });
+
+  // ------------------------------------------------- Analyse des Tonsystems
+  const CATEGORY = {
+    router: ['dieser Router', 'var(--blue)'],
+    device: ['Gerät', 'var(--gold-light)'],
+    filter: ['fremde Filterkette', '#f0a6a2'],
+    app: ['Programm', 'var(--ink-muted)'],
+    system: ['System', 'var(--ink-muted)'],
+    other: ['sonstiges', 'var(--ink-muted)'],
+  };
+  function renderAnalysis(a) {
+    const box = $('#analysis');
+    if (!a.available && !(a.rows || []).length) {
+      box.innerHTML = (a.findings || []).map(problemHtml).join('') || '<p class="hint">Keine Daten.</p>';
+      return;
+    }
+    const buf = a.buffer || {};
+    const head = `<p class="hint" style="margin:10px 0 6px">Puffer: ${buf.quantum} Werte (${buf.ms} ms) ·
+      Taktgeber: ${(a.drivers || []).map(d => esc(d.name) + ' (' + d.quantum + ')').join(', ') || 'keiner gemeldet'} ·
+      Gruppen: ${(a.quanta || []).join(', ') || '–'}</p>`;
+    const rows = (a.rows || []).filter(r => r.errors || r.category === 'router' || r.category === 'filter').slice(0, 24);
+    const table = `<div style="overflow-x:auto"><table class="an">
+      <thead><tr><th>Knoten</th><th>gehört zu</th><th>Puffer</th><th>verloren</th></tr></thead>
+      <tbody>${rows.map(r => `<tr class="${r.errors ? 'has-err' : ''}">
+        <td>${esc(r.name)}<div class="sub">${esc(r.format || '')}${r.driver ? ' · Taktgeber' : ''}</div></td>
+        <td style="color:${CATEGORY[r.category] ? CATEGORY[r.category][1] : 'inherit'}">${esc((CATEGORY[r.category] || ['?'])[0])}</td>
+        <td>${r.quantum || '–'}</td>
+        <td class="${r.errors ? 'bad' : ''}">${r.errors.toLocaleString('de-CH')}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+    box.innerHTML = (a.findings || []).map(problemHtml).join('') + head + table;
+  }
+  function problemHtml(p) {
+    return `<div class="problem ${esc(p.level)}"><div class="t">${svg(LEVEL_ICON[p.level] || 'i-info')}<span class="grow">${esc(p.title)}</span></div>
+      <dl>${p.why ? `<dt>Warum</dt><dd>${esc(p.why)}</dd>` : ''}${p.effect ? `<dt>Folge</dt><dd>${esc(p.effect)}</dd>` : ''}${p.fix ? `<dt>Was tun</dt><dd>${esc(p.fix)}</dd>` : ''}</dl></div>`;
+  }
+  $('#run-analysis').addEventListener('click', () => {
+    const btn = $('#run-analysis');
+    btn.disabled = true;
+    $('#analysis-state').innerHTML = '<span class="spin"></span> misst …';
+    api('POST', '/analysis', { seconds: 3 }).then(a => {
+      renderAnalysis(a);
+      $('#analysis-state').textContent = a.available ? 'fertig' : '';
+    }, fail).finally(() => { btn.disabled = false; });
   });
 
   function renderAudio(a) {

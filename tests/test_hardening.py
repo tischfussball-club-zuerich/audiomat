@@ -1,11 +1,13 @@
 """Stability: pipes never block children, config recovery, CSRF guard, single instance, meter fallback."""
 
+import http.client
 import subprocess
 import sys
 import tempfile
 import time
 import tomllib
 import unittest
+import urllib.error
 from pathlib import Path
 
 from tfcz_audio import meters
@@ -190,8 +192,8 @@ class CsrfTests(ApiTestCase):
         # client sees the 400 or a reset while still sending -- both are rejections
         try:
             code, body = self.call("PUT", "/routes/a_to_b", raw=b"x" * 1_000_001, headers={"Content-Type": "application/json"})
-        except (urllib.error.URLError, ConnectionError):
-            return
+        except (urllib.error.URLError, ConnectionError, OSError, http.client.HTTPException):
+            return  # the server closed the connection before we finished sending: also a rejection
         self.assertEqual(code, 400)
 
     def test_levels_reports_unavailable_meters(self):

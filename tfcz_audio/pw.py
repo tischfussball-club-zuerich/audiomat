@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -1023,49 +1024,91 @@ def alsa_usage(node: Node, proc_root: str = "/proc") -> dict[str, Any]:
 QUANTUM_CHOICES = (0, 128, 256, 512, 1024, 2048)
 
 
-def _looks_like_float(token: str) -> bool:
-    if "." not in token:
-        return False
-    try:
-        float(token)
-    except ValueError:
-        return False
-    return True
+PW_TOP_ROW = re.compile(
+    r"^(?P<lead>\s*)(?P<state>[SRIEsrie*!]+)\s+(?P<id>\d+)\s+(?P<quantum>\d+)\s+(?P<rate>\d+)"
+    r"\s+(?P<wait>\S+)\s+(?P<busy>\S+)\s+(?P<wq>\S+)\s+(?P<bq>\S+)\s+(?P<err>\d+)\s*(?P<rest>.*)$"
+)
 
 
 def parse_pw_top(text: str) -> dict[str, Any]:
-    """Read the last table pw-top printed: dropout counts and who drives the graph.
+    """Read the last table pw-top printed.
 
-    Columns cannot be located by header position, because the WAIT and BUSY
-    values carry their unit as a separate token. The ERR count is instead found
-    by its shape: an integer preceded by the two fractional W/Q and B/Q values.
+    The columns have fixed positions but variable content: WAIT and BUSY are
+    "46.6us", "---" or "+++" depending on the node's state, so the row is
+    matched as a whole rather than by counting tokens.
     """
     lines = [l.rstrip() for l in text.splitlines() if l.strip()]
     headers = [i for i, l in enumerate(lines) if "ERR" in l.split() and "ID" in l.split()]
-    if not headers:
-        return {"available": False, "errors": 0, "nodes": [], "drivers": []}
-    nodes: list[dict[str, Any]] = []
-    drivers: list[str] = []
-    total = 0
-    for line in lines[headers[-1] + 1 :]:
-        parts = line.split()
-        if len(parts) < 5:
+    rows: list[dict[str, Any]] = []
+    for line in lines[(headers[-1] + 1) if headers else 0 :]:
+        m = PW_TOP_ROW.match(line)
+        if not m:
             continue
-        errors = None
-        for i in range(len(parts) - 1, 1, -1):
-            if parts[i].isdigit() and _looks_like_float(parts[i - 1]) and _looks_like_float(parts[i - 2]):
-                errors = int(parts[i])
-                break
-        if errors is None:
+        rest = m.group("rest").split()
+        if not rest:
             continue
-        name = parts[-1]
-        is_driver = not line[:1].isspace()
-        if is_driver:
-            drivers.append(name)
-        total += errors
-        if errors:
-            nodes.append({"name": name, "errors": errors, "driver": is_driver})
-    return {"available": True, "errors": total, "nodes": nodes, "drivers": drivers}
+        rows.append({
+            "id": int(m.group("id")),
+            "quantum": int(m.group("quantum")),
+            "rate": int(m.group("rate")),
+            "errors": int(m.group("err")),
+            "name": rest[-1],
+            "format": " ".join(t for t in rest[:-1] if t != "+"),
+            "driver": "+" not in rest,
+            "active": m.group("state").upper().startswith("R"),
+        })
+    if not rows and not headers:
+        return {"available": False, "errors": 0, "nodes": [], "drivers": [], "rows": []}
+    return {
+        "available": True,
+        "errors": sum(r["errors"] for r in rows),
+        "rows": rows,
+        "nodes": sorted((r for r in rows if r["errors"]), key=lambda r: -r["errors"]),
+        "drivers": [r["name"] for r in rows if r["driver"]],
+    }
+
+
+ROUTER_PREFIX = "tfcz."
+
+
+def classify_node(name: str, node: Node | None, graph: Graph) -> str:
+    """Who owns this node: this router, real hardware, a filter chain someone
+    configured, or an ordinary application."""
+    if name.startswith(ROUTER_PREFIX):
+        return "router"
+    if name in ("Dummy-Driver", "Freewheel-Driver", "Midi-Bridge"):
+        return "system"
+    if node is None:
+        return _classify_by_name(name)
+    props = node.props
+    if props.get("device.id") is not None or str(props.get("device.api", "")) in ("alsa", "bluez5", "v4l2"):
+        return "device"
+    media = node.media_class
+    if media.startswith("Stream/"):
+        return "app"
+    if media in ("Audio/Sink", "Audio/Source", "Audio/Source/Virtual", "Audio/Duplex"):
+        # a virtual sink/source with no hardware behind it: filter-chain, loopback,
+        # echo-cancel and similar, set up outside this router
+        return "filter"
+    if "filter" in str(props.get("node.name", "")) or str(props.get("media.name", "")).startswith("filter"):
+        return "filter"
+    return _classify_by_name(name)
+
+
+FILTER_HINTS = ("filter-chain", "-clean", "-sidetone", "echo-cancel", "noise", "rnnoise")
+
+
+def _classify_by_name(name: str) -> str:
+    """Fallback when the node is not in the graph dump, which happens when it
+    appeared or vanished between the two measurements."""
+    low = name.lower()
+    if low.startswith(("alsa_input.", "alsa_output.", "bluez_input.", "bluez_output.", "v4l2_")):
+        return "device"
+    if low.startswith(("capture.", "playback.", "input.", "output.", "effect_")) or any(h in low for h in FILTER_HINTS):
+        return "filter"
+    if name and name[0].isupper():
+        return "app"  # applications register under their own name: OBS, Firefox, TeamViewer
+    return "other"
 
 
 def quantum_state(graph: Graph) -> dict[str, Any]:

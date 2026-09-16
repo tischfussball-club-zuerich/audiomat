@@ -293,3 +293,63 @@ class DiagnosticsAndLogTests(ApiTestCase):
         self.assertIn("an info line", [e["message"] for e in body["entries"]])
         for entry in body["entries"]:
             self.assertIn(entry["level"], logbuf.LEVELS)
+
+
+class AnalysisTests(ApiTestCase):
+    def test_analysis_reads_the_whole_graph(self):
+        sample = """S   ID  QUANT   RATE    WAIT    BUSY   W/Q   B/Q  ERR FORMAT           NAME
+R  114    128  48000    +++    1.0us  +++   0.00  570    S16LE 2 48000 alsa_input.hdmi
+R   42      0      0  46.6us  23.0us  0.02  0.01  232363         F32P 1 0  + capture.headset-clean
+R  221    256  48000  10.1us   0.5us  0.00  0.00  30         F32P 2 0  + tfcz.obsmix
+"""
+        self.backend.dropouts = lambda seconds=2.0: __import__("tfcz_audio.pw", fromlist=["x"]).parse_pw_top(sample)
+        # a filter-chain node that belongs to nobody, plus a capture card
+        self.backend.add_device("capture.headset-clean", "Audio/Source/Virtual")
+        self.backend.add_physical("HWS", "pci", "alsa_input.hdmi", None, extra={"alsa.card_name": "HWS", "api.alsa.card": "1"})
+        code, body = self.call("POST", "/analysis", {"seconds": 1})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["available"])
+        by_name = {r["name"]: r for r in body["rows"]}
+        self.assertEqual(by_name["capture.headset-clean"]["category"], "filter")
+        self.assertEqual(by_name["tfcz.obsmix"]["category"], "router")
+        self.assertEqual(by_name["alsa_input.hdmi"]["category"], "device")
+        self.assertEqual(body["rows"][0]["name"], "capture.headset-clean", "worst offender first")
+        titles = " | ".join(f["title"] for f in body["findings"])
+        self.assertIn("verlorene Tonpakete", titles)
+        self.assertIn("Filterkette", titles, "names the foreign filter chain as the main source")
+        self.assertIn("Aufnahmekarte gibt den Takt vor", titles)
+        self.assertEqual(body["totals"]["filter"], 232363)
+        self.assertLess(body["totals"]["router"], 100)
+
+    def test_analysis_without_pw_top(self):
+        from tfcz_audio.pw import PwError
+
+        def boom(seconds=2.0):
+            raise PwError("pw-top not found")
+
+        self.backend.dropouts = boom
+        code, body = self.call("POST", "/analysis", {"seconds": 1})
+        self.assertEqual(code, 200)
+        self.assertFalse(body["available"])
+        self.assertIn("pw-top", body["findings"][0]["why"])
+
+
+class ClassificationTests(unittest.TestCase):
+    def test_nodes_missing_from_the_dump_are_still_classified(self):
+        """pw-top and pw-dump are two separate measurements; a node can appear in
+        one and not the other, and the table must still say who owns it."""
+        from tfcz_audio.pw import Graph, classify_node
+
+        g = Graph()
+        cases = {
+            "capture.headset-left-clean": "filter",
+            "playback.headset-right-sidetone": "filter",
+            "effect_input.rnnoise": "filter",
+            "alsa_output.headset-right": "device",
+            "v4l2_input.pci-0000_02_00.0": "device",
+            "tfcz.a_to_b.out": "router",
+            "OBS": "app",
+            "Dummy-Driver": "system",
+        }
+        for name, want in cases.items():
+            self.assertEqual(classify_node(name, None, g), want, name)
