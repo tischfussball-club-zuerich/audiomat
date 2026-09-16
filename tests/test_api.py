@@ -370,3 +370,16 @@ class BuildIdentityTests(ApiTestCase):
             page = resp.read().decode()
         self.assertIn('id="build"', page)
         self.assertIn("Was läuft im Tonsystem", page, "the analysis section ships with the page")
+
+
+class ModulePathTests(ApiTestCase):
+    def test_health_names_the_loaded_copy(self):
+        """A restart re-runs the installed copy; the daemon must say which one
+        it loaded so a stale install is obvious."""
+        from pathlib import Path
+
+        import tfcz_audio
+
+        code, body = self.call("GET", "/health")
+        self.assertEqual(code, 200)
+        self.assertEqual(Path(body["module"]), Path(tfcz_audio.__file__).resolve().parent)

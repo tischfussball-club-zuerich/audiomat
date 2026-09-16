@@ -141,6 +141,20 @@ if (( ENABLE_BOOT )); then
 fi
 
 PORT=$(grep -E '^port *= *[0-9]+' "$CONFIG" | head -1 | grep -oE '[0-9]+' || echo 8787)
+
+# Prove that the running service serves the files just installed. A plain
+# `systemctl restart` re-runs the installed copy and cannot pick up a git pull.
+installed_build=$(sha256sum "$LIB/tfcz_audio/ui.html" 2>/dev/null | cut -c1-8 || echo "?")
+serving_build=$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null | grep -o '"build": *"[^"]*"' | cut -d'"' -f4 || true)
+echo
+if [[ -z $serving_build ]]; then
+  echo "==> could not ask the running service for its version (is it up?)"
+elif [[ $serving_build == "$installed_build" ]]; then
+  echo "==> the service serves the files just installed (build $serving_build)"
+else
+  echo "==> WARNING: the service serves build ${serving_build:-unknown}, but ${installed_build} was installed" >&2
+  echo "    something else is running: systemctl --user cat tfcz-audio | grep ExecStart" >&2
+fi
 echo
 echo "==> checking the installation"
 "$BIN" doctor || true

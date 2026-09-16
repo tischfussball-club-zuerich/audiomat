@@ -1326,7 +1326,7 @@
           lastConfig = serialized; state.config = data.cfg;
           renderPresets(); renderLabels(); renderRouteForm();
           $('#cfgpath').textContent = data.cfg.path || '(keine)';
-          api('GET', '/health').then(h => { $('#build').textContent = `${h.version} · ${h.build}`; }).catch(() => {});
+          api('GET', '/health').then(h => { $('#build').textContent = `${h.version} · ${h.build} · ${h.module || ''}`; }).catch(() => {});
           api('GET', '/audio').then(renderAudio).catch(() => {});
           api('GET', '/diagnostics').then(d => { if (d.kind) showDiag(d); }).catch(() => {});
         }

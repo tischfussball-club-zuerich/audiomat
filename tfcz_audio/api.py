@@ -17,6 +17,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from importlib import resources
+from pathlib import Path
 
 from . import __version__, edit
 from .config import ConfigError
@@ -361,8 +362,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if not seg or seg == ["health"]:
             # cheap liveness probe: no pw-dump, no /proc reads
-            return ok, {"ok": not router.last_error, "version": __version__, "build": ui_build(),
-                        "routes": len(router.cfg.routes), "error": router.last_error}
+            return ok, {
+                "ok": not router.last_error,
+                "version": __version__,
+                "build": ui_build(),
+                # which copy of the package this process actually loaded: a restart
+                # re-runs the installed copy, it does not pick up a git checkout
+                "module": str(Path(__file__).resolve().parent),
+                "routes": len(router.cfg.routes),
+                "error": router.last_error,
+            }
         if seg == ["status"] and read:
             payload = router.status()
             meters = self.server.meters
