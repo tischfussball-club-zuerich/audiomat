@@ -60,7 +60,16 @@ class MeterSpec:
     node: str
     capture_sink: bool = False
 
-    def command(self, raw: bool = True, props: bool = True) -> list[str]:
+    def command(self, raw: bool = True, props: bool = True, tool: str = "pw-record") -> list[str]:
+        if tool == "parec":
+            # PulseAudio client shipped with pipewire-pulse; writes raw PCM to
+            # stdout with no options that differ between versions
+            device = f"{self.node}.monitor" if self.capture_sink else self.node
+            return [
+                "parec", "--format=s16le", f"--rate={RATE}", f"--channels={CHANNELS}",
+                f"--device={device}", "--latency-msec=100",
+                f"--client-name=tfcz.meter.{re.sub(r'[^A-Za-z0-9_.-]', '_', self.key)}",
+            ]
         safe = re.sub(r"[^A-Za-z0-9_.-]", "_", self.key)
         stream_props = {
             "node.name": f"tfcz.meter.{safe}",
@@ -134,11 +143,25 @@ def wav_data_offset(buf: bytes) -> int | None:
     return None
 
 
+SHAPES: tuple[dict[str, Any], ...] = (
+    {"tool": "pw-record", "raw": True, "props": True},
+    {"tool": "pw-record", "raw": False, "props": True},
+    {"tool": "parec", "raw": True, "props": False},
+)
+
+
+def _shape_label(shape: dict[str, Any]) -> str:
+    if shape["tool"] != "pw-record":
+        return shape["tool"]
+    return "pw-record ohne --raw" if not shape["raw"] else "pw-record"
+
+
 class Meter:
-    def __init__(self, spec: MeterSpec, spawn: Callable[[list[str]], Any], raw: bool = True, props: bool = True):
+    def __init__(self, spec: MeterSpec, spawn: Callable[[list[str]], Any], raw: bool = True, props: bool = True, tool: str = "pw-record"):
         self.spec = spec
         self.raw = raw
         self.props = props
+        self.tool = tool
         self.unsupported = ""
         self._spawn = spawn
         self.level = Level()
@@ -149,7 +172,7 @@ class Meter:
         self.started_at = 0.0
 
     def start(self) -> bool:
-        cmd = self.spec.command(raw=self.raw, props=self.props)
+        cmd = self.spec.command(raw=self.raw, props=self.props, tool=self.tool)
         try:
             self.proc = self._spawn(cmd)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -174,7 +197,7 @@ class Meter:
         try:
             buf = bytearray()
             header = bytearray()
-            skipping = not self.raw  # a WAV header precedes the samples
+            skipping = not self.raw and self.tool == "pw-record"  # a WAV header precedes the samples
             while True:
                 # one pipe read returns a single quantum (~5 ms); collect a whole
                 # window so the level is a real peak and not a random slice
@@ -334,8 +357,7 @@ class MeterManager:
         self.disabled_reason = ""
         # Which command shape this pw-record accepts is found out by trying,
         # not by parsing --help: the help text differs between versions.
-        self.use_raw = True
-        self.use_props = True
+        self.shape = 0
 
     def watch(self, nodes: list[dict[str, Any]], seconds: float | None = None) -> list[str]:
         """Temporarily meter arbitrary nodes (used by the setup wizard so the
@@ -389,33 +411,36 @@ class MeterManager:
                     self.meters.pop(key).stop()
             for key, spec in wanted.items():
                 if key not in self.meters:
-                    self.meters[key] = Meter(spec, self._spawn, raw=self.use_raw, props=self.use_props)
+                    shape = SHAPES[self.shape]
+                    self.meters[key] = Meter(spec, self._spawn, **shape)
             for meter in self.meters.values():
                 meter.reconcile(now)
             self._degrade_if_needed()
 
     def _degrade_if_needed(self) -> None:
-        """pw-record refused an option: drop that option and start over, rather
-        than leaving the user with empty bars and a guess about the cause."""
-        complaint = next((m.unsupported for m in self.meters.values() if m.unsupported), "")
-        if not complaint:
+        """The recorder refused to run: try the next command shape rather than
+        leaving the user with empty bars and a guess about the cause."""
+        import shutil
+
+        broken = [m for m in self.meters.values() if m.unsupported or m.failures >= 3]
+        if not broken or not self.meters:
             return
-        low = complaint.lower()
-        if self.use_raw and "raw" in low:
-            self.use_raw = False
-            reason = "die Option --raw"
-        elif self.use_props and ("-p" in low or "propert" in low):
-            self.use_props = False
-            reason = "die Option -P"
-        else:
+        complaint = next((m.unsupported for m in broken if m.unsupported), "") or "der Aufnahmebefehl startet nicht"
+        nxt = self.shape + 1
+        # only skip shapes whose tool is really missing; with an injected spawn
+        # (tests, fake mode) every shape is reachable
+        while nxt < len(SHAPES) and self._spawn is _default_spawn and not shutil.which(SHAPES[nxt]["tool"]):
+            nxt += 1
+        if nxt >= len(SHAPES):
             self.enabled = False
-            self.disabled_reason = f"pw-record lässt sich nicht starten: {complaint}"
+            self.disabled_reason = f"kein Aufnahmebefehl funktioniert auf diesem System: {complaint}"
             log.error("level meters off: %s", complaint)
             for meter in self.meters.values():
                 meter.stop()
             self.meters.clear()
             return
-        log.warning("pw-record versteht %s nicht; Pegelmessung wird ohne sie neu gestartet (%s)", reason, complaint)
+        log.warning("Pegelmessung: %s; nächster Versuch mit %s", complaint, _shape_label(SHAPES[nxt]))
+        self.shape = nxt
         for meter in self.meters.values():
             meter.stop()
         self.meters.clear()
@@ -424,6 +449,9 @@ class MeterManager:
         now = time.monotonic()
         with self._lock:
             return {key: m.level.to_dict(now) for key, m in self.meters.items()}
+
+    def shape_label(self) -> str:
+        return _shape_label(SHAPES[self.shape])
 
     def problem(self) -> dict[str, Any] | None:
         """A UI problem entry when the level bars cannot work. Meters are

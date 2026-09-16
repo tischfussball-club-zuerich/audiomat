@@ -1078,8 +1078,11 @@ def classify_node(name: str, node: Node | None, graph: Graph) -> str:
         return "router"
     if name in ("Dummy-Driver", "Freewheel-Driver", "Midi-Bridge"):
         return "system"
+    by_name = _classify_by_name(name)
+    if by_name == "filter":
+        return "filter"  # capture.* / playback.* / *-clean: a filter chain's own streams
     if node is None:
-        return _classify_by_name(name)
+        return by_name
     props = node.props
     if props.get("device.id") is not None or str(props.get("device.api", "")) in ("alsa", "bluez5", "v4l2"):
         return "device"
@@ -1092,7 +1095,7 @@ def classify_node(name: str, node: Node | None, graph: Graph) -> str:
         return "filter"
     if "filter" in str(props.get("node.name", "")) or str(props.get("media.name", "")).startswith("filter"):
         return "filter"
-    return _classify_by_name(name)
+    return by_name
 
 
 FILTER_HINTS = ("filter-chain", "-clean", "-sidetone", "echo-cancel", "noise", "rnnoise")

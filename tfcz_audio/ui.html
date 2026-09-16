@@ -463,6 +463,7 @@
           <button class="btn" id="dropout-check"><svg class="i"><use href="#i-activity"/></svg>Auf Aussetzer prüfen</button>
         </div>
         <p class="hint" id="quantum-state" style="margin-top:8px"></p>
+        <div class="row"><button class="btn" id="quantum-release" hidden>Diesen Router nicht mehr einschränken</button></div>
         <div id="dropout-result"></div>
 
         <h3>Was läuft im Tonsystem</h3>
@@ -786,7 +787,8 @@
     else if (lvl && lvl.signal) { msg = 'Ton erreicht OBS gerade'; colour = '#9bd8b4'; }
     else if (lvl && lvl.active) { msg = 'Bereit. Gerade ruhig: niemand spricht.'; }
     else if (state.levelsAvailable && lvl && lvl.running) { msg = 'OBS-Mikrofon ist da, aber es kommen keine Tondaten an. Prüf die Mikrofone links.'; colour = 'var(--gold-light)'; }
-    else { msg = 'Das OBS-Mikrofon ist verfügbar, die Mikrofone sind damit verbunden. Der Ton läuft; nur die Pegelanzeige fehlt.'; colour = '#9bd8b4'; }
+    else { msg = 'Das OBS-Mikrofon ist verfügbar, die Mikrofone sind damit verbunden. Der Ton läuft; nur die Pegelanzeige fehlt'
+             + (state.levelsReason ? ': ' + state.levelsReason : '.'); colour = '#9bd8b4'; }
     text.textContent = msg; text.style.color = colour;
     $('#obs-meter').style.width = levelWidth(lvl) + '%';
   }
@@ -1118,13 +1120,22 @@
     $('#quantum-persist').checked = !!a.saved;
     const bits = [`läuft mit ${a.quantum} Werten (${a.ms} ms) bei ${a.rate} Hz`, a.forced ? 'von Hand gesetzt' : 'vom System gewählt'];
     if (a.saved) bits.push(`${a.saved} für den nächsten Start gespeichert`);
-    if (a.router_request && a.router_request !== 'auto') bits.push(`dieser Router verlangt zusätzlich ${a.router_request}`);
+    const forced = a.router_request && a.router_request !== 'auto';
+    if (forced) bits.push(`dieser Router verlangt zusätzlich ${a.router_request}`);
     $('#quantum-state').textContent = bits.join(' · ');
+    $('#quantum-release').hidden = !forced;
   }
   $('#quantum-apply').addEventListener('click', () => {
     const frames = parseInt($('#quantum-mount')._csel.value, 10);
     api('PUT', '/audio', { quantum: frames, persist: $('#quantum-persist').checked })
       .then(a => { renderAudio(a); toast(frames ? `Puffer auf ${frames} Werte gesetzt` : 'Puffer wieder automatisch'); }, fail);
+  });
+  $('#quantum-release').addEventListener('click', () => {
+    api('PUT', '/config/audio', { latency: 'auto' }).then(() => {
+      toast('der Router verlangt keine feste Puffergrösse mehr');
+      api('GET', '/audio').then(renderAudio).catch(() => {});
+      refresh(true);
+    }, fail);
   });
   $('#dropout-check').addEventListener('click', () => {
     const box = $('#dropout-result');

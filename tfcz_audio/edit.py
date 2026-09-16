@@ -226,3 +226,19 @@ def set_labels(router: Router, labels: dict[str, Any]) -> dict[str, Any]:
         data["labels"] = clean
 
     return _commit(router, mutate)
+
+
+def set_audio(router: Router, values: dict[str, Any]) -> dict[str, Any]:
+    """Change the [audio] section: the buffer this router asks for, and whether
+    level meters run at all."""
+    latency = values.get("latency")
+    meters = values.get("meters")
+
+    def mutate(data: dict[str, Any]) -> None:
+        audio = data.setdefault("audio", {})
+        if latency is not None:
+            audio["latency"] = str(latency)
+        if meters is not None:
+            audio["meters"] = bool(meters) if isinstance(meters, bool) else str(meters).lower() in ("1", "true", "yes", "on")
+
+    return _commit(router, mutate)

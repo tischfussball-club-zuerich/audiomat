@@ -1281,7 +1281,7 @@ class Router:
         totals: dict[str, int] = {}
         for r in rows:
             totals[r["category"]] = totals.get(r["category"], 0) + r["errors"]
-        drivers = [r for r in rows if r["driver"] and r["active"]]
+        drivers = [r for r in rows if r["driver"] and r["active"] and r["quantum"]]
         quanta = sorted({r["quantum"] for r in rows if r["quantum"]})
 
         findings: list[dict[str, str]] = []
@@ -1337,11 +1337,22 @@ class Router:
 
         filters = sorted({r["name"] for r in rows if r["category"] == "filter"})
         if filters:
-            add("info", f"{len(filters)} Knoten einer fremden Filterkette",
-                ", ".join(filters[:6]) + (" …" if len(filters) > 6 else ""),
-                "Diese Knoten liegen im Tonweg, gehören aber nicht zu diesem Router.",
-                "Prüfe, ob die Mikrofone über die gereinigte Variante laufen sollen: unter «Geräte» das "
-                "passende Gerät auswählen.")
+            filter_errors = totals.get("filter", 0)
+            add("warning" if filter_errors else "info",
+                f"{len(filters)} Knoten einer fremden Filterkette" + (f", zusammen {filter_errors} Aussetzer" if filter_errors else ""),
+                ", ".join(filters[:8]) + (" …" if len(filters) > 8 else ""),
+                "Diese Knoten liegen im Tonweg, gehören aber nicht zu diesem Router. Namen mit «clean» deuten auf "
+                "Rauschunterdrückung, «sidetone» auf Mithören der eigenen Stimme.",
+                "Schalte die Kette zum Test ab und hör nochmals: klingt es dann sauber, liegt es an ihr. "
+                "Gesucht wird sie in ~/.config/pipewire/ (filter-chain). Sollen die Mikrofone über die gereinigte "
+                "Variante laufen, wähle unter «Geräte» die Knoten mit «-clean».")
+
+        if self.cfg.audio.latency != "auto":
+            add("warning", f"Dieser Router verlangt eine feste Puffergrösse ({self.cfg.audio.latency})",
+                "PipeWire läuft mit der kleinsten Puffergrösse, die irgendjemand verlangt. Eine Forderung hier zieht "
+                "das ganze Tonsystem mit herunter.",
+                "Kleinere Puffer heissen mehr Aussetzer, auch bei Geräten und Programmen, die nichts damit zu tun haben.",
+                "Auf «Automatisch» stellen: der Knopf steht oben bei der Puffergrösse.")
 
         if len(quanta) > 2:
             add("info", "Mehrere Taktgruppen mit verschiedenen Puffergrössen",

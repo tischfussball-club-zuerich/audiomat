@@ -129,12 +129,12 @@ class MeterFallbackTests(unittest.TestCase):
 
         mm = meters.MeterManager(lambda: minimal_config(), spawn=spawn, resolved_getter=lambda: {"a_mic": "alsa_input.a"})
         mm.reconcile()   # starts with --raw
-        mm.reconcile()   # notices the refusal and drops the option
-        mm.reconcile()   # starts again in the reduced shape
+        mm.reconcile()   # notices the refusal and moves to the next shape
+        mm.reconcile()   # starts again without it
         self.assertTrue(mm.enabled, "meters stay on")
-        self.assertFalse(mm.use_raw)
+        self.assertEqual(mm.shape_label(), "pw-record ohne --raw")
         self.assertTrue(any("--raw" in c for c in spawned))
-        self.assertTrue(any("--raw" not in c for c in spawned), "retried without the refused option")
+        self.assertTrue(any("pw-record" in c[0] and "--raw" not in c for c in spawned), "retried without the refused option")
 
     def test_gives_up_with_the_real_error(self):
         from tfcz_audio.pw import FakeProcess
@@ -147,7 +147,7 @@ class MeterFallbackTests(unittest.TestCase):
                 self.returncode = 1
 
         mm = meters.MeterManager(lambda: minimal_config(), spawn=Broken, resolved_getter=lambda: {"a_mic": "alsa_input.a"})
-        for _ in range(4):
+        for _ in range(10):  # every shape in turn, then give up
             mm.reconcile()
         self.assertFalse(mm.enabled)
         self.assertIn("--nonsense", mm.disabled_reason)
@@ -163,6 +163,15 @@ class MeterFallbackTests(unittest.TestCase):
         self.assertEqual(meters.wav_data_offset(header), 44)
         self.assertIsNone(meters.wav_data_offset(b"RIFF" + struct.pack("<I", 36) + b"WAVEfmt "))
         self.assertEqual(meters.wav_data_offset(b"\x01\x02\x03\x04"), 0, "raw stream starts at once")
+
+    def test_parec_is_the_last_resort_shape(self):
+        spec = meters.MeterSpec("a_mic", "alsa_input.a")
+        cmd = spec.command(tool="parec")
+        self.assertEqual(cmd[0], "parec")
+        self.assertIn("--device=alsa_input.a", cmd)
+        self.assertIn("--format=s16le", cmd)
+        sink = meters.MeterSpec("a_out", "alsa_output.a", capture_sink=True)
+        self.assertIn("--device=alsa_output.a.monitor", sink.command(tool="parec"))
 
     def test_meter_spec_has_no_passive_links(self):
         cmd = meters.MeterSpec("x", "node").command()

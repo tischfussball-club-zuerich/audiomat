@@ -383,3 +383,26 @@ class ModulePathTests(ApiTestCase):
         code, body = self.call("GET", "/health")
         self.assertEqual(code, 200)
         self.assertEqual(Path(body["module"]), Path(tfcz_audio.__file__).resolve().parent)
+
+
+class AudioConfigTests(ApiTestCase):
+    def test_release_the_forced_buffer_size(self):
+        """A request from this router drags the whole graph down, so it must be
+        removable from the page."""
+        self.router.cfg.audio.latency = "256/48000"
+        code, body = self.call("GET", "/audio")
+        self.assertEqual(body["router_request"], "256/48000")
+        code, body = self.call("PUT", "/config/audio", {"latency": "auto"})
+        self.assertEqual(code, 200, body)
+        self.assertEqual(self.router.cfg.audio.latency, "auto")
+        code, body = self.call("GET", "/audio")
+        self.assertEqual(body["router_request"], "auto")
+
+    def test_meters_can_be_switched_off_from_the_page(self):
+        code, body = self.call("PUT", "/config/audio", {"meters": False})
+        self.assertEqual(code, 200, body)
+        self.assertFalse(self.router.cfg.audio.meters)
+
+    def test_invalid_latency_is_refused(self):
+        code, _ = self.call("PUT", "/config/audio", {"latency": "sehr klein"})
+        self.assertEqual(code, 400)
