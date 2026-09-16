@@ -242,3 +242,54 @@ class AudioBufferTests(ApiTestCase):
         self.assertEqual(code, 200)
         self.assertTrue(body["available"])
         self.assertEqual(body["errors"], 0)
+
+
+class DiagnosticsAndLogTests(ApiTestCase):
+    def test_diagnostics_run_in_the_background(self):
+        import time as _t
+
+        code, body = self.call("GET", "/diagnostics")
+        self.assertEqual(code, 200)
+        self.assertFalse(body["running"])
+        self.assertEqual(body["kind"], "")
+
+        code, body = self.call("POST", "/diagnostics", {"kind": "selftest"})
+        self.assertEqual(code, 200)
+        self.assertEqual(body["kind"], "selftest")
+
+        deadline = _t.monotonic() + 30
+        while _t.monotonic() < deadline:
+            code, body = self.call("GET", "/diagnostics")
+            if not body["running"]:
+                break
+            _t.sleep(0.2)
+        self.assertFalse(body["running"], "the check finished")
+        self.assertIn("=== devices ===", body["output"])
+        self.assertIsNotNone(body["rc"])
+
+    def test_unknown_check_is_refused(self):
+        code, _ = self.call("POST", "/diagnostics", {"kind": "rm -rf"})
+        self.assertEqual(code, 400)
+
+    def test_logs_come_from_the_ring_buffer(self):
+        import logging
+
+        from tfcz_audio import logbuf
+
+        logbuf.install()
+        logging.disable(logging.NOTSET)  # the suite silences logging globally
+        try:
+            logging.getLogger("tfcz.test").warning("a warning for the UI")
+            logging.getLogger("tfcz.test").info("an info line")
+        finally:
+            logging.disable(logging.CRITICAL)
+        code, body = self.call("GET", "/logs?level=WARNING&limit=50")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["source"], "memory")
+        messages = [e["message"] for e in body["entries"]]
+        self.assertIn("a warning for the UI", messages)
+        self.assertNotIn("an info line", messages)
+        code, body = self.call("GET", "/logs?level=INFO&limit=50")
+        self.assertIn("an info line", [e["message"] for e in body["entries"]])
+        for entry in body["entries"]:
+            self.assertIn(entry["level"], logbuf.LEVELS)

@@ -34,6 +34,9 @@ DEVICE_PROPS = ("alsa.card_name", "alsa.long_card_name", "api.alsa.card", "objec
 
 
 def _setup_logging(verbose: bool) -> None:
+    from . import logbuf
+
+    logbuf.install(logging.DEBUG if verbose else logging.INFO)
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
@@ -319,9 +322,11 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     from .meters import MeterSpec, to_db
     from .router import resolve_devices
 
-    cfg, err = load_or_recover(find_config(args.config))
-    if err:
-        print(f"config problem: {err}\n")
+    cfg = getattr(args, "cfg", None)
+    if cfg is None:
+        cfg, err = load_or_recover(find_config(args.config))
+        if err:
+            print(f"config problem: {err}\n")
     if getattr(args, "fake", False):
         from .pw import FakeBackend
 
@@ -504,8 +509,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             warn("pw-record lacks --raw: level bars will be off", "Newer PipeWire (>= 0.3.60) enables them; routing works without.")
 
     try:
-        path = find_config(args.config)
-        cfg, err = load_or_recover(path)
+        live = getattr(args, "cfg", None)
+        path = live.path if live is not None and live.path else find_config(args.config)
+        cfg, err = (live, "") if live is not None else load_or_recover(path)
         if err:
             bad(f"config {path} is invalid: {err}", "Fix the file or run Setup in the web UI.")
         else:

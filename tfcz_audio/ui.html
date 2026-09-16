@@ -91,6 +91,15 @@
   #toast.show { opacity: 1; }
   #toast.error { background: var(--bad); color: #fff; }
   code { font-size: 12px; }
+  pre.report { background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    max-height: 340px; overflow: auto; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; }
+  pre.report .ok { color: var(--ok); }
+  pre.report .bad { color: var(--bad); font-weight: 600; }
+  pre.report .warn { color: var(--warn); }
+  pre.report .dim { color: var(--muted); }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--muted); border-top-color: transparent;
+    border-radius: 50%; animation: sp .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
   /* wizard */
   #wizard { border: 2px solid var(--accent); }
   .steps { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -176,6 +185,31 @@
     <summary>Advanced: names, devices, connections, defaults</summary>
     <div class="inner">
       <p class="hint">Changes here are written to the config file and applied immediately. Only connections that use a changed device restart briefly.</p>
+
+      <h3>Checks and log</h3>
+      <p class="hint">Run the same checks the command line offers, and read what the router has been doing.
+        Use these when something does not work; you can copy the result into a message.</p>
+      <div class="row">
+        <button id="run-doctor">Check the system</button>
+        <button id="run-selftest">Test the sound path</button>
+        <span class="hint" id="diag-state" style="margin:0"></span>
+      </div>
+      <pre class="report" id="diag-output" hidden></pre>
+      <div class="row" style="margin-top:10px">
+        <label class="hint" style="margin:0" for="log-level">Log</label>
+        <select id="log-level">
+          <option value="INFO">everything</option>
+          <option value="WARNING">warnings and errors</option>
+          <option value="ERROR">errors only</option>
+        </select>
+        <select id="log-source">
+          <option value="memory">since the last start</option>
+          <option value="journal">full history</option>
+        </select>
+        <button id="log-refresh">Show</button>
+        <label class="hint" style="margin:0"><input type="checkbox" id="log-follow"> keep updating</label>
+      </div>
+      <pre class="report" id="log-output" hidden></pre>
 
       <h3>Names</h3>
       <p class="hint">What the people and sources are called on this page.</p>
@@ -640,6 +674,62 @@
     const body = { from: $('#r-from').value, to: $('#r-to').value, volume: parseFloat($('#r-volume').value || '100') / 100, description: $('#r-desc').value.trim() };
     api('PUT', `/config/routes/${encodeURIComponent(name)}`, body).then(() => { toast('connection saved'); $('#r-name').value = ''; $('#r-desc').value = ''; refresh(true); }, fail);
   });
+  // ------------------------------------------------------ checks and log
+  function reportHtml(text) {
+    return text.split('\n').map(line => {
+      let cls = '';
+      if (/\[(FAIL|NO DATA|MISSING)\]/.test(line)) cls = 'bad';
+      else if (/\[ok\]/.test(line)) cls = 'ok';
+      else if (/\[warn\]/.test(line)) cls = 'warn';
+      else if (/^===|^\s*$/.test(line)) cls = 'dim';
+      return cls ? `<span class="${cls}">${esc(line)}</span>` : esc(line);
+    }).join('\n');
+  }
+  let diagTimer = null;
+  function showDiag(d) {
+    const out = $('#diag-output');
+    const label = d.kind === 'selftest' ? 'sound path test' : 'system check';
+    if (d.running) {
+      $('#diag-state').innerHTML = `<span class="spin"></span>running the ${esc(label)}… (${d.seconds}s)`;
+      out.hidden = !d.output;
+    } else if (d.kind) {
+      const verdict = d.rc === 0 ? 'no problems found' : 'problems found, see below';
+      $('#diag-state').textContent = `${label}: ${verdict}`;
+      out.hidden = false;
+    }
+    if (d.output) out.innerHTML = reportHtml(d.output);
+    $('#run-doctor').disabled = $('#run-selftest').disabled = !!d.running;
+    if (d.running && !diagTimer) diagTimer = setInterval(pollDiag, 1000);
+    if (!d.running && diagTimer) { clearInterval(diagTimer); diagTimer = null; }
+  }
+  const pollDiag = () => api('GET', '/diagnostics').then(showDiag, () => {});
+  const startDiag = kind => api('POST', '/diagnostics', { kind }).then(showDiag, fail);
+  $('#run-doctor').addEventListener('click', () => startDiag('doctor'));
+  $('#run-selftest').addEventListener('click', () => startDiag('selftest'));
+
+  let logTimer = null;
+  function loadLog() {
+    const level = $('#log-level').value, source = $('#log-source').value;
+    return api('GET', `/logs?level=${level}&source=${source}&limit=300`).then(d => {
+      const out = $('#log-output');
+      out.hidden = false;
+      const lines = (d.entries || []).map(e => {
+        const cls = e.level === 'ERROR' || e.level === 'CRITICAL' ? 'bad' : e.level === 'WARNING' ? 'warn' : '';
+        const text = `${e.time}  ${e.message}`;
+        return cls ? `<span class="${cls}">${esc(text)}</span>` : esc(text);
+      });
+      out.innerHTML = lines.join('\n') || `<span class="dim">nothing logged (${esc(d.note || '')})</span>`;
+      out.scrollTop = out.scrollHeight;
+    }, fail);
+  }
+  $('#log-refresh').addEventListener('click', loadLog);
+  $('#log-level').addEventListener('change', loadLog);
+  $('#log-source').addEventListener('change', loadLog);
+  $('#log-follow').addEventListener('change', e => {
+    if (logTimer) { clearInterval(logTimer); logTimer = null; }
+    if (e.target.checked) { loadLog(); logTimer = setInterval(loadLog, 3000); }
+  });
+
   // ---------------------------------------------------------- buffer size
   function renderAudio(a) {
     state.audio = a;
@@ -853,6 +943,7 @@
         const serialized = JSON.stringify(data.cfg);
         if (serialized !== lastConfig) { lastConfig = serialized; state.config = data.cfg; renderPresets(); renderLabels(); renderRouteForm(); $('#cfgpath').textContent = data.cfg.path || '(none)'; }
         api('GET', '/audio').then(renderAudio).catch(() => {});
+        api('GET', '/diagnostics').then(d => { if (d.kind) showDiag(d); }).catch(() => {});
       }
       // a route known to /status but not to our cached /config means the config is stale: reload it next time
       if (state.config && Object.keys(state.status.routes).some(n => !state.config.routes[n])) wantConfig = true;

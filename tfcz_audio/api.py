@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -63,6 +65,108 @@ def extract_route_params(params: dict[str, Any]) -> tuple[float | None, bool | N
     return volume, mute
 
 
+class Diagnostics:
+    """Runs `tfcz-audio doctor` / `selftest` in the background and keeps the
+    output, so the web UI can offer them without a terminal.
+
+    They shell out to PipeWire tools and can take a while, which is why the
+    HTTP request only starts the job and the page polls for the result.
+    """
+
+    KINDS = ("doctor", "selftest")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.kind = ""
+        self.output = ""
+        self.running = False
+        self.started = 0.0
+        self.finished = 0.0
+        self.rc: int | None = None
+
+    def start(self, kind: str, router: Router) -> dict[str, Any]:
+        if kind not in self.KINDS:
+            raise BadRequest(f"unknown check '{kind}'")
+        with self._lock:
+            if self.running:
+                return self.state()
+            self.kind, self.output, self.running = kind, "", True
+            self.started, self.finished, self.rc = time.time(), 0.0, None
+        threading.Thread(target=self._run, name=f"diag-{kind}", args=(kind, router), daemon=True).start()
+        return self.state()
+
+    def _run(self, kind: str, router: Router) -> None:
+        import argparse
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        from .cli import cmd_doctor, cmd_selftest
+        from .pw import FakeBackend
+
+        buf = io.StringIO()
+        rc: int | None = None
+        try:
+            args = argparse.Namespace(
+                config=str(router.cfg.path) if router.cfg.path else None,
+                cfg=router.cfg,  # the running configuration, not whatever is on disk
+                seconds=2.0,
+                fake=isinstance(router.backend, FakeBackend),
+                verbose=False,
+            )
+            with redirect_stdout(buf), redirect_stderr(buf):
+                rc = cmd_doctor(args) if kind == "doctor" else cmd_selftest(args)
+        except Exception as exc:  # noqa: BLE001 - the report must never take the daemon down
+            log.exception("%s failed", kind)
+            buf.write(f"\nthe check itself failed: {exc}\n")
+            rc = 2
+        with self._lock:
+            self.output = buf.getvalue()
+            self.rc = rc
+            self.running = False
+            self.finished = time.time()
+
+    def state(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "kind": self.kind,
+                "running": self.running,
+                "output": self.output,
+                "rc": self.rc,
+                "age": round(time.time() - self.finished, 1) if self.finished else None,
+                "seconds": round((time.time() if self.running else self.finished) - self.started, 1) if self.started else 0,
+            }
+
+
+def _journal(level: str, limit: int) -> tuple[list[dict[str, Any]], str]:
+    """Full history across restarts, when systemd is the launcher."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("journalctl"):
+        return [], "journalctl is not available on this system"
+    priority = {"ERROR": "3", "CRITICAL": "2", "WARNING": "4"}.get(level.upper(), "7")
+    cmd = ["journalctl", "--user", "-u", "tfcz-audio", "-n", str(max(1, min(limit, 2000))),
+           "--no-pager", "-o", "short-iso", "-p", priority]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [], f"journalctl failed: {exc}"
+    if proc.returncode != 0:
+        return [], (proc.stderr or "journalctl returned an error").strip()[:200]
+    entries = []
+    for line in proc.stdout.splitlines():
+        if not line.strip() or line.startswith("-- "):
+            continue
+        parts = line.split(" ", 3)
+        stamp = parts[0].split("T")[-1][:8] if parts else ""
+        message = parts[3] if len(parts) > 3 else line
+        text = message.split(": ", 1)[-1] if ": " in message[:60] else message
+        upper = text.upper()
+        lvl = "ERROR" if "ERROR" in upper[:40] else "WARNING" if "WARNING" in upper[:40] else "INFO"
+        entries.append({"time": stamp, "level": lvl, "logger": "", "message": text})
+    return entries, "full history from the system journal"
+
+
 _UI_CACHE: bytes | None = None
 
 
@@ -82,6 +186,7 @@ class ApiServer(ThreadingHTTPServer):
         self.token = token
         self.meters = meters
         self.listen_host = address[0]
+        self.diagnostics = Diagnostics()
         super().__init__(address, Handler)
 
 
@@ -259,6 +364,25 @@ class Handler(BaseHTTPRequestHandler):
             return ok, payload
         if seg == ["devices"] and read:
             return ok, {"ok": True, "devices": router.devices()}
+        if seg == ["logs"] and read:
+            from . import logbuf
+
+            level = str(params.get("level", "INFO")).upper()
+            try:
+                limit = int(params.get("limit", 200))
+            except (TypeError, ValueError):
+                limit = 200
+            if str(params.get("source", "")) == "journal":
+                entries, note = _journal(level, limit)
+                return ok, {"ok": True, "source": "journal", "note": note, "entries": entries}
+            ring = logbuf.ring()
+            entries = ring.records(level, limit) if ring is not None else []
+            return ok, {"ok": True, "source": "memory", "note": "since the service last started", "entries": entries}
+        if seg == ["diagnostics"] and read:
+            return ok, {"ok": True, **self.server.diagnostics.state()}
+        if seg == ["diagnostics"] and write:
+            kind = str(params.get("kind", "doctor"))
+            return ok, {"ok": True, **self.server.diagnostics.start(kind, router)}
         if seg == ["audio"] and read:
             return ok, {"ok": True, **router.audio_settings()}
         if seg == ["audio"] and method in ("PUT", "POST"):

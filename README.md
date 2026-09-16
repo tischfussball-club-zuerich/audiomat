@@ -96,8 +96,15 @@ not care about audio plumbing:
   into it, the right bar moves), person B's headset, and the game sound
   input, give them names, and press Connect. It builds the standard layout:
   A hears B and the game, B hears A and the game, OBS hears A and B.
-* **Advanced** (collapsed): names, device assignment, adding or deleting
-  connections, defaults and the API token.
+* **Advanced** (collapsed): the checks and the log (see below), sound
+  quality, names, device assignment, adding or deleting connections,
+  defaults and the API token.
+
+Everything the command line offers is reachable from that page:
+**Check the system** runs `doctor`, **Test the sound path** runs
+`selftest`, and the log viewer shows what the router has been doing,
+either since the last start or the full history from the system journal.
+Output is plain text you can copy into a message.
 
 Every UI change rewrites `config.toml` (comments in the file are not kept)
 and hot-reloads the daemon. Hand edits to the file still work; restart the
@@ -279,6 +286,8 @@ client can drive it.
 | GET | `/config` | current config as JSON (token hidden) |
 | GET / PUT | `/audio` | read or change the system-wide buffer size (`quantum` in frames, 0 = automatic, `persist` to keep it) |
 | POST | `/audio/dropouts` | measure dropouts with pw-top |
+| GET / POST | `/diagnostics` | read the last report, or start one (`kind`: `doctor` or `selftest`) |
+| GET | `/logs` | recent log lines (`level`, `limit`, `source`: `memory` or `journal`) |
 | PUT | `/config/devices` | replace the alias -> node mapping, save, hot-reload |
 | PUT / DELETE | `/config/routes/{r}` | create or update (`from`, `to`, `volume`, `mute`, `description`) or delete a route |
 | PUT / DELETE | `/config/presets/{p}` | create or update or delete a preset |
