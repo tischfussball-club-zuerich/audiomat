@@ -180,3 +180,43 @@ class SingleInstanceTests(unittest.TestCase):
                     del os.environ["XDG_RUNTIME_DIR"]
                 else:
                     os.environ["XDG_RUNTIME_DIR"] = old
+
+
+class SelftestTests(unittest.TestCase):
+    def test_selftest_runs_end_to_end(self):
+        """The selftest is what the user runs when something sounds wrong; it
+        must never crash, whatever the capture probe returns."""
+        import argparse
+        import io
+        import tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path as P
+
+        from tfcz_audio import cli
+        from tfcz_audio.config import save
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = P(tmp) / "config.toml"
+            save(minimal_config(), path)
+            args = argparse.Namespace(config=str(path), seconds=0.1, fake=True, verbose=False)
+            probes = []
+
+            def fake_probe(cmd, seconds=2.0):
+                probes.append(cmd)
+                # first device delivers audio, the rest fail like a broken pw-record
+                if len(probes) == 1:
+                    return 9600, 0.5, "", 0
+                return 0, 0.0, "pw-record: unrecognized option '--nope'", 1
+
+            cli._probe = fake_probe
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = cli.cmd_selftest(args)
+            text = out.getvalue()
+        self.assertEqual(rc, 1, "reports a problem when devices deliver nothing")
+        self.assertIn("=== devices ===", text)
+        self.assertIn("NO DATA", text)
+        self.assertIn("unrecognized option", text, "shows the real error from the helper")
+        self.assertIn("command:", text, "shows the exact command so it can be run by hand")
+        self.assertIn("=== router streams ===", text)
+        self.assertTrue(probes and probes[0][0] == "pw-record")

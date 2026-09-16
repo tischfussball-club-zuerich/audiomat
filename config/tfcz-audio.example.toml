@@ -16,8 +16,14 @@ port = 8787
 token = ""             # optional: require "Authorization: Bearer <token>" or ?token=
 
 [audio]
-latency = "256/48000"  # per-hop buffer, ~5 ms at 48 kHz. 128/48000 for lower latency.
+# Buffer per hop. 1024 frames is ~21 ms: inaudible for an intercom and robust
+# when several USB devices and a capture card run on different clocks.
+# Lower it (512, 256) only if you need less delay AND `pw-top` shows no xruns.
+latency = "1024/48000"
 channels = 2
+# Level bars. They cost one pw-record process per device; set to false if the
+# meters misbehave on your system. Routing is not affected either way.
+meters = true
 
 [virtual]
 obs_mic_name = "tfcz.obsmic"

@@ -74,6 +74,9 @@ class MeterSpec:
         }
         if self.capture_sink:
             props["stream.capture.sink"] = "true"
+        # target both ways: the command line flag and the stream property. Which
+        # of the two a given pw-record honours has changed between versions.
+        props["target.object"] = self.node
         spa = "{ " + " ".join(f'{k} = "{_spa_escape(v)}"' for k, v in props.items()) + " }"
         return [
             "pw-record",
@@ -81,7 +84,8 @@ class MeterSpec:
             "--format", "s16",
             "--rate", str(RATE),
             "--channels", str(CHANNELS),
-            "--latency", f"{CHUNK_FRAMES}",
+            # no --latency: the default (100 ms) matches the window we read, and
+            # the flag's accepted syntax differs between versions
             "--target", self.node,
             "-P", spa,
             "-",
@@ -373,6 +377,44 @@ class MeterManager:
         with self._lock:
             return {key: m.level.to_dict(now) for key, m in self.meters.items()}
 
+    def problem(self) -> dict[str, Any] | None:
+        """A UI problem entry when the level bars cannot work. Meters are
+        optional, so this is never an error: routing is unaffected."""
+        if not self.enabled:
+            return {
+                "level": "info", "code": "meters_off", "what": "meters",
+                "title": "The level bars are switched off",
+                "why": self.disabled_reason or "Level metering is disabled.",
+                "effect": "No moving bars; everything else works normally.",
+                "fix": "",
+            }
+        now = time.monotonic()
+        with self._lock:
+            meters = list(self.meters.values())
+            if not meters:
+                return None
+            failing = [m for m in meters if not m.alive() or m.failures]
+            errors = [m.level.error for m in meters if m.level.error]
+            live = [m for m in meters if m.level.updated and now - m.level.updated < STALE_AFTER]
+        if live:
+            return None
+        if failing:
+            detail = (errors[0][:200] if errors else "the helper exits immediately")
+            return {
+                "level": "warning", "code": "meters_broken", "what": "meters",
+                "title": "The level bars are not working",
+                "why": f"The level meter helper (pw-record) does not run on this system: {detail}",
+                "effect": "The bars stay empty. Routing and the OBS microphone are not affected.",
+                "fix": "Run 'tfcz-audio selftest' to see the exact command and its error, or start the service with --no-meters to switch metering off.",
+            }
+        return {
+            "level": "info", "code": "meters_silent", "what": "meters",
+            "title": "The level bars show no sound",
+            "why": "The meters run but no audio data arrives from the devices.",
+            "effect": "The bars stay empty even while someone talks.",
+            "fix": "Run 'tfcz-audio selftest': it records from each device and reports what arrives.",
+        }
+
     def stop(self, deadline: float = 3.0) -> None:
         from .router import stop_all
 
@@ -414,6 +456,9 @@ class FakeMeterManager:
 
     def reconcile(self) -> None:
         pass
+
+    def problem(self) -> dict[str, Any] | None:
+        return None
 
     def stop(self, deadline: float = 0.0) -> None:
         pass

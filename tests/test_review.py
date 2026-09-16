@@ -205,12 +205,19 @@ class MeterWatchTests(unittest.TestCase):
         spec = meters.MeterSpec('we"ird\\name', 'we"ird\\name')
         cmd = spec.command()
         spa = cmd[cmd.index("-P") + 1]
-        # every quoted value inside the SPA dict is sanitised: no stray quote or backslash
-        import re
-        for value in re.findall(r'= "([^"]*)"', spa):
-            self.assertNotIn('"', value)
-            self.assertNotIn("\\", value)
-        self.assertEqual(spa.count('"') % 2, 0)
+        # Node names reach the properties verbatim (target.object), so quotes and
+        # backslashes must be escaped, not stripped: the string has to stay parsable.
+        unescaped = 0
+        i = 0
+        while i < len(spa):
+            if spa[i] == "\\":
+                i += 2
+                continue
+            if spa[i] == '"':
+                unescaped += 1
+            i += 1
+        self.assertEqual(unescaped % 2, 0, "every quote is either a delimiter or escaped")
+        self.assertTrue(spa.startswith("{ ") and spa.endswith(" }"))
 
 
 class HostPinningTests(ApiTestCase):

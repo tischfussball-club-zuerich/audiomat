@@ -250,7 +250,13 @@ class Handler(BaseHTTPRequestHandler):
             # cheap liveness probe: no pw-dump, no /proc reads
             return ok, {"ok": not router.last_error, "version": __version__, "routes": len(router.cfg.routes), "error": router.last_error}
         if seg == ["status"] and read:
-            return ok, router.status()
+            payload = router.status()
+            meters = self.server.meters
+            if meters is not None and hasattr(meters, "problem"):
+                entry = meters.problem()
+                if entry is not None:
+                    payload["problems"] = [*payload["problems"], entry]
+            return ok, payload
         if seg == ["devices"] and read:
             return ok, {"ok": True, "devices": router.devices()}
         if seg == ["hardware"] and read:

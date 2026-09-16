@@ -24,7 +24,7 @@ class SpecTests(unittest.TestCase):
         self.assertEqual(spec.capture_props["target.object"], "alsa_input.a")
         self.assertEqual(spec.playback_props["target.object"], "alsa_output.b")
         self.assertTrue(spec.capture_props["node.dont-fallback"])
-        self.assertEqual(spec.capture_props["node.latency"], "256/48000")
+        self.assertEqual(spec.capture_props["node.latency"], cfg.audio.latency)
 
     def test_obs_route_targets_mix_bus(self):
         cfg = minimal_config()

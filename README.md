@@ -59,6 +59,7 @@ setup wizard; nothing needs to be edited by hand.
 
 ```
 tfcz-audio doctor           # tools, session, PipeWire, config, devices, service, linger
+tfcz-audio selftest         # record from every device: what arrives, what is linked
 tfcz-audio status           # routes and devices as the daemon sees them
 journalctl --user -u tfcz-audio -f
 ```
@@ -166,8 +167,11 @@ game_sound = "PlayStation"
 * `[presets.<name>]` lists routes with a volume, or `{ volume = , mute = }`.
 * `[api]` `listen`, `port`, optional `token`. Keep it on 127.0.0.1 unless
   you set a token.
-* `[audio]` `latency = "256/48000"` per hop (~5 ms). Lower to `128/48000`
-  if the intercom feels laggy and the USB headsets keep up.
+* `[audio]` `latency = "1024/48000"` per hop (~21 ms), the safe default for
+  several USB devices and a capture card on different clocks. Lower it
+  (512, 256) only if the delay bothers anyone and `pw-top` shows no xruns.
+  `meters = false` switches the level bars off if `pw-record` misbehaves;
+  routing is unaffected.
 
 Volumes use the wpctl / pavucontrol scale: 1.0 is unity, 0.5 is about
 -18 dB, maximum 1.5. The API also accepts `volume_db`.
@@ -203,6 +207,7 @@ tfcz-audio preset hdmi_off              apply a preset; no name lists them
 tfcz-audio reset                        back to config values
 tfcz-audio devices [-p]                 PipeWire audio nodes (+ ALSA card props)
 tfcz-audio check                        validate config, report missing devices
+tfcz-audio selftest [--seconds N]       record from every device and show what arrives
 tfcz-audio run [--dry-run]              run the daemon in the foreground
 ```
 
@@ -319,11 +324,16 @@ so that it explains itself:
 Start with `tfcz-audio doctor`. It checks everything the daemon needs and
 prints the fix for each failing line.
 
-* **Crackles or dropouts** when several USB devices are in use: each USB
-  device runs on its own clock and PipeWire resamples between them. Raise
-  `latency` in `[audio]` to `512/48000` (about 10 ms per hop) and restart
-  the service. Also check `pw-top` for xruns and that the helpers run with
-  realtime priority (`tfcz-audio doctor`).
+* **It sounds noisy, distorted or unintelligible**, or the level bars stay
+  empty: run `tfcz-audio selftest`. It records from every device, prints
+  what actually arrives, shows the exact helper command with its error if
+  one fails, and lists what each router stream is really linked to. Then:
+  switch the game-sound connections off in the web UI for a moment. If the
+  intercom becomes clean, the capture card is the source of the noise
+  (often an input with no signal, see
+  [docs/hdmi-capture.md](docs/hdmi-capture.md)). If it stays noisy, it is
+  timing: raise `latency` in `[audio]`, check the ERR column in `pw-top`,
+  and confirm realtime priority with `tfcz-audio doctor`.
 * **A connection shows "linked to the wrong device"**: the daemon muted it
   on purpose. The audio system attached the stream to something other
   than the chosen device, usually because the device was missing and the

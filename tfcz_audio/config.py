@@ -30,8 +30,12 @@ class ApiConfig:
 
 @dataclass
 class AudioConfig:
-    latency: str = "256/48000"
+    # One buffer per hop. 1024 frames is about 21 ms, which is inaudible for an
+    # intercom and survives several USB devices running on different clocks.
+    # Lower it only if the delay is noticeable and `pw-top` shows no xruns.
+    latency: str = "1024/48000"
     channels: int = 2
+    meters: bool = True  # level bars; they cost one pw-record per device
 
 
 @dataclass
@@ -185,6 +189,7 @@ def parse(data: dict) -> Config:
     cfg.audio = AudioConfig(
         latency=str(audio.get("latency", cfg.audio.latency)),
         channels=int(audio.get("channels", cfg.audio.channels)),
+        meters=_bool(audio.get("meters", True), "[audio] meters"),
     )
     if not re.fullmatch(r"\d+/\d+", cfg.audio.latency):
         raise ConfigError("[audio] latency must look like '256/48000'")
@@ -319,7 +324,7 @@ def to_dict(cfg: Config) -> dict[str, Any]:
     elif cfg.state_file != default_state_file():
         data["state_file"] = str(cfg.state_file)
     data["api"] = {"listen": cfg.api.listen, "port": cfg.api.port, "token": cfg.api.token}
-    data["audio"] = {"latency": cfg.audio.latency, "channels": cfg.audio.channels}
+    data["audio"] = {"latency": cfg.audio.latency, "channels": cfg.audio.channels, "meters": cfg.audio.meters}
     data["virtual"] = {
         "obs_mix_name": cfg.virtual.obs_mix_name,
         "obs_mic_name": cfg.virtual.obs_mic_name,

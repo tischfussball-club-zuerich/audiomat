@@ -7,6 +7,7 @@ import fcntl
 import json
 import logging
 import os
+import shlex
 import shutil
 import signal
 import subprocess
@@ -182,8 +183,10 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if args.fake:
         meters = FakeMeterManager(lambda: router.cfg, lambda: router.desired, router.resolved_nodes)
-    elif args.no_meters or args.dry_run:
+    elif args.no_meters or args.dry_run or not cfg.audio.meters:
         meters = None
+        if not cfg.audio.meters:
+            log.info("level meters are switched off in the config ([audio] meters = false)")
     else:
         meters = MeterManager(
             lambda: router.cfg,
@@ -261,6 +264,141 @@ def _shutdown_http(server_box: dict[str, Any]) -> None:
     if server is not None:
         server.shutdown()
         server.server_close()
+
+
+# ----------------------------------------------------------------- selftest
+
+
+def _probe(cmd: list[str], seconds: float = 2.0) -> tuple[int, float, str, int | None]:
+    """Run a capture command for a while; return (bytes, peak 0..1, stderr, rc)."""
+    import select
+
+    from .meters import peak_of
+
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - fixed argv
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
+        )
+    except OSError as exc:
+        return 0, 0.0, str(exc), 127
+    total, peak = 0, 0.0
+    deadline = time.monotonic() + seconds
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([proc.stdout], [], [], 0.2)
+            if ready:
+                chunk = proc.stdout.read(8192)
+                if not chunk:
+                    break
+                total += len(chunk)
+                peak = max(peak, peak_of(chunk))
+            elif proc.poll() is not None:
+                break
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    err = ""
+    try:
+        err = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return total, peak, err, proc.returncode
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    """Record briefly from every configured device and report what arrives.
+
+    This is the tool for 'I hear nothing / the bars stay empty / it sounds
+    terrible': it shows whether each device delivers audio at all, what the
+    graph looks like, and whether anything is dropping samples.
+    """
+    from .meters import MeterSpec, to_db
+    from .router import resolve_devices
+
+    cfg, err = load_or_recover(find_config(args.config))
+    if err:
+        print(f"config problem: {err}\n")
+    if getattr(args, "fake", False):
+        from .pw import FakeBackend
+
+        backend = FakeBackend()
+        _populate_fake(backend, cfg)
+    else:
+        backend = PipeWireBackend()
+    try:
+        graph = backend.graph()
+    except PwError as exc:
+        print(f"cannot read the PipeWire graph: {exc}")
+        print("Is PipeWire running? Try: systemctl --user restart pipewire wireplumber")
+        return 1
+
+    print("=== graph ===")
+    driver_hint = ""
+    if shutil.which("pw-top"):
+        rc, out = _run(["pw-top", "-b", "-n", "2"], timeout=15)
+        lines = [l for l in out.splitlines() if l.strip()]
+        if rc == 0 and lines:
+            print("\n".join(lines[-40:]))
+            print("\nRows that start without indentation are drivers. A non-zero ERR column means")
+            print("dropped samples (xruns): that is what makes audio crackle or sound broken.")
+            drivers = [l for l in lines[1:] if l[:1] not in (" ", "\t", "")]
+            driver_hint = ", ".join(l.split()[-1] for l in drivers[:4])
+        else:
+            print(f"pw-top did not run ({out.strip()[:200]})")
+    else:
+        print("pw-top not installed (part of pipewire-bin)")
+
+    print("\n=== devices ===")
+    resolved = resolve_devices(cfg, graph)
+    problems = 0
+    for alias, res in sorted(resolved.items()):
+        label = f"{alias}"
+        if not res.present or res.node is None:
+            print(f"  [MISSING] {label}: not connected")
+            problems += 1
+            continue
+        node = graph.by_name(res.node)
+        is_sink = node is not None and node.media_class.startswith("Audio/Sink")
+        spec = MeterSpec(alias, res.node, capture_sink=is_sink)
+        total, peak, err_text, rc = _probe(spec.command(), args.seconds)
+        kind = "output (monitored)" if is_sink else "input"
+        if total == 0:
+            problems += 1
+            print(f"  [NO DATA] {label} ({kind}) -> {res.node}")
+            print(f"            command: {shlex.join(spec.command())}")
+            print(f"            exit {rc}: {err_text[:300] or 'no output, no error message'}")
+        else:
+            state = "silent" if peak < 0.001 else f"peak {to_db(peak):.1f} dB"
+            print(f"  [ok] {label} ({kind}): {total} bytes in {args.seconds:.0f}s, {state}")
+            if peak < 0.001:
+                print("       nothing audible happened during the test; talk into the microphone or start the game and run this again")
+
+    print("\n=== router streams ===")
+    for name, route in sorted(cfg.routes.items()):
+        cap = graph.by_name(route.in_node)
+        play = graph.by_name(route.out_node)
+        if cap is None or play is None:
+            print(f"  [MISSING] {name}: the router's own streams are not running")
+            problems += 1
+            continue
+        peers_in = {graph.nodes[p].name for p in graph.peers_of_input(cap.id) if p in graph.nodes}
+        peers_out = {graph.nodes[p].name for p in graph.peers_of_output(play.id) if p in graph.nodes}
+        print(f"  {name}: in <- {', '.join(sorted(peers_in)) or 'NOTHING'} | out -> {', '.join(sorted(peers_out)) or 'NOTHING'}")
+        if not peers_in or not peers_out:
+            problems += 1
+
+    print()
+    if driver_hint:
+        print(f"graph driver(s): {driver_hint}")
+    if problems:
+        print(f"{problems} thing(s) need attention. See docs/first-run-checklist.md and the notes above.")
+        return 1
+    print("Every configured device delivers audio and every connection is linked.")
+    return 0
 
 
 # ------------------------------------------------------------------- doctor
@@ -513,8 +651,9 @@ port = 8787
 token = ""
 
 [audio]
-latency = "256/48000"
+latency = "1024/48000"
 channels = 2
+meters = true
 
 [virtual]
 obs_mic_name = "tfcz.obsmic"
@@ -677,6 +816,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("doctor", help="check tools, PipeWire, config, service; explains how to fix problems")
     s.set_defaults(func=cmd_doctor)
+
+    s = sub.add_parser("selftest", help="record from every device and show what really arrives (use when it sounds wrong)")
+    s.add_argument("--seconds", type=float, default=2.0, help="how long to record per device")
+    s.add_argument("--fake", action="store_true", help=argparse.SUPPRESS)
+    s.set_defaults(func=cmd_selftest)
 
     s = sub.add_parser("devices", help="list PipeWire audio sources and sinks")
     s.add_argument("--json", action="store_true")
