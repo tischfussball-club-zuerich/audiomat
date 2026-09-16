@@ -61,6 +61,18 @@ if ! systemctl --user is-active --quiet wireplumber; then
 fi
 
 # Pure stdlib package: copy it and write a wrapper. No pip, no network.
+# A downloaded ZIP unpacks to a directory like "audiomat-main" and can never be
+# updated with git pull, which makes it easy to keep installing an old snapshot.
+if [[ ! -d $HERE/.git ]]; then
+  echo
+  echo "note: $HERE is not a git checkout, so 'git pull' cannot update it."
+  echo "      For updates, clone the repository once and install from there:"
+  echo "          git clone https://github.com/tischfussball-club-zuerich/audiomat.git"
+  echo "          cd audiomat && ./install.sh"
+  echo "      Afterwards:  git pull && ./install.sh"
+  echo
+fi
+
 echo "==> installing package to $LIB"
 rm -rf "$LIB/tfcz_audio"
 mkdir -p "$LIB" "$PREFIX/bin"
