@@ -30,10 +30,12 @@ class ApiConfig:
 
 @dataclass
 class AudioConfig:
-    # One buffer per hop. 1024 frames is about 21 ms, which is inaudible for an
-    # intercom and survives several USB devices running on different clocks.
-    # Lower it only if the delay is noticeable and `pw-top` shows no xruns.
-    latency: str = "1024/48000"
+    # "auto" means: do not ask for anything, run at whatever buffer size the
+    # system uses. Any other value (e.g. "512/48000") is a request that pulls
+    # the WHOLE audio graph down to it, because PipeWire runs at the smallest
+    # size any participant asks for. Leave it on "auto" unless you need less
+    # delay and have checked for dropouts with `pw-top`.
+    latency: str = "auto"
     channels: int = 2
     meters: bool = True  # level bars; they cost one pw-record per device
 
@@ -191,8 +193,8 @@ def parse(data: dict) -> Config:
         channels=int(audio.get("channels", cfg.audio.channels)),
         meters=_bool(audio.get("meters", True), "[audio] meters"),
     )
-    if not re.fullmatch(r"\d+/\d+", cfg.audio.latency):
-        raise ConfigError("[audio] latency must look like '256/48000'")
+    if cfg.audio.latency != "auto" and not re.fullmatch(r"\d+/\d+", cfg.audio.latency):
+        raise ConfigError("[audio] latency must be \"auto\" or look like '512/48000'")
 
     virt = _section(data, "virtual")
     cfg.virtual = VirtualConfig(

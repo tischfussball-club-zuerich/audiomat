@@ -24,7 +24,8 @@ class SpecTests(unittest.TestCase):
         self.assertEqual(spec.capture_props["target.object"], "alsa_input.a")
         self.assertEqual(spec.playback_props["target.object"], "alsa_output.b")
         self.assertTrue(spec.capture_props["node.dont-fallback"])
-        self.assertEqual(spec.capture_props["node.latency"], cfg.audio.latency)
+        self.assertNotIn("node.latency", spec.capture_props, "auto: the system decides the buffer size")
+        self.assertNotIn("node.latency", spec.playback_props)
 
     def test_obs_route_targets_mix_bus(self):
         cfg = minimal_config()
@@ -183,3 +184,39 @@ class RouterTests(unittest.TestCase):
         router.start()
         self.assertNotIn(VIRTUAL, router.status()["routes"])
         self.assertEqual(router.cfg.routes["a_to_obs"].sink, OBS_MIC)
+
+
+class LatencyRequestTests(unittest.TestCase):
+    def test_explicit_latency_is_requested_on_both_sides(self):
+        from tfcz_audio.pw import Graph
+        from tfcz_audio.router import resolve_devices, virtual_spec
+
+        cfg = minimal_config()
+        cfg.audio.latency = "512/48000"
+        spec = route_spec(cfg, cfg.routes["a_to_b"], resolve_devices(cfg, Graph()))
+        self.assertEqual(spec.capture_props["node.latency"], "512/48000")
+        self.assertEqual(spec.playback_props["node.latency"], "512/48000")
+        v = virtual_spec(cfg)
+        self.assertEqual(v.capture_props["node.latency"], "512/48000")
+
+    def test_auto_asks_for_nothing_anywhere(self):
+        from tfcz_audio.pw import Graph
+        from tfcz_audio.router import resolve_devices, virtual_spec
+
+        cfg = minimal_config()
+        self.assertEqual(cfg.audio.latency, "auto")
+        for spec in [route_spec(cfg, r, resolve_devices(cfg, Graph())) for r in cfg.routes.values()] + [virtual_spec(cfg)]:
+            self.assertNotIn("node.latency", spec.capture_props)
+            self.assertNotIn("node.latency", spec.playback_props)
+
+    def test_latency_value_is_validated(self):
+        import tomllib
+
+        from tfcz_audio.config import ConfigError, parse
+
+        from .helpers import MINIMAL
+
+        parse(tomllib.loads('[audio]\nlatency = "auto"\n' + MINIMAL))
+        parse(tomllib.loads('[audio]\nlatency = "512/48000"\n' + MINIMAL))
+        with self.assertRaises(ConfigError):
+            parse(tomllib.loads('[audio]\nlatency = "low"\n' + MINIMAL))

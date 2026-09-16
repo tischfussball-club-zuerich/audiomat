@@ -16,10 +16,12 @@ port = 8787
 token = ""             # optional: require "Authorization: Bearer <token>" or ?token=
 
 [audio]
-# Buffer per hop. 1024 frames is ~21 ms: inaudible for an intercom and robust
-# when several USB devices and a capture card run on different clocks.
-# Lower it (512, 256) only if you need less delay AND `pw-top` shows no xruns.
-latency = "1024/48000"
+# "auto" = use whatever buffer size the system runs at. This is the right
+# setting: PipeWire runs its whole graph at the SMALLEST buffer any program
+# asks for, so a request here slows down nothing but can starve everything.
+# Change the system-wide value instead (see README, "Buffer size"), and only
+# put a value like "512/48000" here if this router alone must run tighter.
+latency = "auto"
 channels = 2
 # Level bars. They cost one pw-record process per device; set to false if the
 # meters misbehave on your system. Routing is not affected either way.

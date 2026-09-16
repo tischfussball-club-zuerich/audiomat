@@ -651,7 +651,7 @@ port = 8787
 token = ""
 
 [audio]
-latency = "1024/48000"
+latency = "auto"
 channels = 2
 meters = true
 

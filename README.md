@@ -103,6 +103,41 @@ Every UI change rewrites `config.toml` (comments in the file are not kept)
 and hot-reloads the daemon. Hand edits to the file still work; restart the
 service afterwards.
 
+## Buffer size
+
+The buffer size is a property of the whole audio system, not of this
+router. PipeWire runs its entire graph at the **smallest** buffer any
+participant asks for, so a small request from one program slows down
+nothing and can starve everything. That is why `latency` defaults to
+`"auto"` here: the router asks for nothing and runs at whatever the
+system uses (1024 frames, about 21 ms, on a stock Ubuntu).
+
+To change it, change it system-wide, in
+`~/.config/pipewire/pipewire.conf.d/10-quantum.conf`:
+
+```
+context.properties = {
+    default.clock.quantum     = 1024
+    default.clock.min-quantum = 256
+    default.clock.max-quantum = 2048
+}
+```
+
+Then `systemctl --user restart pipewire wireplumber tfcz-audio`.
+
+To try a value without changing anything, force it at runtime and listen:
+
+```
+pw-metadata -n settings 0 clock.force-quantum 2048   # bigger buffer, safer
+pw-metadata -n settings 0 clock.force-quantum 256    # smaller, tighter
+pw-metadata -n settings 0 clock.force-quantum 0      # back to automatic
+```
+
+Smaller means less delay and more risk of dropouts, which sound like
+crackle or, when constant, like noise. `pw-top` shows dropouts in its ERR
+column. Only set `latency` in `[audio]` if this router alone must run
+tighter than the rest of the system.
+
 ## Sharing devices with OBS
 
 PipeWire shares every device, so the router and OBS can both read the HDMI
@@ -167,11 +202,9 @@ game_sound = "PlayStation"
 * `[presets.<name>]` lists routes with a volume, or `{ volume = , mute = }`.
 * `[api]` `listen`, `port`, optional `token`. Keep it on 127.0.0.1 unless
   you set a token.
-* `[audio]` `latency = "1024/48000"` per hop (~21 ms), the safe default for
-  several USB devices and a capture card on different clocks. Lower it
-  (512, 256) only if the delay bothers anyone and `pw-top` shows no xruns.
-  `meters = false` switches the level bars off if `pw-record` misbehaves;
-  routing is unaffected.
+* `[audio]` `latency = "auto"` leaves the buffer size to PipeWire, which is
+  what you want (see below). `meters = false` switches the level bars off if
+  `pw-record` misbehaves; routing is unaffected.
 
 Volumes use the wpctl / pavucontrol scale: 1.0 is unity, 0.5 is about
 -18 dB, maximum 1.5. The API also accepts `volume_db`.
@@ -332,8 +365,10 @@ prints the fix for each failing line.
   intercom becomes clean, the capture card is the source of the noise
   (often an input with no signal, see
   [docs/hdmi-capture.md](docs/hdmi-capture.md)). If it stays noisy, it is
-  timing: raise `latency` in `[audio]`, check the ERR column in `pw-top`,
-  and confirm realtime priority with `tfcz-audio doctor`.
+  timing: try a bigger buffer live with
+  `pw-metadata -n settings 0 clock.force-quantum 2048`, watch the ERR
+  column in `pw-top`, and confirm realtime priority with
+  `tfcz-audio doctor`.
 * **A connection shows "linked to the wrong device"**: the daemon muted it
   on purpose. The audio system attached the stream to something other
   than the chosen device, usually because the device was missing and the

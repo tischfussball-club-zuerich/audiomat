@@ -120,11 +120,14 @@ def _target(cfg: Config, ref: str, resolved: dict[str, Resolved]) -> str:
 
 
 def route_spec(cfg: Config, route: RouteConfig, resolved: dict[str, Resolved]) -> LoopbackSpec:
-    common = {
-        "node.latency": cfg.audio.latency,
+    common: dict[str, Any] = {
         "node.dont-fallback": True,
         "node.dont-reconnect": False,
     }
+    if cfg.audio.latency != "auto":
+        # a request here lowers the buffer size for the entire graph, not just
+        # for this stream; "auto" leaves that decision to PipeWire
+        common["node.latency"] = cfg.audio.latency
 
     def identity(node_name: str) -> dict[str, Any]:
         # WirePlumber's restore-stream keys saved volumes by media.role /
@@ -158,7 +161,6 @@ def virtual_spec(cfg: Config) -> LoopbackSpec:
         "node.name": cfg.virtual.obs_mix_name,
         "node.description": f"{cfg.virtual.obs_mic_description} (mix bus)",
         "audio.position": position,
-        "node.latency": cfg.audio.latency,
         "media.role": cfg.virtual.obs_mix_name,
         "application.id": cfg.virtual.obs_mix_name,
         "application.name": cfg.virtual.obs_mix_name,
@@ -168,11 +170,13 @@ def virtual_spec(cfg: Config) -> LoopbackSpec:
         "node.name": cfg.virtual.obs_mic_name,
         "node.description": cfg.virtual.obs_mic_description,
         "audio.position": position,
-        "node.latency": cfg.audio.latency,
         "media.role": cfg.virtual.obs_mic_name,
         "application.id": cfg.virtual.obs_mic_name,
         "application.name": cfg.virtual.obs_mic_name,
     }
+    if cfg.audio.latency != "auto":
+        capture["node.latency"] = cfg.audio.latency
+        playback["node.latency"] = cfg.audio.latency
     return LoopbackSpec(name="tfcz.virtual", capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
 
 
