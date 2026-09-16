@@ -367,7 +367,7 @@ so that it explains itself:
 | Daemon hangs | systemd watchdog (30 s) kills and restarts it; `Restart=always`, never gives up |
 | Daemon crashes | systemd restarts it after 2 s; leftover helpers are cleaned up at start |
 | Helper writes a lot to stderr | drained in the background; a child can never block on a full pipe |
-| Level meter fails or PipeWire lacks `pw-record --raw` | meters disabled with a reason; routing unaffected |
+| `pw-record` refuses an option | that option is dropped and metering starts again (without `--raw` the WAV header is skipped); only an undroppable error switches the bars off, with the real message |
 | Browser page from another site calls the API | rejected (cross-site guard); use a token for LAN access |
 | Stream linked to the wrong device (fallback, manual move) | muted for safety and reported; unmuted when the link is right again |
 | Devices present but the session manager does not connect the stream | reported after 8 s; the loopback is recycled up to 3 times, then reported as an error |

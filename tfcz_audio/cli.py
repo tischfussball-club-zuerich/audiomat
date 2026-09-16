@@ -501,12 +501,6 @@ def cmd_doctor(args: argparse.Namespace) -> int:
              "only needed for the game sound. After a kernel update the driver must be rebuilt: "
              "sudo dkms autoinstall && sudo modprobe hws   (see docs/hdmi-capture.md)")
 
-    if _tool("pw-record"):
-        rc, out = _run(["pw-record", "--help"])
-        if "--raw" in out:
-            ok("pw-record supports --raw (level bars available)")
-        else:
-            warn("pw-record lacks --raw: level bars will be off", "Newer PipeWire (>= 0.3.60) enables them; routing works without.")
 
     try:
         live = getattr(args, "cfg", None)
@@ -541,6 +535,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             probe_host = "127.0.0.1" if cfg.api.listen in ("0.0.0.0", "::", "", "localhost") else cfg.api.listen
             if sock.connect_ex((probe_host, cfg.api.port)) == 0:
                 ok(f"web UI answers on http://{cfg.api.listen}:{cfg.api.port}/")
+                # ask the running daemon whether metering actually works, instead
+                # of guessing from a tool's help text
+                import urllib.error
+                import urllib.request
+
+                req = urllib.request.Request(f"http://{probe_host}:{cfg.api.port}/levels")
+                if cfg.api.token:
+                    req.add_header("Authorization", f"Bearer {cfg.api.token}")
+                try:
+                    with urllib.request.urlopen(req, timeout=3) as resp:  # noqa: S310 - own daemon
+                        levels = json.loads(resp.read().decode())
+                    if levels.get("available"):
+                        moving = sum(1 for lvl in (levels.get("levels") or {}).values() if lvl.get("active"))
+                        ok(f"level bars are working ({moving} of {len(levels.get('levels') or {})} devices delivering audio right now)")
+                    else:
+                        warn("level bars are not working: " + (levels.get("reason") or "unknown reason"),
+                             "run 'tfcz-audio selftest' for the exact command and its error; routing is unaffected")
+                except (urllib.error.URLError, OSError, ValueError) as exc:
+                    warn(f"cannot ask the daemon about the level bars ({exc})", "check the token under Advanced if one is set")
             else:
                 warn(f"nothing listens on port {cfg.api.port}", "systemctl --user start tfcz-audio   (then: journalctl --user -u tfcz-audio -n 50)")
     except ConfigError as exc:
