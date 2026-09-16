@@ -357,11 +357,15 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         rc, out = _run(["pw-top", "-b", "-n", "2"], timeout=15)
         lines = [l for l in out.splitlines() if l.strip()]
         if rc == 0 and lines:
+            from .pw import parse_pw_top
+
             print("\n".join(lines[-40:]))
-            print("\nRows that start without indentation are drivers. A non-zero ERR column means")
-            print("dropped samples (xruns): that is what makes audio crackle or sound broken.")
-            drivers = [l for l in lines[1:] if l[:1] not in (" ", "\t", "")]
-            driver_hint = ", ".join(l.split()[-1] for l in drivers[:4])
+            print("\nERR counts what a node has lost since it started, so an old node looks worse")
+            print("than a recently restarted one. The web UI compares two samples instead.")
+            top = parse_pw_top(out)
+            driver_hint = ", ".join(
+                f"{r['name']} ({r['quantum']})" for r in top["rows"] if r["driver"] and r["quantum"]
+            )
         else:
             print(f"pw-top did not run ({out.strip()[:200]})")
     else:
@@ -370,6 +374,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     print("\n=== devices ===")
     resolved = resolve_devices(cfg, graph)
     problems = 0
+    working_shape: tuple[bool, bool] | None = None
     for alias, res in sorted(resolved.items()):
         label = f"{alias}"
         if not res.present or res.node is None:
@@ -384,7 +389,10 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         # same way the daemon's meters do
         total = peak = 0
         err_text, rc, used = "", None, None
-        for raw, props in ((True, True), (False, True), (False, False)):
+        shapes = [(True, True), (False, True), (False, False)]
+        if working_shape in shapes:
+            shapes.insert(0, shapes.pop(shapes.index(working_shape)))
+        for raw, props in shapes:
             cmd = spec.command(raw=raw, props=props)
             total, peak, err_text, rc = _probe(cmd, args.seconds, skip_wav=not raw)
             used = cmd
@@ -397,6 +405,7 @@ def cmd_selftest(args: argparse.Namespace) -> int:
             print(f"            command: {shlex.join(used)}")
             print(f"            exit {rc}: {(err_text.splitlines() or ['no output, no error message'])[0][:200]}")
         else:
+            working_shape = (("--raw" in used), ("-P" in used))
             state = "silent" if peak < 0.001 else f"peak {to_db(peak):.1f} dB"
             shape = "" if used == spec.command() else "  (reduced command shape)"
             print(f"  [ok] {label} ({kind}): {total} bytes in {args.seconds:.0f}s, {state}{shape}")

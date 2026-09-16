@@ -1276,11 +1276,11 @@ class Router:
                 "friendly": (info or {}).get("friendly") or row["name"],
                 "media_class": node.media_class if node else "",
             })
-        rows.sort(key=lambda r: (-r["errors"], r["name"]))
+        rows.sort(key=lambda r: (-r.get("delta", 0), -r["errors"], r["name"]))
 
         totals: dict[str, int] = {}
         for r in rows:
-            totals[r["category"]] = totals.get(r["category"], 0) + r["errors"]
+            totals[r["category"]] = totals.get(r["category"], 0) + r.get("delta", 0)
         drivers = [r for r in rows if r["driver"] and r["active"] and r["quantum"]]
         quanta = sorted({r["quantum"] for r in rows if r["quantum"]})
 
@@ -1297,16 +1297,20 @@ class Router:
             return {"available": False, "rows": rows, "findings": findings, "totals": totals,
                     "drivers": [], "quanta": quanta, "buffer": quantum_state(graph)}
 
-        total = top.get("errors", 0)
-        if not total:
-            add("info", "Keine Aussetzer", "Während der Messung ging nichts verloren.",
+        window = top.get("window", 1) if top.get("samples", 0) > 1 else 0
+        span = f"in {window} s" if window else "seit dem Start der Knoten"
+        live = top.get("delta", 0)
+        historic = top.get("errors", 0)
+        if not live:
+            add("info", "Gerade gehen keine Tonpakete verloren",
+                f"Während der Messung ({window} s) ging nichts verloren." if window else "Es wurde kein Verlust gemeldet."
+                + (f" Insgesamt seit dem Start der einzelnen Knoten: {historic}, das ist Vergangenheit." if historic else ""),
                 "Klingt der Ton trotzdem schlecht, liegt es nicht am Timing.", "")
         else:
             worst = rows[0]
-            foreign = [r for r in rows if r["category"] in ("filter", "device", "app") and r["errors"]]
-            add("error" if total > 1000 else "warning",
-                f"{total} verlorene Tonpakete seit dem Start",
-                "Am meisten bei: " + ", ".join(f"{r['name']} ({r['errors']})" for r in rows[:3]),
+            add("error" if live > 50 else "warning",
+                f"{live} verlorene Tonpakete {span}",
+                "Am meisten bei: " + ", ".join(f"{r['name']} ({r['delta']})" for r in rows[:3] if r["delta"]),
                 "Verlorene Pakete sind Löcher im Ton. Viele davon klingen wie Knacken oder machen Sprache unverständlich.",
                 "Puffergrösse oben erhöhen und nochmals messen. Bleibt es, liegt es an dem Knoten, der oben in der Liste steht.")
             if worst["category"] == "filter":
@@ -1316,9 +1320,9 @@ class Router:
                     "Der Ton wird schon kaputt, bevor dieser Router ihn überhaupt anfasst.",
                     "Filterkette vorübergehend deaktivieren und nochmals hören. Klingt es dann sauber, braucht die "
                     "Kette eine grössere Puffergrösse oder zu viel Rechenzeit.")
-            elif foreign and totals.get("router", 0) < total / 2:
+            elif totals.get("router", 0) * 2 < live:
                 add("info", "Die Aussetzer entstehen nicht in diesem Router",
-                    f"Von {total} verlorenen Paketen entfallen {totals.get('router', 0)} auf Knoten dieses Routers.",
+                    f"Von {live} verlorenen Paketen entfallen {totals.get('router', 0)} auf Knoten dieses Routers.",
                     "", "Schau zuerst auf die Knoten oben in der Liste.")
 
         for d in drivers:
@@ -1337,7 +1341,7 @@ class Router:
 
         filters = sorted({r["name"] for r in rows if r["category"] == "filter"})
         if filters:
-            filter_errors = totals.get("filter", 0)
+            filter_errors = totals.get("filter", 0)  # in the measured window, not since boot
             add("warning" if filter_errors else "info",
                 f"{len(filters)} Knoten einer fremden Filterkette" + (f", zusammen {filter_errors} Aussetzer" if filter_errors else ""),
                 ", ".join(filters[:8]) + (" …" if len(filters) > 8 else ""),
@@ -1361,6 +1365,9 @@ class Router:
 
         return {
             "available": True,
+            "window": window,
+            "delta": live,
+            "historic": historic,
             "rows": rows,
             "findings": findings,
             "totals": totals,

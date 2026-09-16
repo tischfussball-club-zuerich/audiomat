@@ -406,3 +406,29 @@ class AudioConfigTests(ApiTestCase):
     def test_invalid_latency_is_refused(self):
         code, _ = self.call("PUT", "/config/audio", {"latency": "sehr klein"})
         self.assertEqual(code, 400)
+
+
+class DeltaMeasurementTests(unittest.TestCase):
+    def test_old_nodes_do_not_outrank_nodes_failing_now(self):
+        """ERR is cumulative since a node started, so a node up since boot looks
+        worse than one restarted a minute ago. Only the change matters."""
+        from tfcz_audio.pw import parse_pw_top
+
+        head = "S   ID  QUANT   RATE    WAIT    BUSY   W/Q   B/Q  ERR FORMAT           NAME\n"
+        old_busy = "R   42      0      0  13.9us   9.1us  0.01  0.00  {}         F32P 1 0  + capture.headset-left-clean\n"
+        fresh = "R  191    256  48000  25.8us  13.1us  0.01  0.00  {}         F32P 2 0  + tfcz.obsmix\n"
+        text = head + old_busy.format(528000) + fresh.format(200) + head + old_busy.format(528002) + fresh.format(260)
+        r = parse_pw_top(text)
+        self.assertEqual(r["samples"], 2)
+        self.assertEqual(r["errors"], 528262, "totals are still reported")
+        self.assertEqual(r["delta"], 62, "but the comparison uses what changed")
+        self.assertEqual(r["nodes"][0]["name"], "tfcz.obsmix")
+
+    def test_single_sample_falls_back_to_totals(self):
+        from tfcz_audio.pw import parse_pw_top
+
+        text = ("S   ID  QUANT   RATE    WAIT    BUSY   W/Q   B/Q  ERR FORMAT           NAME\n"
+                "R   42      0      0  13.9us   9.1us  0.01  0.00  99         F32P 1 0  + capture.x\n")
+        r = parse_pw_top(text)
+        self.assertEqual(r["samples"], 1)
+        self.assertEqual(r["delta"], 99)

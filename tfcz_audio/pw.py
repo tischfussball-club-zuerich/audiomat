@@ -508,10 +508,14 @@ class PipeWireBackend:
         self._run(cmd, timeout=3.0)
 
     def dropouts(self, seconds: float = 2.0) -> dict[str, Any]:
-        """Ask pw-top how many periods were missed recently. A non-zero count
-        is what makes audio crackle."""
-        out = self._run(["pw-top", "-b", "-n", "2"], timeout=max(8.0, seconds + 6))
-        return parse_pw_top(out)
+        """Ask pw-top how many periods were missed. Several samples are taken so
+        the difference between them shows what is happening right now, not what
+        has accumulated since each node started."""
+        samples = max(2, min(8, int(seconds) + 1))
+        out = self._run(["pw-top", "-b", "-n", str(samples)], timeout=max(10.0, samples + 8))
+        result = parse_pw_top(out)
+        result["window"] = max(1, samples - 1)
+        return result
 
     def set_default(self, node_id: int) -> None:
         cmd = ["wpctl", "set-default", str(node_id)]
@@ -1030,24 +1034,28 @@ PW_TOP_ROW = re.compile(
 )
 
 
-def parse_pw_top(text: str) -> dict[str, Any]:
-    """Read the last table pw-top printed.
-
-    The columns have fixed positions but variable content: WAIT and BUSY are
-    "46.6us", "---" or "+++" depending on the node's state, so the row is
-    matched as a whole rather than by counting tokens.
-    """
-    lines = [l.rstrip() for l in text.splitlines() if l.strip()]
-    headers = [i for i, l in enumerate(lines) if "ERR" in l.split() and "ID" in l.split()]
-    rows: list[dict[str, Any]] = []
-    for line in lines[(headers[-1] + 1) if headers else 0 :]:
+def _pw_top_tables(text: str) -> list[list[dict[str, Any]]]:
+    """Split pw-top's batch output into its successive tables."""
+    tables: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] | None = None
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        tokens = line.split()
+        if "ERR" in tokens and "ID" in tokens:
+            current = []
+            tables.append(current)
+            continue
+        if current is None:
+            continue
         m = PW_TOP_ROW.match(line)
         if not m:
             continue
         rest = m.group("rest").split()
         if not rest:
             continue
-        rows.append({
+        current.append({
             "id": int(m.group("id")),
             "quantum": int(m.group("quantum")),
             "rate": int(m.group("rate")),
@@ -1057,13 +1065,36 @@ def parse_pw_top(text: str) -> dict[str, Any]:
             "driver": "+" not in rest,
             "active": m.group("state").upper().startswith("R"),
         })
-    if not rows and not headers:
-        return {"available": False, "errors": 0, "nodes": [], "drivers": [], "rows": []}
+    return [t for t in tables if t]
+
+
+def parse_pw_top(text: str) -> dict[str, Any]:
+    """Read pw-top's batch output.
+
+    Two numbers matter and they mean different things. ``errors`` is what the
+    node has lost since it started, so a node that has been up since boot looks
+    far worse than one restarted a minute ago. ``delta`` is what it lost between
+    the first and the last table, which is the only fair comparison.
+    """
+    tables = _pw_top_tables(text)
+    if not tables:
+        return {"available": False, "errors": 0, "delta": 0, "nodes": [], "drivers": [], "rows": [], "samples": 0}
+    # with a single table there is nothing to compare against, so the total is
+    # the only figure available
+    first = {r["name"]: r for r in tables[0]} if len(tables) > 1 else {}
+    rows = []
+    for row in tables[-1]:
+        before = first.get(row["name"])
+        row = dict(row)
+        row["delta"] = max(0, row["errors"] - before["errors"]) if before else row["errors"]
+        rows.append(row)
     return {
         "available": True,
         "errors": sum(r["errors"] for r in rows),
+        "delta": sum(r["delta"] for r in rows),
+        "samples": len(tables),
         "rows": rows,
-        "nodes": sorted((r for r in rows if r["errors"]), key=lambda r: -r["errors"]),
+        "nodes": sorted((r for r in rows if r["delta"] or r["errors"]), key=lambda r: (-r["delta"], -r["errors"])),
         "drivers": [r["name"] for r in rows if r["driver"]],
     }
 
