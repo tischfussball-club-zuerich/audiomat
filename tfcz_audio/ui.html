@@ -514,7 +514,9 @@
           <label class="check" for="token">API-Token (nur nötig, wenn in der Einstellungsdatei eines gesetzt ist)</label>
           <input type="password" id="token" placeholder="Token" autocomplete="off">
         </div>
-        <p class="hint" style="margin-top:10px">Einstellungsdatei: <code id="cfgpath"></code></p>
+        <p class="hint" style="margin-top:10px">Einstellungsdatei: <code id="cfgpath"></code><br>
+          Version: <code id="build">–</code> · Steht hier ein anderer Wert als nach einem
+          <code>git pull &amp;&amp; ./install.sh</code>, läuft noch der alte Dienst.</p>
       </div>
     </details>
   </section>
@@ -1324,6 +1326,7 @@
           lastConfig = serialized; state.config = data.cfg;
           renderPresets(); renderLabels(); renderRouteForm();
           $('#cfgpath').textContent = data.cfg.path || '(keine)';
+          api('GET', '/health').then(h => { $('#build').textContent = `${h.version} · ${h.build}`; }).catch(() => {});
           api('GET', '/audio').then(renderAudio).catch(() => {});
           api('GET', '/diagnostics').then(d => { if (d.kind) showDiag(d); }).catch(() => {});
         }

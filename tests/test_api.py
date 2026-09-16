@@ -353,3 +353,20 @@ class ClassificationTests(unittest.TestCase):
         }
         for name, want in cases.items():
             self.assertEqual(classify_node(name, None, g), want, name)
+
+
+class BuildIdentityTests(ApiTestCase):
+    def test_health_names_the_page_build(self):
+        """'I don't see that section' must be answerable without guessing."""
+        from tfcz_audio.api import ui_build
+
+        code, body = self.call("GET", "/health")
+        self.assertEqual(code, 200)
+        self.assertEqual(body["build"], ui_build())
+        self.assertRegex(body["build"], r"^[0-9a-f]{8}$")
+        # the served page carries the field that displays it (HTML, not JSON)
+        req = urllib.request.Request(self.base + "/")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            page = resp.read().decode()
+        self.assertIn('id="build"', page)
+        self.assertIn("Was läuft im Tonsystem", page, "the analysis section ships with the page")

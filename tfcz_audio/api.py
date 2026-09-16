@@ -177,6 +177,14 @@ def load_ui() -> bytes:
     return _UI_CACHE
 
 
+def ui_build() -> str:
+    """Short fingerprint of the page being served, so an outdated install is
+    visible instead of leaving people looking for a section that is not there."""
+    import hashlib
+
+    return hashlib.sha256(load_ui()).hexdigest()[:8]
+
+
 class ApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -353,7 +361,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if not seg or seg == ["health"]:
             # cheap liveness probe: no pw-dump, no /proc reads
-            return ok, {"ok": not router.last_error, "version": __version__, "routes": len(router.cfg.routes), "error": router.last_error}
+            return ok, {"ok": not router.last_error, "version": __version__, "build": ui_build(),
+                        "routes": len(router.cfg.routes), "error": router.last_error}
         if seg == ["status"] and read:
             payload = router.status()
             meters = self.server.meters
