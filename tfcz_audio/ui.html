@@ -225,6 +225,19 @@
   details.adv > summary .i { color: var(--blue); transition: transform var(--t-fast) var(--ease); }
   details.adv[open] > summary .i.chev { transform: rotate(180deg); }
   details.adv .inner { margin-top: 12px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--card-brd); }
+  .tab {
+    display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 700; font-size: 14px;
+    padding: 9px 15px; border-radius: var(--btn-radius); cursor: pointer;
+    border: 1px solid var(--card-brd); background: rgba(230, 227, 218, .05); color: var(--ink-muted);
+    transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease);
+  }
+  .tab .i { color: var(--blue); }
+  .tab:hover:not([aria-selected="true"]) { box-shadow: var(--brand-hover); color: var(--ink); }
+  .tab:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--gold); }
+  .tab[aria-selected="true"] { color: var(--ink-strong); background: rgba(205, 168, 87, .10); box-shadow: var(--brand-select); }
+  .tab[aria-selected="true"] .i { color: var(--gold); }
+  .tabpanel > h3:first-of-type { margin-top: 18px; }
   table.an { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
   table.an th { text-align: left; color: var(--ink-muted); font-weight: 700; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--card-brd); }
   table.an td { padding: 7px 10px; border-bottom: 1px solid rgba(92,167,220,.10); vertical-align: top; }
@@ -429,95 +442,129 @@
 
   <section class="panel">
     <details class="adv" id="advanced">
-      <summary><svg class="i chev"><use href="#i-chevron"/></svg>Erweitert: Prüfungen, Klang, Namen, Geräte, Verbindungen</summary>
+      <summary><svg class="i chev"><use href="#i-chevron"/></svg>Erweitert</summary>
       <div class="inner">
-        <p class="hint">Änderungen hier werden in die Einstellungsdatei geschrieben und sofort angewendet.
-          Nur Verbindungen, deren Gerät sich ändert, starten kurz neu.</p>
-
-        <h3>Prüfungen und Protokoll</h3>
-        <p class="hint">Dieselben Prüfungen wie auf der Kommandozeile, und was der Router bisher gemacht hat.
-          Nutze sie, wenn etwas nicht funktioniert; das Ergebnis lässt sich kopieren.</p>
-        <div class="row">
-          <button class="btn" id="run-doctor"><svg class="i"><use href="#i-checks"/></svg>System prüfen</button>
-          <button class="btn" id="run-selftest"><svg class="i"><use href="#i-activity"/></svg>Tonweg testen</button>
-          <span class="hint" style="margin:0" id="diag-state"></span>
-        </div>
-        <pre class="report" id="diag-output" hidden></pre>
-        <div class="row" style="margin-top:12px">
-          <svg class="i"><use href="#i-file"/></svg>
-          <div id="log-level-mount"></div>
-          <div id="log-source-mount"></div>
-          <button class="btn btn-sm" id="log-refresh"><svg class="i i-sm"><use href="#i-refresh"/></svg>Anzeigen</button>
-          <label class="check"><input type="checkbox" id="log-follow"> laufend aktualisieren</label>
-        </div>
-        <pre class="report" id="log-output" hidden></pre>
-
-        <h3>Klangqualität (Puffergrösse)</h3>
-        <p class="hint">Wie viel Ton der Computer pro Runde trägt. Kleiner heisst weniger Verzögerung, aber mehr Gefahr
-          von Aussetzern, die wie Knacken klingen. Das ist eine Einstellung des ganzen Tonsystems, nicht nur dieses
-          Routers. Probier einen Wert und hör hin; nichts startet neu.</p>
-        <div class="row">
-          <div id="quantum-mount"></div>
-          <button class="btn btn-blue" id="quantum-apply">Jetzt ausprobieren</button>
-          <label class="check"><input type="checkbox" id="quantum-persist"> nach Neustart behalten</label>
-          <button class="btn" id="dropout-check"><svg class="i"><use href="#i-activity"/></svg>Auf Aussetzer prüfen</button>
-        </div>
-        <p class="hint" id="quantum-state" style="margin-top:8px"></p>
-        <div class="row"><button class="btn" id="quantum-release" hidden>Diesen Router nicht mehr einschränken</button></div>
-        <div id="dropout-result"></div>
-
-        <h3>Was läuft im Tonsystem</h3>
-        <p class="hint">Misst kurz mit und zeigt, wer den Takt vorgibt, mit welcher Puffergrösse gearbeitet wird und wo
-          Ton verloren geht. Auch Knoten, die nicht zu diesem Router gehören, etwa eine eigene Filterkette.</p>
-        <div class="row">
-          <button class="btn" id="run-analysis"><svg class="i"><use href="#i-activity"/></svg>Tonsystem analysieren</button>
-          <span class="hint" style="margin:0" id="analysis-state"></span>
-        </div>
-        <div id="analysis"></div>
-
-        <h3>Namen</h3>
-        <p class="hint">Wie die Personen und Quellen auf dieser Seite heissen.</p>
-        <div class="grid" id="labels"></div>
-        <div class="row" style="margin-top:10px"><button class="btn btn-blue" id="save-labels">Namen speichern</button></div>
-
-        <h3>Geräte</h3>
-        <p class="hint">Welches echte Gerät hinter jedem Namen steckt und wie es nach einem Neustart oder Umstecken
-          wiedererkannt wird. Aufgeführt sind nur Geräte, die gerade angeschlossen sind.</p>
-        <div class="grid" id="devices"></div>
-        <div class="row" style="margin-top:12px">
-          <input type="text" id="new-alias" placeholder="neuer Name, z.B. headset_c_out" style="width:230px">
-          <div id="new-alias-mount"></div>
-          <button class="btn" id="add-alias"><svg class="i i-sm"><use href="#i-plus"/></svg>Gerät hinzufügen</button>
-          <button class="btn btn-blue" id="save-devices">Geräte speichern</button>
+        <div class="tabs" role="tablist" aria-label="Erweiterte Einstellungen">
+          <button class="tab" role="tab" data-tab="setup" aria-selected="true"><svg class="i"><use href="#i-plug"/></svg>Einrichtung</button>
+          <button class="tab" role="tab" data-tab="sound" aria-selected="false"><svg class="i"><use href="#i-volume"/></svg>Klang</button>
+          <button class="tab" role="tab" data-tab="diag" aria-selected="false"><svg class="i"><use href="#i-activity"/></svg>Diagnose</button>
+          <button class="tab" role="tab" data-tab="system" aria-selected="false"><svg class="i"><use href="#i-file"/></svg>System</button>
         </div>
 
-        <h3>Verbindungen</h3>
-        <p class="hint">Neuen Pfeil anlegen, oder den Namen eines bestehenden eintippen, um ihn zu ändern.
-          Pfeile löschst du mit dem Papierkorb auf ihrer Karte.</p>
-        <div class="row">
-          <input type="text" id="r-name" placeholder="Name (a-z 0-9 _ -)" style="width:170px">
-          <div id="r-from-mount"></div>
-          <svg class="i"><use href="#i-arrow"/></svg>
-          <div id="r-to-mount"></div>
-          <input type="number" id="r-volume" min="0" max="150" step="5" value="100" style="width:84px"><span class="hint" style="margin:0">%</span>
-          <input type="text" id="r-desc" placeholder="Beschreibung (optional)" style="flex:1;min-width:170px">
-          <button class="btn btn-blue" id="r-save">Verbindung speichern</button>
-        </div>
+        <section class="tabpanel" data-tab="setup" role="tabpanel">
+          <p class="hint">Wer wie heisst, welches Gerät dahintersteckt und welcher Ton wohin geht. Änderungen werden
+            sofort angewendet und in die Einstellungsdatei geschrieben; nur Verbindungen, deren Gerät sich ändert,
+            starten kurz neu.</p>
 
-        <h3>Standardwerte</h3>
-        <div class="row">
-          <button class="btn" id="save-defaults">Aktuelle Lautstärken als Standard speichern</button>
-          <button class="btn btn-ghost" id="reset">Auf Standard zurücksetzen</button>
-        </div>
+          <h3>Namen</h3>
+          <p class="hint">Wie die Personen und Quellen auf dieser Seite heissen.</p>
+          <div class="grid" id="labels"></div>
+          <div class="row" style="margin-top:10px"><button class="btn btn-blue" id="save-labels">Namen speichern</button></div>
 
-        <h3>Zugang</h3>
-        <div class="row">
-          <label class="check" for="token">API-Token (nur nötig, wenn in der Einstellungsdatei eines gesetzt ist)</label>
-          <input type="password" id="token" placeholder="Token" autocomplete="off">
-        </div>
-        <p class="hint" style="margin-top:10px">Einstellungsdatei: <code id="cfgpath"></code><br>
-          Version: <code id="build">–</code> · Steht hier ein anderer Wert als nach einem
-          <code>git pull &amp;&amp; ./install.sh</code>, läuft noch der alte Dienst.</p>
+          <h3>Geräte</h3>
+          <p class="hint">Welches echte Gerät hinter jedem Namen steckt und wie es nach einem Neustart oder Umstecken
+            wiedererkannt wird. Aufgeführt sind nur Geräte, die gerade angeschlossen sind.</p>
+          <div class="grid" id="devices"></div>
+          <div class="row" style="margin-top:12px">
+            <input type="text" id="new-alias" placeholder="neuer Name, z.B. headset_c_out" style="width:230px">
+            <div id="new-alias-mount"></div>
+            <button class="btn" id="add-alias"><svg class="i i-sm"><use href="#i-plus"/></svg>Gerät hinzufügen</button>
+            <button class="btn btn-blue" id="save-devices">Geräte speichern</button>
+          </div>
+
+          <h3>Verbindungen</h3>
+          <p class="hint">Neuen Pfeil anlegen, oder den Namen eines bestehenden eintippen, um ihn zu ändern.
+            Pfeile löschst du mit dem Papierkorb auf ihrer Karte.</p>
+          <div class="row">
+            <input type="text" id="r-name" placeholder="Name (a-z 0-9 _ -)" style="width:170px">
+            <div id="r-from-mount"></div>
+            <svg class="i"><use href="#i-arrow"/></svg>
+            <div id="r-to-mount"></div>
+            <input type="number" id="r-volume" min="0" max="150" step="5" value="100" style="width:84px"><span class="hint" style="margin:0">%</span>
+            <input type="text" id="r-desc" placeholder="Beschreibung (optional)" style="flex:1;min-width:170px">
+            <button class="btn btn-blue" id="r-save">Verbindung speichern</button>
+          </div>
+
+          <h3>Standardwerte</h3>
+          <p class="hint">Womit der Router nach einem Neustart beginnt.</p>
+          <div class="row">
+            <button class="btn" id="save-defaults">Aktuelle Lautstärken als Standard speichern</button>
+            <button class="btn btn-ghost" id="reset">Auf Standard zurücksetzen</button>
+          </div>
+        </section>
+
+        <section class="tabpanel" data-tab="sound" role="tabpanel" hidden>
+          <p class="hint">Wie viel Ton der Computer pro Runde trägt. Kleiner heisst weniger Verzögerung, aber mehr Gefahr
+            von Aussetzern, die wie Knacken klingen. Das ist eine Einstellung des ganzen Tonsystems, nicht nur dieses
+            Routers. Probier einen Wert und hör hin; nichts startet neu.</p>
+          <h3>Puffergrösse</h3>
+          <div class="row">
+            <div id="quantum-mount"></div>
+            <button class="btn btn-blue" id="quantum-apply">Jetzt ausprobieren</button>
+            <label class="check"><input type="checkbox" id="quantum-persist"> nach Neustart behalten</label>
+          </div>
+          <p class="hint" id="quantum-state" style="margin-top:8px"></p>
+          <div class="row"><button class="btn" id="quantum-release" hidden>Diesen Router nicht mehr einschränken</button></div>
+
+          <h3>Aussetzer</h3>
+          <p class="hint">Misst, ob gerade Ton verloren geht. Das ist der Unterschied zwischen «klingt schlecht wegen
+            Timing» und «klingt schlecht aus einem anderen Grund».</p>
+          <div class="row">
+            <button class="btn" id="dropout-check"><svg class="i"><use href="#i-activity"/></svg>Auf Aussetzer prüfen</button>
+          </div>
+          <div id="dropout-result"></div>
+        </section>
+
+        <section class="tabpanel" data-tab="diag" role="tabpanel" hidden>
+          <p class="hint">Wenn etwas nicht funktioniert: hier messen und nachlesen. Jedes Ergebnis lässt sich kopieren
+            und weiterschicken.</p>
+
+          <h3>Prüfungen</h3>
+          <div class="row">
+            <button class="btn" id="run-doctor"><svg class="i"><use href="#i-checks"/></svg>System prüfen</button>
+            <button class="btn" id="run-selftest"><svg class="i"><use href="#i-activity"/></svg>Tonweg testen</button>
+            <span class="hint" style="margin:0" id="diag-state"></span>
+          </div>
+          <pre class="report" id="diag-output" hidden></pre>
+
+          <h3>Was läuft im Tonsystem</h3>
+          <p class="hint">Misst kurz mit und zeigt, wer den Takt vorgibt, mit welcher Puffergrösse gearbeitet wird und wo
+            Ton verloren geht. Auch Knoten, die nicht zu diesem Router gehören, etwa eine eigene Filterkette.</p>
+          <div class="row">
+            <button class="btn" id="run-analysis"><svg class="i"><use href="#i-activity"/></svg>Tonsystem analysieren</button>
+            <span class="hint" style="margin:0" id="analysis-state"></span>
+          </div>
+          <div id="analysis"></div>
+
+          <h3>Protokoll</h3>
+          <p class="hint">Was der Router bisher gemacht hat.</p>
+          <div class="row">
+            <svg class="i"><use href="#i-file"/></svg>
+            <div id="log-level-mount"></div>
+            <div id="log-source-mount"></div>
+            <button class="btn btn-sm" id="log-refresh"><svg class="i i-sm"><use href="#i-refresh"/></svg>Anzeigen</button>
+            <label class="check"><input type="checkbox" id="log-follow"> laufend aktualisieren</label>
+          </div>
+          <pre class="report" id="log-output" hidden></pre>
+        </section>
+
+        <section class="tabpanel" data-tab="system" role="tabpanel" hidden>
+          <p class="hint">Zugang zu diesem Router und welche Fassung gerade läuft.</p>
+
+          <h3>Zugang</h3>
+          <div class="row">
+            <label class="check" for="token">API-Token (nur nötig, wenn in der Einstellungsdatei eines gesetzt ist)</label>
+            <input type="password" id="token" placeholder="Token" autocomplete="off">
+          </div>
+
+          <h3>Fassung</h3>
+          <div class="grid" style="grid-template-columns:max-content 1fr">
+            <span>Einstellungsdatei</span><code id="cfgpath"></code>
+            <span>Version</span><code id="build">–</code>
+          </div>
+          <p class="hint" style="margin-top:8px">Steht bei Version ein anderer Wert als nach einem
+            <code>git pull &amp;&amp; ./install.sh</code>, läuft noch der alte Dienst.</p>
+        </section>
       </div>
     </details>
   </section>
@@ -885,6 +932,37 @@
       wrap.appendChild(b); wrap.appendChild(cap); box.appendChild(wrap);
     }
   }
+
+  // -------------------------------------------------------- Reiter (Tabs)
+  function showTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
+    document.querySelectorAll('.tabpanel').forEach(p => { p.hidden = p.dataset.tab !== name; });
+    try { localStorage.setItem('tfcz-tab', name); } catch (e) {}
+  }
+  document.querySelectorAll('.tab').forEach((tab, idx, all) => {
+    tab.addEventListener('click', () => showTab(tab.dataset.tab));
+    tab.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      e.preventDefault();
+      const next = all[(idx + (e.key === 'ArrowRight' ? 1 : all.length - 1)) % all.length];
+      next.focus(); showTab(next.dataset.tab);
+    });
+  });
+  const TAB_ALIASES = { setup: 'setup', einrichtung: 'setup', sound: 'sound', klang: 'sound',
+                        diag: 'diag', diagnose: 'diag', system: 'system' };
+  function openTabFromHash() {
+    const want = TAB_ALIASES[(location.hash || '').replace('#', '').toLowerCase()];
+    if (!want) return false;
+    $('#advanced').open = true;
+    showTab(want);
+    $('#advanced').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return true;
+  }
+  let stored = 'setup';
+  try { stored = localStorage.getItem('tfcz-tab') || 'setup'; } catch (e) {}
+  showTab(stored);
+  openTabFromHash();
+  window.addEventListener('hashchange', openTabFromHash);
 
   const EDITABLE = new Set(['INPUT', 'TEXTAREA']);
   const editing = root => { const a = document.activeElement; return !!(root && a && root.contains(a) && EDITABLE.has(a.tagName) && a.type !== 'range'); };

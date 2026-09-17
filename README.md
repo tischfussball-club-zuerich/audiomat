@@ -101,9 +101,15 @@ who do not care about audio plumbing:
   into it, the right bar moves), person B's headset, and the game sound
   input, give them names, and press Connect. It builds the standard layout:
   A hears B and the game, B hears A and the game, OBS hears A and B.
-* **Advanced** (collapsed): the checks and the log (see below), sound
-  quality, names, device assignment, adding or deleting connections,
-  defaults and the API token.
+* **Advanced** (collapsed), in four tabs:
+  * **Einrichtung**: names, device assignment, connections, defaults.
+  * **Klang**: buffer size and the dropout measurement.
+  * **Diagnose**: the checks, the audio-system analysis and the log.
+  * **System**: API token, config path, and which build is running.
+
+  Each tab is linkable: `/#einrichtung`, `/#klang`, `/#diagnose`,
+  `/#system` open the page with that tab in front, which is handy when
+  pointing someone at a specific control.
 
 Everything the command line offers is reachable from that page:
 **Check the system** runs `doctor`, **Test the sound path** runs

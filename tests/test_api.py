@@ -432,3 +432,24 @@ class DeltaMeasurementTests(unittest.TestCase):
         r = parse_pw_top(text)
         self.assertEqual(r["samples"], 1)
         self.assertEqual(r["delta"], 99)
+
+
+class AdvancedTabsTests(ApiTestCase):
+    def test_every_control_still_ships_with_the_page(self):
+        """The Advanced section is split into tabs; no control may go missing in
+        the move, and the script must not reference an element that is gone."""
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        for tab in ("setup", "sound", "diag", "system"):
+            self.assertIn(f'data-tab="{tab}"', page)
+        for control in ("labels", "devices", "r-from-mount", "save-defaults", "quantum-mount",
+                        "dropout-check", "run-doctor", "run-selftest", "run-analysis",
+                        "log-level-mount", "token", "cfgpath", "build"):
+            self.assertIn(f'id="{control}"', page, control)
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        referenced = set(re.findall(r"\$\('#([a-zA-Z0-9_-]+)'\)", script))
+        missing = sorted(i for i in referenced if f'id="{i}"' not in page)
+        self.assertEqual(missing, [], "script refers to elements the markup does not have")
