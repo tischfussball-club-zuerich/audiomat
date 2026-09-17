@@ -396,6 +396,15 @@ class Handler(BaseHTTPRequestHandler):
             ring = logbuf.ring()
             entries = ring.records(level, limit) if ring is not None else []
             return ok, {"ok": True, "source": "memory", "note": "since the service last started", "entries": entries}
+        if seg == ["update"] and read:
+            from . import update
+
+            return ok, {"ok": True, **update.status()}
+        if seg == ["update"] and write:
+            from . import update
+
+            result = update.start()
+            return (ok if result["started"] else HTTPStatus.CONFLICT), {"ok": result["started"], **result}
         if seg == ["diagnostics"] and read:
             return ok, {"ok": True, **self.server.diagnostics.state()}
         if seg == ["diagnostics"] and write:

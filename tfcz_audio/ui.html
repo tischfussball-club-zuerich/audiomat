@@ -422,7 +422,6 @@
         <div class="big" id="obs-text">OBS-Mikrofon wird geprüft …</div>
         <p class="hint" style="margin:2px 0 0">Das nimmt OBS als «TFCZ OBS Mic» auf. Wenn sich dieser Balken bewegt, hören es deine Zuschauer.</p>
       </div>
-      <div class="meter gold" style="max-width:260px"><i id="obs-meter"></i></div>
     </div>
   </section>
 
@@ -564,6 +563,16 @@
           </div>
           <p class="hint" style="margin-top:8px">Steht bei Version ein anderer Wert als nach einem
             <code>git pull &amp;&amp; ./install.sh</code>, läuft noch der alte Dienst.</p>
+
+          <h3>Aktualisieren</h3>
+          <p class="hint">Holt die neueste Fassung und installiert sie, also genau <code>git pull</code> und
+            <code>./install.sh</code>. Der Dienst startet dabei neu: der Ton setzt ein bis zwei Sekunden aus und diese
+            Seite verliert kurz die Verbindung. Das Protokoll erscheint, sobald sie wieder da ist.</p>
+          <div class="row">
+            <button class="btn btn-blue" id="run-update"><svg class="i"><use href="#i-refresh"/></svg>Jetzt aktualisieren</button>
+            <span class="hint" style="margin:0" id="update-state"></span>
+          </div>
+          <pre class="report" id="update-log" hidden></pre>
         </section>
       </div>
     </details>
@@ -837,7 +846,6 @@
     else { msg = 'Das OBS-Mikrofon ist verfügbar, die Mikrofone sind damit verbunden. Der Ton läuft; nur die Pegelanzeige fehlt'
              + (state.levelsReason ? ': ' + state.levelsReason : '.'); colour = '#9bd8b4'; }
     text.textContent = msg; text.style.color = colour;
-    $('#obs-meter').style.width = levelWidth(lvl) + '%';
   }
 
   function renderCards() {
@@ -1191,6 +1199,36 @@
     }, fail).finally(() => { btn.disabled = false; });
   });
 
+  // ------------------------------------------------------------ Aktualisieren
+  let updateTimer = null;
+  function showUpdate(u) {
+    const out = $('#update-log'), label = $('#update-state');
+    if (u.log) { out.hidden = false; out.innerHTML = reportHtml(u.log); out.scrollTop = out.scrollHeight; }
+    if (u.running) {
+      label.innerHTML = '<span class="spin"></span> läuft … (der Dienst startet gleich neu)';
+      $('#run-update').disabled = true;
+      if (!updateTimer) updateTimer = setInterval(pollUpdate, 1500);
+      return;
+    }
+    $('#run-update').disabled = false;
+    if (updateTimer) { clearInterval(updateTimer); updateTimer = null; }
+    if (u.state === 'done') label.textContent = u.rc === 0 ? 'fertig; lade die Seite neu' : `abgebrochen (Code ${u.rc})`;
+    else if (u.state === 'stale') label.textContent = 'abgebrochen: keine Rückmeldung mehr';
+    else if (u.problem) label.textContent = '';
+    if (u.problem) {
+      out.hidden = false;
+      out.innerHTML = `<span class="warn">${esc(u.problem)}</span>`;
+      $('#run-update').disabled = true;
+    }
+  }
+  const pollUpdate = () => api('GET', '/update').then(showUpdate, () => {});
+  $('#run-update').addEventListener('click', () => {
+    if (!confirm('Jetzt aktualisieren?\nDer Dienst startet dabei neu, der Ton setzt kurz aus.')) return;
+    $('#run-update').disabled = true;
+    $('#update-state').innerHTML = '<span class="spin"></span> wird gestartet …';
+    api('POST', '/update', {}).then(showUpdate, e => { fail(e); $('#run-update').disabled = false; pollUpdate(); });
+  });
+
   function renderAudio(a) {
     state.audio = a;
     const items = (a.choices || []).map(c => ({ value: String(c.frames), label: c.frames ? `${c.frames} Werte (${c.ms} ms)` : 'Automatisch (empfohlen)' }));
@@ -1418,6 +1456,7 @@
           api('GET', '/health').then(h => { $('#build').textContent = `${h.version} · ${h.build} · ${h.module || ''}`; }).catch(() => {});
           api('GET', '/audio').then(renderAudio).catch(() => {});
           api('GET', '/diagnostics').then(d => { if (d.kind) showDiag(d); }).catch(() => {});
+          api('GET', '/update').then(u => { if (u.log || u.problem) showUpdate(u); }).catch(() => {});
         }
       }
       if (state.config && Object.keys(state.status.routes).some(n => !state.config.routes[n])) wantConfig = true;

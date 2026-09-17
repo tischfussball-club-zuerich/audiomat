@@ -105,7 +105,12 @@ who do not care about audio plumbing:
   * **Einrichtung**: names, device assignment, connections, defaults.
   * **Klang**: buffer size and the dropout measurement.
   * **Diagnose**: the checks, the audio-system analysis and the log.
-  * **System**: API token, config path, and which build is running.
+  * **System**: API token, config path, which build is running, and an
+    **Aktualisieren** button that runs `git pull` and `./install.sh` and
+    shows their output. It only works from a git checkout, and it runs as
+    its own systemd unit because the installer restarts the service.
+    Anyone who can reach the API can trigger it, which with the default
+    `listen = "127.0.0.1"` means local users only.
 
   Each tab is linkable: `/#einrichtung`, `/#klang`, `/#diagnose`,
   `/#system` open the page with that tab in front, which is handy when

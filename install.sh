@@ -78,6 +78,9 @@ rm -rf "$LIB/tfcz_audio"
 mkdir -p "$LIB" "$PREFIX/bin"
 cp -r "$HERE/tfcz_audio" "$LIB/tfcz_audio"
 find "$LIB/tfcz_audio" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+# remember where the source lives, so the web UI can offer an update
+printf '%s\n' "$HERE" > "$LIB/source-path"
+
 cat > "$BIN" <<WRAP
 #!/usr/bin/env bash
 export PYTHONPATH="$LIB\${PYTHONPATH:+:\$PYTHONPATH}"

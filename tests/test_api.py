@@ -453,3 +453,71 @@ class AdvancedTabsTests(ApiTestCase):
         referenced = set(re.findall(r"\$\('#([a-zA-Z0-9_-]+)'\)", script))
         missing = sorted(i for i in referenced if f'id="{i}"' not in page)
         self.assertEqual(missing, [], "script refers to elements the markup does not have")
+
+
+class UpdateTests(ApiTestCase):
+    def setUp(self):
+        super().setUp()
+        import os
+        import tempfile
+
+        from tfcz_audio import update
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self._old_state = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = self._tmp.name
+        self._update = update
+
+    def tearDown(self):
+        import os
+
+        if self._old_state is None:
+            os.environ.pop("XDG_STATE_HOME", None)
+        else:
+            os.environ["XDG_STATE_HOME"] = self._old_state
+        self._tmp.cleanup()
+        super().tearDown()
+
+    def test_refuses_without_a_git_checkout(self):
+        """A downloaded ZIP cannot be updated; say so instead of failing oddly."""
+        self._update.source_dir = lambda: None
+        code, body = self.call("POST", "/update", {})
+        self.assertEqual(code, 409)
+        self.assertFalse(body["ok"])
+        self.assertIn("install.sh", body["problem"])
+
+    def test_reports_a_finished_run_with_its_code(self):
+        from pathlib import Path
+
+        Path(self._update.state_dir()).mkdir(parents=True, exist_ok=True)
+        self._update.log_path().write_text("== git pull ==\nAlready up to date.\n\n" + self._update.DONE_MARKER + "0)\n")
+        code, body = self.call("GET", "/update")
+        self.assertEqual(code, 200)
+        self.assertFalse(body["running"])
+        self.assertEqual(body["state"], "done")
+        self.assertEqual(body["rc"], 0)
+        self.assertIn("Already up to date", body["log"])
+
+    def test_a_run_without_an_end_marker_is_not_running_forever(self):
+        import os
+        import time
+        from pathlib import Path
+
+        Path(self._update.state_dir()).mkdir(parents=True, exist_ok=True)
+        path = self._update.log_path()
+        path.write_text("== git pull ==\n")
+        old = time.time() - self._update.STALE_AFTER - 10
+        os.utime(path, (old, old))
+        code, body = self.call("GET", "/update")
+        self.assertEqual(body["state"], "stale")
+        self.assertFalse(body["running"])
+
+    def test_a_running_update_is_not_started_twice(self):
+        from pathlib import Path
+
+        Path(self._update.state_dir()).mkdir(parents=True, exist_ok=True)
+        self._update.log_path().write_text("== git pull ==\n")  # fresh, no end marker
+        self._update.source_dir = lambda: Path(self._tmp.name)
+        code, body = self.call("POST", "/update", {})
+        self.assertEqual(code, 409)
+        self.assertIn("bereits", body["problem"])
