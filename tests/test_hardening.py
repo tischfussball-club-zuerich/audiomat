@@ -571,3 +571,71 @@ class PipeWireRestartTests(unittest.TestCase):
         finally:
             backend.graph = real_graph
             router.stop()
+
+
+class GraphContentionTests(unittest.TestCase):
+    """pw-dump takes a second or two on a busy machine. A page asking for the
+    whole graph must never be the reason a dead loopback is restarted later."""
+
+    def test_the_supervisor_does_not_queue_behind_a_slow_read_for_long(self):
+        import threading
+        import time
+
+        from tfcz_audio.router import Router
+
+        backend = fake_backend()
+        real_graph = backend.graph
+
+        def slow(*args, **kwargs):
+            time.sleep(3.0)
+            return real_graph(*args, **kwargs)
+
+        router = Router(minimal_config(), backend, node_wait=0.02, sleep=lambda s: None)
+        router.start()
+        router.graph_wait_limit = 0.3
+        router.graph_cache_ttl = 0.0
+        try:
+            backend.graph = slow
+            reader = threading.Thread(target=lambda: router.signal_graph(), daemon=True)
+            reader.start()
+            time.sleep(0.2)
+            started = time.monotonic()
+            router.reconcile()  # must not sit behind the reader
+            waited = time.monotonic() - started
+            self.assertLess(waited, 1.5, "the supervisor queued behind a web request")
+            reader.join(timeout=10)
+        finally:
+            backend.graph = real_graph
+            router.stop()
+
+    def test_concurrent_readers_share_one_pw_dump(self):
+        import threading
+        import time
+
+        from tfcz_audio.router import Router
+
+        backend = fake_backend()
+        real_graph = backend.graph
+        calls = []
+
+        def counted(*args, **kwargs):
+            calls.append(1)
+            time.sleep(0.4)
+            return real_graph(*args, **kwargs)
+
+        router = Router(minimal_config(), backend, node_wait=0.02, sleep=lambda s: None)
+        router.start()
+        router.graph_cache_ttl = 0.5
+        try:
+            backend.graph = counted
+            calls.clear()
+            router._invalidate_graph()  # otherwise they all read the cache from start-up
+            threads = [threading.Thread(target=router.status) for _ in range(6)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+            self.assertEqual(len(calls), 1, "six readers started six pw-dumps")
+        finally:
+            backend.graph = real_graph
+            router.stop()

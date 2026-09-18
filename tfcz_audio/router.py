@@ -239,6 +239,8 @@ class Router:
         self._graph_cache: tuple[float, Graph] | None = None
         self._graph_error: tuple[float, str] | None = None  # negative cache: do not re-run pw-dump for every caller while it fails
         self._graph_fetch_lock = threading.Lock()  # concurrent cache misses share one pw-dump
+        self.graph_wait_limit = 1.5  # how long a supervisor pass queues behind someone else's read
+        self.stale_graph_limit = 5.0  # older than this, no picture is better than a wrong one
         self._apply_retry_at: dict[str, float] = {}  # per-route backoff after a failed wpctl call
         self._drift_retry_at: dict[str, float] = {}  # per-route pause after correcting an external volume change
         self._safety_muted: set[str] = set()  # routes muted because their stream is linked to the wrong device
@@ -323,8 +325,17 @@ class Router:
 
     # -------------------------------------------------------------- lifecycle
 
-    def _fetch_graph(self) -> Graph:
-        """Graph with a short cache so UI polling does not multiply pw-dump calls."""
+    def _fetch_graph(self, wait: float | None = None) -> Graph:
+        """Graph with a short cache so UI polling does not multiply pw-dump calls.
+
+        ``wait`` bounds how long to queue behind a read someone else started.
+        The supervisor uses it: on a busy machine pw-dump takes a second or
+        two, and a page that asks for the whole graph must never be the reason
+        a dead loopback is restarted later than it could have been. Past the
+        bound it works from the last picture, which is at most
+        ``stale_graph_limit`` seconds old, or reports PipeWire as unreachable
+        -- both of which it already handles.
+        """
         now = self._clock()
         cached = self._graph_cache
         if cached is not None and 0.0 <= now - cached[0] < self.graph_cache_ttl:
@@ -334,7 +345,16 @@ class Router:
             # a failing pw-dump costs a full timeout; do not let every HTTP poll
             # start its own while PipeWire is wedged
             raise PwError(failed[1])
-        with self._graph_fetch_lock:
+        if wait is None:
+            self._graph_fetch_lock.acquire()
+        elif not self._graph_fetch_lock.acquire(timeout=wait):
+            cached = self._graph_cache
+            age = self._clock() - cached[0] if cached is not None else None
+            if cached is not None and 0.0 <= age < self.stale_graph_limit:
+                log.debug("another pw-dump is still running; working from a picture %.1fs old", age)
+                return cached[1]
+            raise PwError("pw-dump is busy (another read is still running)")
+        try:
             cached = self._graph_cache
             if cached is not None and 0.0 <= self._clock() - cached[0] < self.graph_cache_ttl:
                 return cached[1]
@@ -349,6 +369,8 @@ class Router:
             self._graph_error = None
             self._graph_cache = (self._clock(), graph)
             return graph
+        finally:
+            self._graph_fetch_lock.release()
 
     def _invalidate_graph(self) -> None:
         self._graph_cache = None
@@ -495,7 +517,9 @@ class Router:
             now = self._clock()
             self._invalidate_graph()  # the supervisor always looks at a fresh graph
             try:
-                graph = self._fetch_graph()
+                # bounded: a slow read started by the page must not hold up a
+                # restart while the sound is out
+                graph = self._fetch_graph(wait=self.graph_wait_limit)
                 self.last_error = ""
                 if self._pw_down_logged:
                     self._pipewire_recovered()
