@@ -72,10 +72,10 @@
   /* Fenster-Signatur: blue along the top edge, gold along the bottom, hard
      colours. The approved gradients are for backgrounds, never for this line. */
   header::before, header::after {
-    content: ""; position: absolute; left: 22px; right: 22px; height: 3px; pointer-events: none;
+    content: ""; position: absolute; left: 0; right: 0; height: 3px; pointer-events: none;
   }
-  header::before { top: 0; background: var(--blue); border-radius: var(--r-xl) var(--r-xl) 0 0; }
-  header::after { bottom: -1px; background: var(--gold); border-radius: 0 0 var(--r-xl) var(--r-xl); }
+  header::before { top: 0; background: var(--blue); }
+  header::after { bottom: -1px; background: var(--gold); }
   .head-in { max-width: 1160px; margin-inline: auto; padding: 12px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   /* the logo is used as supplied and never scaled below the documented height;
      the gap keeps the clearance the brand guide asks for */
@@ -83,12 +83,7 @@
   .brand img { height: 38.8px; width: auto; display: block; }
   .brand:active { transform: scale(.96); }
   .brand:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
-  .brand-label {
-    flex: none; margin-left: 10px; padding-left: 16px; border-left: 1px solid var(--card-brd);
-    font-weight: 900; font-size: 11px; color: var(--blue); text-transform: uppercase; letter-spacing: .18em;
-  }
   .grow { flex: 1 1 auto; }
-  .site-link { margin-left: 4px; }
 
   /* ----------------------------------------------------------------- Icons */
   .i { width: 17px; height: 17px; display: block; flex: none; }
@@ -104,11 +99,6 @@
   }
 
   /* ---------------------------------------------------------------- Status */
-  .pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--r-pill); font-weight: 700; font-size: 14px; border: 1px solid transparent; }
-  .pill.ok { background: rgba(59, 118, 87, .22); border-color: rgba(59, 118, 87, .55); color: #9bd8b4; }
-  .pill.bad { background: rgba(194, 69, 63, .20); border-color: rgba(194, 69, 63, .55); color: #f0a6a2; }
-  .pill.warn { background: rgba(205, 168, 87, .18); border-color: rgba(205, 168, 87, .5); color: var(--gold-light); }
-  .pill.off { background: rgba(230, 227, 218, .08); border-color: var(--card-brd); color: var(--ink-muted); }
 
   .problem { border: 1px solid var(--card-brd); border-radius: var(--r-lg); padding: 14px 16px; margin-bottom: 8px; background: rgba(7, 22, 36, .5); }
   .problem.error { border-color: rgba(194, 69, 63, .5); background: rgba(194, 69, 63, .10); }
@@ -340,9 +330,6 @@
     .wrap { padding: 0 16px 32px; }
     .head-in { padding: 10px 16px; gap: 10px; }
     .brand img { height: 35.2px; }
-    .brand-label { margin-left: 6px; padding-left: 10px; }
-    .site-link { display: none; }
-    header::after { left: 16px; right: 16px; }
     section.panel { padding: 16px 14px 20px; }
     .grid, .summary, .problem dl { grid-template-columns: 1fr; }
     .csel { min-width: 0; width: 100%; }
@@ -426,9 +413,6 @@
     <rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/>
     <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>
   </symbol>
-  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
-  </symbol>
   <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M5 12h14"/>
   </symbol>
@@ -445,12 +429,8 @@
     <a class="brand" href="/" title="TFCZ Audio">
       <img src="logo.png" alt="Tischfussball Club Zürich" width="136" height="39">
     </a>
-    <span class="brand-label">Audio</span>
     <span class="grow"></span>
-    <span id="overall" class="pill off">Verbinde …</span>
     <button class="btn btn-ghost" id="open-wizard"><svg class="i"><use href="#i-plug"/></svg>Geräte einrichten</button>
-    <a class="btn btn-ghost site-link" href="https://tfcz.ch" target="_blank" rel="noopener">
-      <svg class="i"><use href="#i-arrow-left"/></svg>Zur Website</a>
   </div>
 </header>
 
@@ -781,13 +761,8 @@
 
   const LEVEL_ICON = { error: 'i-x', warning: 'i-alert', info: 'i-info' };
   function renderOverall() {
-    const st = state.status, pill = $('#overall'), box = $('#problems');
+    const st = state.status, box = $('#problems');
     const problems = st.problems || [];
-    const errors = problems.filter(p => p.level === 'error');
-    const warnings = problems.filter(p => p.level === 'warning');
-    if (!errors.length && !warnings.length) { pill.className = 'pill ok'; pill.innerHTML = svg('i-check') + 'Alles läuft'; }
-    else if (errors.length) { pill.className = 'pill bad'; pill.innerHTML = svg('i-x') + errors.length + ' Fehler'; }
-    else { pill.className = 'pill warn'; pill.innerHTML = svg('i-alert') + warnings.length + (warnings.length === 1 ? ' Hinweis' : ' Hinweise'); }
     box.innerHTML = problems.map(p => `
       <div class="problem ${esc(p.level)}">
         <div class="t">${svg(LEVEL_ICON[p.level] || 'i-info')}<span class="grow">${esc(p.title)}</span>
@@ -798,8 +773,6 @@
       api('POST', `/fix/device/${encodeURIComponent(b.dataset.fix)}`).then(() => { toast('behoben'); refresh(false); }, fail)));
   }
   function renderUnreachable() {
-    $('#overall').className = 'pill bad';
-    $('#overall').innerHTML = svg('i-x') + 'Router nicht erreichbar';
     $('#problems').innerHTML = `<div class="problem error"><div class="t">${svg('i-x')}<span class="grow">Der Audio-Router antwortet nicht</span></div>
       <dl><dt>Warum</dt><dd>Der Dienst startet gerade neu oder ist gestoppt. Der Ton kann trotzdem weiterlaufen; nur diese Seite erreicht ihn nicht.</dd>
       <dt>Was tun</dt><dd>Kurz warten, die Seite verbindet sich von selbst wieder. Bleibt es so: <code>systemctl --user restart tfcz-audio</code></dd></dl></div>`;
@@ -1688,7 +1661,9 @@
     } catch (e) {
       refreshing = false;
       if (/token/i.test(e.message)) {
-        $('#overall').className = 'pill warn'; $('#overall').innerHTML = svg('i-alert') + 'Token nötig';
+        $('#problems').innerHTML = `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Dieser Router braucht ein Token</span></div>
+          <dl><dt>Warum</dt><dd>Der Router ist mit einem Token geschützt, diese Seite kennt es noch nicht.</dd>
+          <dt>Was tun</dt><dd>Trag das Token unter «Erweitert» bei «Zugang» ein.</dd></dl></div>`;
         if (!state.tokenPrompted) { state.tokenPrompted = true; $('#advanced').open = true; toast('Dieser Router braucht ein API-Token: unter Erweitert bei «Zugang» eintragen', true); }
         return;
       }
