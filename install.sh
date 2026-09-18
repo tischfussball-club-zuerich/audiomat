@@ -4,6 +4,10 @@
 #
 #   ./install.sh            install/upgrade, enable the user service, start at boot
 #   ./install.sh --no-boot  same, but do not enable start-at-boot (lingering)
+#   ./install.sh --studio   also restore this studio's setup from studio/: the
+#                           config and the WirePlumber naming rules for the
+#                           headsets and the HDMI inputs (changed files are
+#                           kept as *.bak-studio-<time>)
 #   ./uninstall.sh [--purge]   (or ./install.sh --uninstall)
 set -euo pipefail
 
@@ -13,6 +17,8 @@ LIB=$PREFIX/share/tfcz-audio
 BIN=$PREFIX/bin/tfcz-audio
 UNIT_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/tfcz-audio/config.toml
+WP_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/wireplumber.conf.d
+WP_LUA_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/main.lua.d
 ME=$(id -un)
 
 if [[ $EUID -eq 0 ]]; then
@@ -21,11 +27,15 @@ if [[ $EUID -eq 0 ]]; then
 fi
 
 ENABLE_BOOT=1
-[[ ${1:-} == "--no-boot" ]] && ENABLE_BOOT=0
-
-if [[ ${1:-} == "--uninstall" ]]; then
-  exec "$HERE/uninstall.sh"
-fi
+RESTORE_STUDIO=0
+for arg in "$@"; do
+  case $arg in
+    --no-boot) ENABLE_BOOT=0 ;;
+    --studio) RESTORE_STUDIO=1 ;;
+    --uninstall) exec "$HERE/uninstall.sh" ;;
+    *) echo "usage: $0 [--no-boot] [--studio] | --uninstall" >&2; exit 2 ;;
+  esac
+done
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing: $1  ->  sudo apt install $2" >&2; exit 1; }; }
 need python3 python3
@@ -106,6 +116,71 @@ case ":$PATH:" in
   *":$PREFIX/bin:"*) ;;
   *) echo "note: $PREFIX/bin is not in PATH of this shell yet; use $BIN or log out and in (Ubuntu adds ~/.local/bin at login)." ;;
 esac
+
+# An HDMI capture input must not drive the audio graph: when its source is off
+# the card stops delivering samples and the whole graph, headsets and OBS
+# microphones included, stalls with it (docs/hdmi-capture.md). WirePlumber 0.4
+# reads Lua rules, 0.5 and newer .conf rules, and both only at start, so it is
+# restarted only when the installed rule changed.
+echo "==> HDMI capture inputs: low driver priority"
+wp_version=$(wireplumber --version 2>/dev/null | grep -oE 'libwireplumber [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' || true)
+if [[ -z $wp_version ]] || [[ ${wp_version%%.*} -eq 0 && ${wp_version##*.} -lt 5 ]]; then
+  HDMI_RULE=52-tfcz-hdmi-priority.lua;  HDMI_DIR=$WP_LUA_DIR
+  HDMI_OTHER=$WP_DIR/52-tfcz-hdmi-priority.conf
+else
+  HDMI_RULE=52-tfcz-hdmi-priority.conf; HDMI_DIR=$WP_DIR
+  HDMI_OTHER=$WP_LUA_DIR/52-tfcz-hdmi-priority.lua
+fi
+hdmi_changed=0
+# a rule left over in the other format (WirePlumber upgraded or an earlier install)
+if [[ -f $HDMI_OTHER ]]; then rm -f "$HDMI_OTHER"; hdmi_changed=1; fi
+mkdir -p "$HDMI_DIR"
+if [[ -f $HDMI_DIR/$HDMI_RULE ]] && cmp -s "$HERE/wireplumber/$HDMI_RULE" "$HDMI_DIR/$HDMI_RULE"; then
+  echo "    rule already in place ($HDMI_DIR/$HDMI_RULE)"
+else
+  cp "$HERE/wireplumber/$HDMI_RULE" "$HDMI_DIR/$HDMI_RULE"
+  echo "    installed $HDMI_DIR/$HDMI_RULE"
+  hdmi_changed=1
+fi
+# --studio: the naming rules that give the headsets and the HDMI inputs their
+# stable node names (config.toml refers to them). Lua because of WirePlumber 0.4.
+if (( RESTORE_STUDIO )); then
+  echo "==> studio: WirePlumber naming rules"
+  mkdir -p "$WP_LUA_DIR"
+  for f in "$HERE"/studio/wireplumber/*.lua; do
+    [[ -f $f ]] || continue
+    dest=$WP_LUA_DIR/$(basename "$f")
+    if [[ -f $dest ]] && cmp -s "$f" "$dest"; then
+      echo "    $(basename "$f") already in place"
+    else
+      [[ -f $dest ]] && cp "$dest" "$dest.bak-studio-$(date +%Y%m%d-%H%M%S)"
+      cp "$f" "$dest"
+      echo "    installed $dest"
+      hdmi_changed=1
+    fi
+  done
+fi
+if (( hdmi_changed )) && systemctl --user is-active --quiet wireplumber; then
+  echo "    restarting WirePlumber to apply it (audio reconnects for a moment;"
+  echo "    re-open the audio sources in OBS if they stay silent)"
+  systemctl --user restart wireplumber || true
+  sleep 3
+fi
+
+# --studio: this studio's config (headsets by USB port, routes, presets). An
+# existing, different config is kept next to it as a backup.
+if (( RESTORE_STUDIO )); then
+  echo "==> studio: config"
+  mkdir -p "$(dirname "$CONFIG")"
+  if [[ -f $CONFIG ]] && cmp -s "$HERE/studio/config.toml" "$CONFIG"; then
+    echo "    $CONFIG already matches"
+  else
+    [[ -f $CONFIG ]] && cp "$CONFIG" "$CONFIG.bak-studio-$(date +%Y%m%d-%H%M%S)" \
+      && echo "    kept the previous config as $CONFIG.bak-studio-*"
+    cp "$HERE/studio/config.toml" "$CONFIG"
+    echo "    installed $CONFIG"
+  fi
+fi
 
 first_install=0
 if [[ ! -f $CONFIG ]]; then

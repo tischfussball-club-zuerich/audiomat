@@ -51,6 +51,12 @@ systemd **user** unit and writes an example config to
 `./uninstall.sh` removes everything except config and state, `./uninstall.sh
 --purge` removes those too. `pip install .` works too if you prefer a venv.
 
+It also installs a WirePlumber rule that keeps the HDMI capture inputs from
+driving the audio graph ([docs/hdmi-capture.md](docs/hdmi-capture.md)).
+On the commentary studio's own machine, `./install.sh --studio` additionally
+restores that studio's config and WirePlumber naming rules from `studio/`;
+see [docs/studio.md](docs/studio.md).
+
 The installer checks the environment first (desktop session, PipeWire as
 the sound server, WirePlumber, tools), starts the service, verifies it is
 running and ends with `tfcz-audio doctor`, which lists every remaining

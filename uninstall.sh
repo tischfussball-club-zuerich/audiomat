@@ -58,6 +58,12 @@ kill_matching pw-record 'tfcz\.meter\.'
 
 rm -f "$UNIT_DIR/tfcz-audio.service" && echo "==> removed systemd unit"
 rm -f "$BIN" && echo "==> removed $BIN"
+for WP_RULE in "${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/wireplumber.conf.d/52-tfcz-hdmi-priority.conf" \
+               "${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/main.lua.d/52-tfcz-hdmi-priority.lua"; do
+  if [[ -f $WP_RULE ]]; then
+    rm -f "$WP_RULE" && echo "==> removed $WP_RULE (restart WirePlumber or log out and in to apply)"
+  fi
+done
 rm -rf "$LIB" && echo "==> removed $LIB"
 command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload || true
 

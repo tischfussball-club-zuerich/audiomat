@@ -66,28 +66,25 @@ its clock. PipeWire prefers PCI devices over USB, so the capture card can
 become the driver. If the HDMI source is switched off and the card stops
 delivering samples, the headset intercom can stall with it.
 
-Check once with routes running:
+`install.sh` prevents this: it installs a WirePlumber rule (the sources are in
+`wireplumber/` in this repository) and restarts WirePlumber once when the
+file changes. WirePlumber 0.4 (Ubuntu 24.04) gets
+`~/.config/wireplumber/main.lua.d/52-tfcz-hdmi-priority.lua`, 0.5 and newer
+`~/.config/wireplumber/wireplumber.conf.d/52-tfcz-hdmi-priority.conf`. The rule gives the capture
+inputs a driver priority of 100, so the USB headsets (2000) drive the graph
+and a missing HDMI source only silences that one input. It matches the
+cards by name: `HAudio 1..4` with the AVMatrix VC42 driver, `HWS` with the
+upstream driver. `uninstall.sh` removes it again.
+
+Check with routes running:
 
 ```
 pw-top        # the non-indented rows are the drivers
 ```
 
-If an `hws` node is the driver, take it out of the running with a
-WirePlumber rule (`~/.config/wireplumber/wireplumber.conf.d/52-tfcz-hdmi-priority.conf`
-on 0.5, or the Lua equivalent from the next section on 0.4):
-
-```
-monitor.alsa.rules = [
-  {
-    matches = [ { alsa.card_name = "~.*HWS.*" } ]
-    actions = { update-props = { priority.driver = 100 priority.session = 100 } }
-  }
-]
-```
-
-Lower numbers lose the election; the USB headsets (driver priority around
-1000 for sinks) then drive the graph. Restart WirePlumber and check
-`pw-top` again.
+The HDMI capture nodes should not be among them while the headsets are
+connected. If one still is, `tfcz-audio devices -p` shows the card's
+properties to adapt the `matches` line to.
 
 ## Stable node names for the four inputs
 

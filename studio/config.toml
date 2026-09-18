@@ -1,0 +1,95 @@
+# tfcz-audio configuration (generated; comments are not preserved).
+# Volumes: 1.0 = 0 dB, 0.5 ~ -18 dB, max 1.5. Node names: `tfcz-audio devices`.
+
+
+[api]
+listen = "127.0.0.1"
+port = 8787
+token = ""
+
+[audio]
+latency = "auto"
+channels = 2
+meters = true
+
+[virtual]
+obs_mix_name = "tfcz.obsmix"
+obs_mic_name = "tfcz.obsmic"
+obs_mic_description = "TFCZ OBS Mic"
+outputs = { obs_mic_a = { description = "TFCZ Links", mix_name = "tfcz.obsmix.a", mic_name = "tfcz.obsmic.a" }, obs_mic_b = { description = "TFCZ Rechts", mix_name = "tfcz.obsmix.b", mic_name = "tfcz.obsmic.b" } }
+
+[devices]
+headset_a_mic = { match = { "device.bus-path" = "pci-0000:09:00.0-usb-0:1.2:1.0", kind = "input" } }
+headset_a_out = { match = { "device.bus-path" = "pci-0000:09:00.0-usb-0:1.2:1.0", kind = "output" } }
+headset_b_mic = { match = { "device.bus-path" = "pci-0000:0f:00.3-usb-0:2:1.0", kind = "input" } }
+headset_b_out = { match = { "device.bus-path" = "pci-0000:0f:00.3-usb-0:2:1.0", kind = "output" } }
+game_sound = "alsa_input.avmatrix-maincam"
+
+[labels]
+headset_a = "Links"
+headset_b = "Rechts"
+game_sound = "Game sound"
+
+[routes.a_to_b]
+description = "Links spricht zu Rechts"
+from = "headset_a_mic"
+to = "headset_b_out"
+volume = 1.0
+
+[routes.b_to_a]
+description = "Rechts spricht zu Links"
+from = "headset_b_mic"
+to = "headset_a_out"
+volume = 1.0
+
+[routes.a_to_obs]
+description = "Links auf dem Stream"
+from = "headset_a_mic"
+to = "obs_mic_a"
+volume = 1.0
+
+[routes.b_to_obs]
+description = "Rechts auf dem Stream"
+from = "headset_b_mic"
+to = "obs_mic_b"
+volume = 1.0
+
+[routes.game_to_a]
+description = "Game sound für Links"
+from = "game_sound"
+to = "headset_a_out"
+volume = 0.6
+
+[routes.game_to_b]
+description = "Game sound für Rechts"
+from = "game_sound"
+to = "headset_b_out"
+volume = 0.6
+
+[presets.everything_on]
+a_to_b = 1.0
+b_to_a = 1.0
+a_to_obs = 1.0
+b_to_obs = 1.0
+game_to_a = 0.6
+game_to_b = 0.6
+
+[presets.mics_off_air]
+a_to_obs = { mute = true }
+b_to_obs = { mute = true }
+
+[presets.mics_on_air]
+a_to_obs = { mute = false }
+b_to_obs = { mute = false }
+
+[presets.game_quiet]
+game_to_a = 0.3
+game_to_b = 0.3
+
+[presets.game_off]
+game_to_a = { mute = true }
+game_to_b = { mute = true }
+
+[presets.game_on]
+game_to_a = { mute = false }
+game_to_b = { mute = false }
