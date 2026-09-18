@@ -734,3 +734,47 @@ class RepairApiTests(ApiTestCase):
         status, body = self.call("POST", "/repair/" + urllib.parse.quote("start-sound; reboot", safe=""),
                                  headers={"Origin": self.base})
         self.assertEqual(status, 404)
+
+
+class DiagnosticsLockTests(unittest.TestCase):
+    """Asking for a check while one is running must answer, not wedge.
+
+    The answer used to be taken while the lock was held, which deadlocked that
+    request for good -- and with the lock never released, every later call
+    hung too, including the page polling for the result.
+    """
+
+    def test_a_second_start_answers_instead_of_hanging(self):
+        import threading
+
+        from tfcz_audio.api import Diagnostics
+
+        diagnostics = Diagnostics()
+        diagnostics.running = True  # as if a check were in flight
+        diagnostics.kind = "doctor"
+        result = {}
+
+        def ask():
+            result["state"] = diagnostics.start("doctor", None)
+
+        thread = threading.Thread(target=ask, daemon=True)
+        thread.start()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "start() deadlocked on its own lock")
+        self.assertTrue(result["state"]["running"])
+
+    def test_reading_the_state_still_works_afterwards(self):
+        import threading
+
+        from tfcz_audio.api import Diagnostics
+
+        diagnostics = Diagnostics()
+        diagnostics.running = True
+        # never on this thread: a deadlock here would hang the whole test run
+        # instead of failing it
+        started = threading.Event()
+        threading.Thread(target=lambda: (diagnostics.start("selftest", None), started.set()), daemon=True).start()
+        self.assertTrue(started.wait(timeout=5), "start() deadlocked")
+        done = threading.Event()
+        threading.Thread(target=lambda: (diagnostics.state(), done.set()), daemon=True).start()
+        self.assertTrue(done.wait(timeout=5), "the lock was left taken")

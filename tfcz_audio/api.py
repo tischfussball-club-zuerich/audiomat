@@ -91,7 +91,10 @@ class Diagnostics:
             raise BadRequest(f"unknown check '{kind}'")
         with self._lock:
             if self.running:
-                return self.state()
+                # taking the lock again in state() would deadlock here, and the
+                # lock would stay taken: every later call, including the page
+                # polling for the result, would hang for good
+                return self._snapshot()
             self.kind, self.output, self.running = kind, "", True
             self.started, self.finished, self.rc = time.time(), 0.0, None
         threading.Thread(target=self._run, name=f"diag-{kind}", args=(kind, router), daemon=True).start()
@@ -127,16 +130,20 @@ class Diagnostics:
             self.running = False
             self.finished = time.time()
 
+    def _snapshot(self) -> dict[str, Any]:
+        """The caller holds the lock; never takes it itself."""
+        return {
+            "kind": self.kind,
+            "running": self.running,
+            "output": self.output,
+            "rc": self.rc,
+            "age": round(time.time() - self.finished, 1) if self.finished else None,
+            "seconds": round((time.time() if self.running else self.finished) - self.started, 1) if self.started else 0,
+        }
+
     def state(self) -> dict[str, Any]:
         with self._lock:
-            return {
-                "kind": self.kind,
-                "running": self.running,
-                "output": self.output,
-                "rc": self.rc,
-                "age": round(time.time() - self.finished, 1) if self.finished else None,
-                "seconds": round((time.time() if self.running else self.finished) - self.started, 1) if self.started else 0,
-            }
+            return self._snapshot()
 
 
 def _journal(level: str, limit: int) -> tuple[list[dict[str, Any]], str]:
