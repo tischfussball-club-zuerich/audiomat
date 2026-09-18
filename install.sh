@@ -92,6 +92,14 @@ echo "==> installed $BIN ($("$BIN" --version))"
 mkdir -p "$UNIT_DIR"
 # the unit must point at the wrapper wherever PREFIX put it
 sed "s|^ExecStart=.*|ExecStart=$BIN run|" "$HERE/systemd/tfcz-audio.service" > "$UNIT_DIR/tfcz-audio.service"
+# RestartSteps and RestartMaxDelaySec exist from systemd 254 (Ubuntu 23.10).
+# Older versions warn about them in the journal on every start; drop them there
+# so the log stays readable. The backoff is a nicety, the restart is not.
+systemd_version=$(systemctl --version 2>/dev/null | head -1 | grep -oE '[0-9]+' | head -1 || echo 0)
+if (( systemd_version < 254 )); then
+  sed -i '/^RestartSteps=/d; /^RestartMaxDelaySec=/d' "$UNIT_DIR/tfcz-audio.service"
+  echo "    (systemd $systemd_version: restart backoff directives removed, they need systemd 254+)"
+fi
 chmod 0644 "$UNIT_DIR/tfcz-audio.service"
 systemctl --user daemon-reload
 case ":$PATH:" in

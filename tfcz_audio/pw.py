@@ -541,7 +541,10 @@ class PipeWireBackend:
         try:
             # explicit UTF-8: the systemd user environment may run with a C/POSIX locale, and device
             # descriptions ("Kopfhörer") would otherwise raise UnicodeDecodeError
-            proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout, check=False)
+            # stdin closed: a helper that ever waited for input would otherwise
+            # sit there until the timeout, once per call
+            proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
+                                  timeout=timeout, check=False, stdin=subprocess.DEVNULL)
         except FileNotFoundError as exc:
             raise PwError(f"{cmd[0]} not found; install pipewire-bin/wireplumber") from exc
         except subprocess.TimeoutExpired as exc:
@@ -674,8 +677,29 @@ class DrainedProcess:
     def stderr_tail(self) -> str:
         return "\n".join([*self._head, *self._lines])
 
+    def _release(self) -> None:
+        """Let the draining thread finish.
+
+        It sits in readline() until the write end of the pipe is closed. The
+        helper itself closes it when it exits -- unless it left a child behind
+        that inherited it, and then the thread would wait forever. One leaked
+        thread per restart adds up on a machine that runs for weeks, so the
+        pipe is closed here as well; the reader ends with ValueError, which it
+        already handles.
+        """
+        stream = self._proc.stderr
+        if stream is None or stream.closed:
+            return
+        try:
+            stream.close()
+        except (OSError, ValueError):
+            pass
+
     def poll(self) -> int | None:
-        return self._proc.poll()
+        code = self._proc.poll()
+        if code is not None:
+            self._release()
+        return code
 
     def terminate(self) -> None:
         self._proc.terminate()
@@ -684,7 +708,10 @@ class DrainedProcess:
         self._proc.kill()
 
     def wait(self, timeout: float | None = None) -> int:
-        return self._proc.wait(timeout=timeout)
+        try:
+            return self._proc.wait(timeout=timeout)
+        finally:
+            self._release()
 
 
 class _DryProcess:

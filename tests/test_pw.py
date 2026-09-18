@@ -148,3 +148,49 @@ class BrokenDumpTests(unittest.TestCase):
             self.assertIn("cannot talk to PipeWire", router.last_error)
         finally:
             router.stop()
+
+
+class DrainedProcessTests(unittest.TestCase):
+    """The stderr reader must end with the helper, even when the helper leaves
+    a child holding the pipe: one leaked thread per restart adds up on a
+    machine that runs for weeks."""
+
+    def test_the_reader_ends_when_the_helper_is_terminated(self):
+        import subprocess
+        import threading
+        import time
+
+        from tfcz_audio.pw import DrainedProcess
+
+        before = threading.active_count()
+        # sh keeps the pipe open through its child, so terminating sh alone
+        # would leave the reader waiting
+        procs = [DrainedProcess(subprocess.Popen(["/bin/sh", "-c", "sleep 30"],
+                                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+                 for _ in range(10)]
+        self.assertGreaterEqual(threading.active_count(), before + 10)
+        for proc in procs:
+            proc.terminate()
+        for proc in procs:
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        deadline = time.monotonic() + 5
+        while threading.active_count() > before and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertLessEqual(threading.active_count(), before, "stderr readers outlived their helpers")
+
+    def test_the_error_message_survives_the_cleanup(self):
+        import subprocess
+        import time
+
+        from tfcz_audio.pw import DrainedProcess
+
+        proc = DrainedProcess(subprocess.Popen(["/bin/sh", "-c", "echo 'cannot connect' >&2; exit 1"],
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
+        deadline = time.monotonic() + 5
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertIn("cannot connect", proc.stderr_tail)
+        self.assertIn("cannot connect", proc.stderr_head)
