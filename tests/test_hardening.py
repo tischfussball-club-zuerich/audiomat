@@ -482,3 +482,92 @@ class StateFileTests(unittest.TestCase):
                 self.assertTrue(status["mute"])
             finally:
                 router.stop()
+
+
+class PipeWireRestartTests(unittest.TestCase):
+    """The audio system is restarted under the running daemon -- an update, a
+    crash, `systemctl --user restart pipewire`. Every node comes back with a
+    new id and every helper of ours is gone. Nobody is going to fix that by
+    hand during a tournament."""
+
+    def test_everything_comes_back_by_itself(self):
+        from tfcz_audio.pw import PwError
+        from tfcz_audio.router import Router
+
+        clock = [1000.0]
+        backend = fake_backend()
+        router = Router(minimal_config(), backend, node_wait=0.01,
+                        sleep=lambda s: None, clock=lambda: clock[0])
+        router.start()
+        for _ in range(3):
+            router.reconcile()
+        self.assertTrue(all(r["connected"] for r in router.status()["routes"].values()))
+
+        real_graph = backend.graph
+        down = [True]
+
+        def flaky(*args, **kwargs):
+            if down[0]:
+                raise PwError("connection refused")
+            return real_graph(*args, **kwargs)
+
+        backend.graph = flaky
+        try:
+            for _ in range(3):
+                clock[0] += 1.0
+                router.reconcile()
+            self.assertIn("cannot talk to PipeWire", router.last_error)
+            self.assertTrue(any("Tonsystem" in p["title"] for p in router.problems()))
+
+            # back up: same names, different ids, our own nodes gone
+            graph = real_graph()
+            survivors = [n for n in graph.nodes.values() if not n.name.startswith("tfcz.")]
+            graph.nodes.clear()
+            graph.links.clear()
+            for node in survivors:
+                node.id += 1000
+                graph.nodes[node.id] = node
+            for proc in router.procs.values():
+                if hasattr(proc, "returncode"):
+                    proc.returncode = 1
+            down[0] = False
+
+            for _ in range(15):
+                clock[0] += 1.0
+                router.reconcile()
+                if all(r["connected"] for r in router.status()["routes"].values()):
+                    break
+            else:
+                self.fail(f"did not recover: {router.status()['routes']}")
+            self.assertEqual(router.last_error, "")
+            self.assertEqual(router.problems(), [])
+        finally:
+            backend.graph = real_graph
+            router.stop()
+
+    def test_a_flapping_session_does_not_spin_the_helpers(self):
+        """Restarting helpers as fast as PipeWire flaps would make it worse."""
+        from tfcz_audio.pw import PwError
+        from tfcz_audio.router import Router
+
+        clock = [1000.0]
+        backend = fake_backend()
+        spawns = []
+        real_spawn = backend.spawn_loopback
+        backend.spawn_loopback = lambda spec: (spawns.append(spec.name), real_spawn(spec))[1]
+        router = Router(minimal_config(), backend, node_wait=0.01,
+                        sleep=lambda s: None, clock=lambda: clock[0])
+        router.start()
+        real_graph = backend.graph
+        up = [True]
+        backend.graph = lambda *a, **k: real_graph(*a, **k) if up[0] else (_ for _ in ()).throw(PwError("gone"))
+        try:
+            spawns.clear()
+            for i in range(60):
+                up[0] = i % 2 == 0
+                clock[0] += 0.5
+                router.reconcile()
+            self.assertLess(len(spawns), 40, f"respawned {len(spawns)} times while the session flapped")
+        finally:
+            backend.graph = real_graph
+            router.stop()
