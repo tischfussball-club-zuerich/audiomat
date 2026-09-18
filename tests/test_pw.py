@@ -194,3 +194,49 @@ class DrainedProcessTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertIn("cannot connect", proc.stderr_tail)
         self.assertIn("cannot connect", proc.stderr_head)
+
+
+class SpaEscapingTests(unittest.TestCase):
+    """Device labels and descriptions are typed by people and end up in the
+    property string of pw-loopback. Nothing in them may change the meaning of
+    that string, or of the command line around it."""
+
+    HOSTILE = ['a"b', "a'b", "a{b}c", "a\\b", "a\nb", "a\rb", "a\tb", "ä ö ü", "🎧",
+               '} node.name = "tfcz.evil" {', "$(id)", "`id`", "; reboot", "‮", "x\x00y", "a" * 500]
+
+    def test_hostile_text_stays_one_value(self):
+        import json
+
+        from tfcz_audio.pw import spa_json
+
+        for text in self.HOSTILE:
+            with self.subTest(repr(text)):
+                rendered = spa_json({"node.description": text, "node.name": "tfcz.keep"})
+                # the whole string, to the character: nothing in the text can
+                # end the value early and start a property of its own
+                self.assertEqual(rendered, '{ node.description = ' + json.dumps(text) + ' node.name = "tfcz.keep" }')
+                self.assertNotIn("\n", rendered)
+                self.assertNotIn("\x00", rendered)
+
+    def test_the_command_line_never_gains_an_argument(self):
+        from tfcz_audio.pw import LoopbackSpec
+
+        plain = LoopbackSpec(name="tfcz.x", capture_props={"node.description": "harmless"},
+                             playback_props={"node.description": "harmless"}).command()
+        for text in self.HOSTILE:
+            spec = LoopbackSpec(name="tfcz.x", capture_props={"node.description": text},
+                                playback_props={"node.description": text})
+            command = spec.command()
+            with self.subTest(repr(text)):
+                self.assertEqual(len(command), len(plain), command)
+                self.assertEqual(command[:6], plain[:6])
+                self.assertTrue(command[-2].startswith("--capture-props="))
+                self.assertTrue(command[-1].startswith("--playback-props="))
+                self.assertFalse(any("\x00" in part for part in command))
+
+    def test_device_aliases_are_restricted_before_they_travel(self):
+        from tfcz_audio.config import ConfigError, parse
+
+        for alias in ("weird alias", "with\nnewline", "UPPER", "a b", "-leading", ""):
+            with self.subTest(alias), self.assertRaises(ConfigError):
+                parse({"devices": {alias: "alsa_input.a"}})

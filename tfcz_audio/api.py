@@ -7,6 +7,7 @@ segments, e.g. ``POST /routes/hdmi_to_a/volume/0.3``.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
@@ -404,10 +405,13 @@ class Handler(BaseHTTPRequestHandler):
         token = self.server.token
         if not token:
             return True
+        # compare_digest instead of ==: a plain comparison returns as soon as
+        # two characters differ, and over a network that difference is
+        # measurable. The cost here is nothing.
         header = self.headers.get("Authorization") or ""
-        if header.startswith("Bearer ") and header[7:].strip() == token:
+        if header.startswith("Bearer ") and hmac.compare_digest(header[7:].strip(), token):
             return True
-        return str(params.get("token", "")) == token
+        return hmac.compare_digest(str(params.get("token", "")), token)
 
     # ------------------------------------------------------------- dispatch
 
