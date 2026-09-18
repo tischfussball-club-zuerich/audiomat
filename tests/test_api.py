@@ -676,3 +676,21 @@ class CopyButtonTests(ApiTestCase):
             page = resp.read().decode()
         self.assertIn('href="/api-docs"', page)
         self.assertIn('href="/openapi.json"', page)
+
+
+class WizardModalTests(ApiTestCase):
+    def test_the_wizard_is_a_real_dialog(self):
+        """It covers the page while it runs, so it needs the parts that make a
+        dialog usable: a role, a way out with Esc and no scrolling behind it."""
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        self.assertIn('<div id="wizard" hidden>', page)
+        self.assertRegex(page, r'class="panel wiz-card" role="dialog" aria-modal="true"')
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        self.assertIn("document.body.style.overflow = 'hidden'", script)
+        self.assertIn("closeWizard", script)
+        # Esc must not close the dialog from under an open dropdown
+        self.assertIn('document.querySelector(\'.csel[data-open="1"]\')', script)

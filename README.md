@@ -97,9 +97,11 @@ who do not care about audio plumbing:
 * **Volume controls**: one card per arrow with a percent slider and an
   On/Off switch.
 * **Quick settings**: the presets as big buttons.
-* **Set up devices**: a three-step wizard. Pick person A's headset (speak
-  into it, the right bar moves), person B's headset, and the game sound
-  input, give them names, and press Connect. It builds the standard layout:
+* **Set up devices**: a three-step wizard, opened from the header as a
+  dialog over the page so nothing else can be changed halfway through
+  (Esc or a click beside it closes). Pick person A's headset (speak into
+  it, the right bar moves), person B's headset, and the game sound input,
+  give them names, and press Connect. It builds the standard layout:
   A hears B and the game, B hears A and the game, OBS hears A and B.
 * **Advanced** (collapsed), in four tabs:
   * **Einrichtung**: names, device assignment, connections, defaults.

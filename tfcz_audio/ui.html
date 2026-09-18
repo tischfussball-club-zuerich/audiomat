@@ -312,7 +312,26 @@
   @keyframes sp { to { transform: rotate(360deg); } }
 
   /* ---------------------------------------------------------------- Wizard */
-  #wizard { border-color: rgba(205, 168, 87, .45); }
+  /* the wizard covers the page while it is open: it is a task with steps, and
+     the controls behind it would only invite changing two things at once */
+  #wizard[hidden] { display: none; }
+  #wizard {
+    position: fixed; inset: 0; z-index: 70; display: flex; justify-content: center; align-items: flex-start;
+    padding: 24px 16px; overflow: auto; overscroll-behavior: contain;
+    background: rgba(4, 14, 24, .72); backdrop-filter: blur(4px);
+    animation: fade var(--t-base) var(--ease);
+  }
+  #wizard .wiz-card {
+    width: min(920px, 100%); margin: 0; max-height: calc(100vh - 48px); overflow: auto;
+    border-color: rgba(205, 168, 87, .45); box-shadow: var(--e-2);
+    animation: rise var(--t-base) var(--bounce);
+  }
+  #wizard .wiz-card:focus { outline: none; }
+  @keyframes fade { from { opacity: 0; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+  @media (prefers-reduced-motion: reduce) {
+    #wizard, #wizard .wiz-card { animation: none; }
+  }
   .steps { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0 16px; }
   .steps span { padding: 5px 12px; border-radius: var(--r-pill); background: rgba(230, 227, 218, .07); color: var(--ink-muted); font-size: 13px; font-weight: 700; }
   .steps span.cur { background: var(--blue-2); color: #fff; }
@@ -348,6 +367,8 @@
     .head-in { padding: 10px 16px; gap: 10px; }
     .brand img { height: 35.2px; }
     section.panel { padding: 16px 14px 20px; }
+    #wizard { padding: 12px 10px; }
+    #wizard .wiz-card { max-height: calc(100vh - 24px); }
     .grid, .summary, .problem dl { grid-template-columns: 1fr; }
     .vtable { grid-template-columns: 1fr; gap: 2px; }
     .vtable .n { margin-top: 8px; }
@@ -462,19 +483,21 @@
 <div class="wrap">
   <div id="problems" style="margin-top:16px"></div>
 
-  <section class="panel" id="wizard" hidden>
-    <span class="eyebrow">TFCZ · Zürich</span>
-    <h2>Geräte einrichten</h2>
-    <div class="steps" id="wiz-steps"></div>
-    <div id="wiz-body"></div>
-    <div class="wizbtns">
-      <button class="btn btn-ghost" id="wiz-cancel">Abbrechen</button>
-      <div class="row">
-        <button class="btn btn-ghost" id="wiz-back">Zurück</button>
-        <button class="btn btn-blue" id="wiz-next">Weiter</button>
+  <div id="wizard" hidden>
+    <section class="panel wiz-card" role="dialog" aria-modal="true" aria-labelledby="wiz-title" tabindex="-1">
+      <span class="eyebrow">TFCZ · Zürich</span>
+      <h2 id="wiz-title">Geräte einrichten</h2>
+      <div class="steps" id="wiz-steps"></div>
+      <div id="wiz-body"></div>
+      <div class="wizbtns">
+        <button class="btn btn-ghost" id="wiz-cancel">Abbrechen</button>
+        <div class="row">
+          <button class="btn btn-ghost" id="wiz-back">Zurück</button>
+          <button class="btn btn-blue" id="wiz-next">Weiter</button>
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
   <section class="panel">
     <span class="eyebrow">Übersicht</span>
@@ -1634,10 +1657,36 @@
     state.wiz = { step: 0, a: null, b: null, game: null, noGame: false,
                   nameA: labels.headset_a || '', nameB: labels.headset_b || '', nameGame: labels.game_sound || '' };
     $('#wizard').hidden = false;
+    // the page behind must not scroll away under the dialog
+    document.body.style.overflow = 'hidden';
     loadHardware().then(() => renderWizard());
-    $('#wizard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    $('.wiz-card').focus();
   }
-  function closeWizard() { state.wiz = null; $('#wizard').hidden = true; api('POST', '/meters/watch', { clear: true }).catch(() => {}); }
+  function wizardOpen() { return !$('#wizard').hidden; }
+  function closeWizard() {
+    state.wiz = null;
+    $('#wizard').hidden = true;
+    document.body.style.overflow = '';
+    $('#open-wizard').focus();
+    api('POST', '/meters/watch', { clear: true }).catch(() => {});
+  }
+  // klick daneben und Esc schliessen, wie bei jedem Dialog; ein offenes
+  // Auswahlfeld verarbeitet Esc aber zuerst selbst
+  $('#wizard').addEventListener('mousedown', e => { if (e.target === $('#wizard')) closeWizard(); });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !wizardOpen() || document.querySelector('.csel[data-open="1"]')) return;
+    closeWizard();
+  });
+  // Tab darf nicht hinter den Dialog wandern
+  $('#wizard').addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const focusable = [...$('.wiz-card').querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter(el => !el.disabled && el.offsetParent !== null);
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && (document.activeElement === first || document.activeElement === $('.wiz-card'))) { e.preventDefault(); last.focus(); }
+  });
   let lastHardwareKey = '';
   async function loadHardware() {
     try {
