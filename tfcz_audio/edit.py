@@ -38,7 +38,7 @@ def set_devices(router: Router, devices: dict[str, Any]) -> dict[str, Any]:
     clean: dict[str, Any] = {}
     for alias, value in devices.items():
         if not isinstance(alias, str) or not alias.strip():
-            raise EditError("device alias must be a non-empty string")
+            raise EditError("Ein Gerätename darf nicht leer sein")
         alias = alias.strip()
         if isinstance(value, str) and value.strip():
             clean[alias] = value.strip()
@@ -61,7 +61,7 @@ def set_devices(router: Router, devices: dict[str, Any]) -> dict[str, Any]:
 
 def upsert_route(router: Router, name: str, spec: dict[str, Any]) -> dict[str, Any]:
     if "from" not in spec or "to" not in spec:
-        raise EditError("route needs 'from' and 'to'")
+        raise EditError("Eine Verbindung braucht «von» und «zu»")
     entry: dict[str, Any] = {"from": str(spec["from"]), "to": str(spec["to"])}
     if spec.get("description"):
         entry["description"] = str(spec["description"])
@@ -69,7 +69,7 @@ def upsert_route(router: Router, name: str, spec: dict[str, Any]) -> dict[str, A
         try:
             entry["volume"] = float(spec["volume"])
         except (TypeError, ValueError):
-            raise EditError("volume must be a number") from None
+            raise EditError("Die Lautstärke muss eine Zahl sein") from None
     if spec.get("mute"):
         entry["mute"] = True
     if spec.get("capture_sink"):
@@ -99,7 +99,7 @@ def delete_route(router: Router, name: str) -> dict[str, Any]:
 
 def upsert_preset(router: Router, name: str, entries: dict[str, Any]) -> dict[str, Any]:
     if not entries:
-        raise EditError("preset needs at least one route")
+        raise EditError("Eine Voreinstellung braucht mindestens eine Verbindung")
 
     def mutate(data: dict[str, Any]) -> None:
         data["presets"][name] = entries
@@ -165,7 +165,7 @@ GAME_ALIAS = "game_sound"
 
 def _pair(spec: Any, label: str) -> tuple[str, str, str]:
     if not isinstance(spec, dict) or not spec.get("mic") or not spec.get("out"):
-        raise EditError(f"{label}: pick a headset with a microphone and headphones")
+        raise EditError(f"{label}: wähl ein Headset mit Mikrofon und Kopfhörer")
     name = str(spec.get("label") or "").strip()
     return str(spec["mic"]), str(spec["out"]), name
 
@@ -194,9 +194,9 @@ def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
     a_mic, a_out, a_label = _pair(body.get("headset_a"), "Headset A")
     b_mic, b_out, b_label = _pair(body.get("headset_b"), "Headset B")
     if {a_mic, a_out} & {b_mic, b_out}:
-        raise EditError("Headset A and Headset B must be two different devices")
+        raise EditError("Headset A und Headset B müssen zwei verschiedene Geräte sein")
     if a_label and b_label and a_label.lower() == b_label.lower():
-        raise EditError("Give the two headsets different names")
+        raise EditError("Gib den beiden Headsets verschiedene Namen")
     game = body.get("game") or None
     game_label = str(body.get("game_label") or "").strip()
     # identity: serial number when unique, else USB port, else fixed name
@@ -206,9 +206,9 @@ def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
     try:
         game_volume = float(body.get("game_volume", 0.6))
     except (TypeError, ValueError):
-        raise EditError("game_volume must be a number") from None
+        raise EditError("Die Lautstärke des Spieltons muss eine Zahl sein") from None
     if game and game in (a_mic, b_mic, a_out, b_out):
-        raise EditError("The game sound input cannot be part of a headset; pick the HDMI capture input")
+        raise EditError("Der Spielton kann nicht von einem Headset kommen; wähl den HDMI-Aufnahmeeingang")
     separate = bool(body.get("separate_obs", router.cfg.virtual.separate))
 
     def mutate(data: dict[str, Any]) -> None:

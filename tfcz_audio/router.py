@@ -877,7 +877,7 @@ class Router:
             state = self.desired[name]
             if volume is not None:
                 if not 0.0 <= volume <= MAX_VOLUME:
-                    raise RouterError(f"volume must be between 0 and {MAX_VOLUME}")
+                    raise RouterError(f"Die Lautstärke muss zwischen 0 und {MAX_VOLUME} liegen")
                 state.volume = round(float(volume), 4)
             if mute is not None:
                 state.mute = bool(mute)
@@ -926,7 +926,7 @@ class Router:
         graph = self._graph_or_empty()
         node = self._device_node(alias, graph)
         if node is None:
-            raise RouterError(f"{human(self.cfg, alias)} is not connected")
+            raise RouterError(f"{human(self.cfg, alias)} ist nicht angeschlossen")
         if node.mute:
             self.backend.set_mute(node.id, False)
         if node.volume is not None and node.volume < 0.05:
@@ -1345,7 +1345,7 @@ class Router:
         from .pw import QUANTUM_CHOICES, persist_quantum
 
         if frames not in QUANTUM_CHOICES:
-            raise RouterError(f"buffer size must be one of {', '.join(str(c) for c in QUANTUM_CHOICES)}")
+            raise RouterError(f"Die Puffergrösse muss eine davon sein: {', '.join(str(c) for c in QUANTUM_CHOICES)}")
         self.backend.set_force_quantum(frames)
         if persist:
             persist_quantum(frames)
@@ -1863,5 +1863,5 @@ class Router:
         graph = self._graph_or_empty()
         node = graph.by_name(node_name)
         if node is None:
-            raise RouterError(f"{node_name} is not connected")
+            raise RouterError(f"{node_name} ist nicht angeschlossen")
         return identity_for(node, graph)

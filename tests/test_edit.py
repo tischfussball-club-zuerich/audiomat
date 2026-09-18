@@ -223,3 +223,76 @@ class ConcurrentEditTests(unittest.TestCase):
                     self.assertIn(f"r{i}", router.cfg.routes, "an edit was overwritten by a parallel one")
             finally:
                 router.stop()
+
+
+class GermanErrorTests(unittest.TestCase):
+    """The page is German and its users are not technical. An error that
+    reaches them as a toast has to be in the same language as the button that
+    produced it."""
+
+    ENGLISH_GIVEAWAYS = (" must ", " is not ", "pick ", " needs ", "Give ", " cannot ")
+
+    def test_what_the_wizard_can_trigger_speaks_german(self):
+        import tempfile
+        from pathlib import Path as P
+
+        from tfcz_audio import edit
+        from tfcz_audio.config import ConfigError, save
+        from tfcz_audio.router import Router, RouterError
+
+        from .helpers import fake_backend, minimal_config
+
+        bad_bodies = [
+            {},
+            {"headset_a": {"mic": "alsa_input.a"}, "headset_b": {"mic": "alsa_input.b", "out": "alsa_output.b"}},
+            {"headset_a": {"mic": "alsa_input.a", "out": "alsa_output.a"},
+             "headset_b": {"mic": "alsa_input.a", "out": "alsa_output.a"}},
+            {"headset_a": {"mic": "alsa_input.a", "out": "alsa_output.a", "label": "Hans"},
+             "headset_b": {"mic": "alsa_input.b", "out": "alsa_output.b", "label": "hans"}},
+            {"headset_a": {"mic": "alsa_input.a", "out": "alsa_output.a"},
+             "headset_b": {"mic": "alsa_input.b", "out": "alsa_output.b"}, "game": "alsa_input.a"},
+            {"headset_a": {"mic": "alsa_input.a", "out": "alsa_output.a"},
+             "headset_b": {"mic": "alsa_input.b", "out": "alsa_output.b"}, "game_volume": "laut"},
+            {"headset_a": {"mic": "alsa_input.a", "out": "alsa_output.a"},
+             "headset_b": {"mic": "alsa_input.b", "out": "alsa_output.b"}, "game": "gibtsnicht"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = P(tmp) / "config.toml"
+            cfg = minimal_config()
+            cfg.path = path
+            save(cfg, path)
+            router = Router(cfg, fake_backend(), node_wait=0.02, sleep=lambda s: None)
+            router.start()
+            try:
+                for body in bad_bodies:
+                    with self.subTest(str(body)[:60]):
+                        with self.assertRaises((ConfigError, RouterError)) as caught:
+                            edit.setup(router, body)
+                        message = str(caught.exception)
+                        for giveaway in self.ENGLISH_GIVEAWAYS:
+                            self.assertNotIn(giveaway, f" {message} ", message)
+            finally:
+                router.stop()
+
+    def test_route_and_volume_errors_speak_german_too(self):
+        from tfcz_audio import edit
+        from tfcz_audio.config import ConfigError
+        from tfcz_audio.router import Router, RouterError
+
+        from .helpers import fake_backend, minimal_config
+
+        router = Router(minimal_config(), fake_backend(), node_wait=0.02, sleep=lambda s: None)
+        router.start()
+        try:
+            with self.assertRaises(ConfigError) as caught:
+                edit.upsert_route(router, "x", {"from": "a_mic"})
+            self.assertIn("«von» und «zu»", str(caught.exception))
+            with self.assertRaises(RouterError) as caught:
+                router.set_route("a_to_b", volume=99)
+            self.assertIn("Lautstärke", str(caught.exception))
+            with self.assertRaises(RouterError) as caught:
+                router.fix_device("a_mic_missing" if "a_mic_missing" in router.cfg.devices else "nope")
+        except Exception:
+            raise
+        finally:
+            router.stop()
