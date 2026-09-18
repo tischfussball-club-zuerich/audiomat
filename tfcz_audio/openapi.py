@@ -114,6 +114,14 @@ PATHS: dict[str, dict[str, Any]] = {
                                     params=[_query("seconds", "Messdauer", {"type": "number"})])},
     "/analysis": {"post": _op("Tonsystem analysieren", "Wer gibt den Takt vor, wo geht Ton verloren, wer hängt sonst noch im Graph.",
                               tag="Diagnose", params=[_query("seconds", "Messdauer", {"type": "number"})])},
+    "/repair": {"get": _op(
+        "Was am System kaputt ist und sich richten lässt",
+        "Fehlende Pakete, ein nicht laufendes Tonsystem, ein Dienst ohne Autostart. Jeder Eintrag sagt, "
+        "ob er von hier aus ausgeführt werden kann oder Administratorrechte braucht.", tag="Wartung")},
+    "/repair/{action}": {"post": _op(
+        "Eine Reparatur ausführen", "Die Kennung wählt einen der gemeldeten Einträge; der Befehl selbst "
+        "stammt immer aus einer frischen Prüfung.", tag="Wartung",
+        params=[_path("action", "Kennung aus /repair, z. B. start-sound")])},
     "/diagnostics": {
         "get": _op("Letzten Prüfbericht lesen", tag="Diagnose"),
         "post": _op("Prüfung starten", tag="Diagnose",

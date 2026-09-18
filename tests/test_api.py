@@ -2,6 +2,7 @@ import json
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from tfcz_audio.api import BadRequest, extract_route_params, parse_bool, serve
@@ -714,3 +715,22 @@ class ChecklistTests(ApiTestCase):
         # ticks survive a reload but must never break the page when storage is off
         self.assertIn("localStorage.getItem('tfcz-checklist')", script)
         self.assertIn("catch (e) { return {}; }", script)
+
+
+class RepairApiTests(ApiTestCase):
+    def test_the_plan_is_readable_and_says_whether_root_is_available(self):
+        status, body = self.call("GET", "/repair")
+        self.assertEqual(status, 200)
+        self.assertIn("actions", body)
+        self.assertIn("available", body["root"])
+        self.assertIn("run", body)
+
+    def test_an_unknown_repair_is_refused(self):
+        status, body = self.call("POST", "/repair/whatever", headers={"Origin": self.base})
+        self.assertEqual(status, 404)
+        self.assertFalse(body["ok"])
+
+    def test_a_repair_id_is_never_treated_as_a_command(self):
+        status, body = self.call("POST", "/repair/" + urllib.parse.quote("start-sound; reboot", safe=""),
+                                 headers={"Origin": self.base})
+        self.assertEqual(status, 404)

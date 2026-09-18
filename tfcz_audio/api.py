@@ -237,6 +237,9 @@ class ApiServer(ThreadingHTTPServer):
         self.meters = meters
         self.listen_host = address[0]
         self.diagnostics = Diagnostics()
+        from .repair import Runner
+
+        self.repairs = Runner()
         super().__init__(address, Handler)
 
 
@@ -484,6 +487,23 @@ class Handler(BaseHTTPRequestHandler):
 
             fresh = str(params.get("fresh", "")).lower() in TRUE_WORDS
             return ok, {"ok": True, **versions.collect(fresh)}
+        if seg == ["repair"] and read:
+            from . import repair
+
+            return ok, {"ok": True, **repair.plan(router), "run": self.server.repairs.state()}
+        if len(seg) == 2 and seg[0] == "repair" and write:
+            from . import repair
+
+            action = repair.action_by_id(seg[1], router)
+            if action is None:
+                return HTTPStatus.NOT_FOUND, {"ok": False, "error": f"nichts zu reparieren unter '{seg[1]}'"}
+            if action.manual:
+                raise BadRequest("Diese Reparatur greift zu tief ein und läuft nur von Hand.")
+            root = repair.root_mode()
+            if action.needs_root and not root["available"] and not action.python:
+                raise BadRequest(root["why"])
+            result = self.server.repairs.start(action, root)
+            return (ok if result["started"] else HTTPStatus.CONFLICT), {"ok": result["started"], **result}
         if seg == ["diagnostics"] and read:
             return ok, {"ok": True, **self.server.diagnostics.state()}
         if seg == ["diagnostics"] and write:

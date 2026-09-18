@@ -649,6 +649,82 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------- fix
+
+
+def cmd_fix(args: argparse.Namespace) -> int:
+    """Show what is broken about the system and repair it.
+
+    In a terminal this is the better place for the repairs that need root:
+    sudo can ask for a password here, which it cannot do from a web page.
+    """
+    from . import repair
+
+    router = None
+    try:
+        cfg, _ = load_or_recover(find_config(args.config))
+        router = Router(cfg, PipeWireBackend())
+        router.refresh_devices()
+    except Exception:  # noqa: BLE001 - the plan works without a router too
+        router = None
+
+    actions = repair.detect(router)
+    if not actions:
+        print("Nichts zu reparieren: alles, was sich prüfen lässt, ist in Ordnung.")
+        return 0
+
+    wanted = set(getattr(args, "action", []) or [])
+    if not wanted and not args.all:
+        print("Gefunden:\n")
+        for a in actions:
+            print(f"  {a.id}")
+            print(f"    {a.title}")
+            print(f"    {a.why}")
+            if a.command:
+                print(f"    Befehl: {'sudo ' if a.needs_root and os.getuid() else ''}{' '.join(a.command)}")
+            if a.note:
+                print(f"    Hinweis: {a.note}")
+            print()
+        print("Ausführen: tfcz-audio fix <id> [<id> …]   oder   tfcz-audio fix --all")
+        return 0
+
+    problems = 0
+    for a in actions:
+        if wanted and a.id not in wanted:
+            continue
+        if a.manual and not wanted:
+            continue  # --all never runs the deep ones
+        if a.manual:
+            print(f"[{a.id}] läuft nur von Hand:\n  {' '.join(a.command)}\n  {a.note}")
+            continue
+        print(f"=== {a.title}")
+        problems += _apply_fix(a)
+    return 1 if problems else 0
+
+
+def _apply_fix(action: Any) -> int:
+    """Run one repair with the terminal attached, so sudo can prompt."""
+    from . import repair
+
+    if action.python:
+        runner = repair.Runner()
+        rc = runner._python_fix(action)  # noqa: SLF001 - same module, deliberately shared
+        print(runner.output.strip())
+        return 0 if rc == 0 else 1
+    cmd = list(action.command)
+    if action.needs_root and os.getuid() != 0:
+        cmd = ["sudo", *cmd]
+    print("$ " + " ".join(cmd))
+    try:
+        rc = subprocess.call(cmd)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"liess sich nicht starten: {exc}")
+        return 1
+    if rc != 0:
+        print(f"Befehl endete mit {rc}")
+    return 0 if rc == 0 else 1
+
+
 # ----------------------------------------------------------------- versions
 
 
@@ -890,6 +966,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--seconds", type=float, default=2.0, help="how long to record per device")
     s.add_argument("--fake", action="store_true", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_selftest)
+
+    s = sub.add_parser("fix", help="show what is broken about the system and repair it")
+    s.add_argument("action", nargs="*", help="ids to run; without any, the list is only shown")
+    s.add_argument("--all", action="store_true", help="run everything that is safe to run")
+    s.set_defaults(func=cmd_fix)
 
     s = sub.add_parser("versions", help="show the versions of every tool this router depends on")
     s.add_argument("--json", action="store_true")

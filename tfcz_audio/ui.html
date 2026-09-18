@@ -637,6 +637,17 @@
           </div>
           <pre class="report" id="diag-output" hidden></pre>
 
+          <h3>System reparieren</h3>
+          <p class="hint">Was am Rechner selbst fehlt oder falsch steht — fehlende Programme, ein nicht gestartetes
+            Tonsystem, ein Dienst, der beim Neustart nicht mitkommt. Was sich gefahrlos richten lässt, richtet dieser
+            Knopf. Was Administratorrechte braucht, steht als Befehl da und lässt sich kopieren.</p>
+          <div class="row">
+            <button class="btn" id="repair-scan"><svg class="i"><use href="#i-wrench"/></svg>Nach Problemen suchen</button>
+            <span class="hint" style="margin:0" id="repair-state"></span>
+          </div>
+          <div id="repair"></div>
+          <pre class="report" id="repair-log" hidden></pre>
+
           <h3>Was läuft im Tonsystem</h3>
           <p class="hint">Misst kurz mit und zeigt, wer den Takt vorgibt, mit welcher Puffergrösse gearbeitet wird und wo
             Ton verloren geht. Auch Knoten, die nicht zu diesem Router gehören, etwa eine eigene Filterkette.</p>
@@ -1305,6 +1316,56 @@
   $('#vers-text').addEventListener('change', e => {
     $('#versions-text').hidden = !e.target.checked;
     $('#versions').hidden = e.target.checked;
+  });
+
+  // --------------------------------------------------- System reparieren
+  let repairTimer = null;
+  function renderRepair(d) {
+    const box = $('#repair'), run = d.run || {};
+    const actions = d.actions || [];
+    if (d.healthy) {
+      box.innerHTML = `<div class="problem info"><div class="t">${svg('i-check')}<span class="grow">Am System ist nichts zu richten</span></div>
+        <dl><dd>Alle Programme sind da, das Tonsystem läuft und der Dienst startet von selbst.</dd></dl></div>`;
+    } else {
+      box.innerHTML = actions.map(a => `
+        <div class="problem ${a.manual ? 'warning' : 'info'}">
+          <div class="t">${svg(a.manual ? 'i-alert' : 'i-wrench')}<span class="grow">${esc(a.title)}</span>
+            ${a.runnable ? `<button class="btn btn-sm" data-repair="${esc(a.id)}">${svg('i-wrench', 'i-sm')}Beheben</button>` : ''}</div>
+          <dl>
+            <dt>Warum</dt><dd>${esc(a.why)}</dd>
+            ${a.effect ? `<dt>Folge</dt><dd>${esc(a.effect)}</dd>` : ''}
+            ${a.command ? `<dt>Befehl</dt><dd><code>${a.needs_root ? 'sudo ' : ''}${esc(a.command)}</code></dd>` : ''}
+            ${a.note ? `<dt>Hinweis</dt><dd>${esc(a.note)}</dd>` : ''}
+            ${!a.runnable && !a.manual ? `<dt>Warum nicht von hier</dt><dd>${esc((d.root || {}).why || '')}</dd>` : ''}
+          </dl>
+        </div>`).join('');
+      box.querySelectorAll('button[data-repair]').forEach(b => b.addEventListener('click', () => {
+        b.disabled = true;
+        api('POST', `/repair/${encodeURIComponent(b.dataset.repair)}`).then(showRepairRun, e => { b.disabled = false; fail(e); });
+      }));
+    }
+    showRepairRun({ run });
+  }
+  function showRepairRun(d) {
+    const run = d.run || d;
+    const out = $('#repair-log');
+    if (run.output) { out.hidden = false; out.innerHTML = reportHtml(run.output); }
+    if (run.running) {
+      $('#repair-state').innerHTML = `<span class="spin"></span> ${esc(run.title || 'Reparatur')} läuft … (${run.seconds}s)`;
+      if (!repairTimer) repairTimer = setInterval(loadRepair, 1200);
+    } else {
+      if (run.title) $('#repair-state').textContent = run.rc === 0 ? `${run.title}: erledigt` : `${run.title}: fehlgeschlagen`;
+      if (repairTimer) { clearInterval(repairTimer); repairTimer = null; if (run.title) loadRepair(); }
+    }
+  }
+  function loadRepair() {
+    return api('GET', '/repair').then(renderRepair, e => {
+      $('#repair').innerHTML = `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Prüfung nicht möglich</span></div><dl><dd>${esc(e.message)}</dd></dl></div>`;
+    });
+  }
+  $('#repair-scan').addEventListener('click', () => {
+    $('#repair-state').innerHTML = '<span class="spin"></span> prüft …';
+    loadRepair().then(() => { if (!repairTimer) $('#repair-state').textContent = ''; });
   });
 
   // -------------------------------------------- Prüfliste zum Selbstprüfen

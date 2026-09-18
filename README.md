@@ -113,9 +113,10 @@ who do not care about audio plumbing:
     **Vollbild** opens it over the whole window with zoom controls; on a
     real setup the graph is far wider than the panel. Plus and minus zoom,
     `einpassen` fits it, and Escape closes.
-  * **Diagnose**: the checks, the audio-system analysis (including what
-    profile, how many channels and which sample rate each device really
-    runs at), the by-hand checklist for bad sound, and the log.
+  * **Diagnose**: the checks, **System reparieren**, the audio-system
+    analysis (including what profile, how many channels and which sample
+    rate each device really runs at), the by-hand checklist for bad sound,
+    and the log.
   * **System**: API token, config path, which build is running, and an
     **Aktualisieren** button that runs `git pull` and `./install.sh` and
     shows their output. It only works from a git checkout, and it runs as
@@ -312,8 +313,35 @@ tfcz-audio devices [-p]                 PipeWire audio nodes (+ ALSA card props)
 tfcz-audio check                        validate config, report missing devices
 tfcz-audio selftest [--seconds N]       record from every device and show what arrives
 tfcz-audio versions [--json]            versions of every tool this router depends on
+tfcz-audio fix [id ...] [--all]         what is broken about the system, and repair it
 tfcz-audio run [--dry-run]              run the daemon in the foreground
 ```
+
+### Repairing the system
+
+**Erweitert → Diagnose → System reparieren** looks at the machine around
+the router: missing packages, an audio session that is not running, a
+service that will not come back after a reboot, lingering, PulseAudio
+answering instead of PipeWire, sample rates that do not match, leftover
+helper processes. Each finding says what it breaks and carries the exact
+command.
+
+What can be done without being root is done at the press of a button:
+starting and enabling the audio session, enabling this service, writing a
+PipeWire drop-in, cleaning up leftover helpers. For the rest nothing is
+escalated quietly — a passwordless `sudo` is used when the system already
+allows it, otherwise `pkexec` asks on the desktop, and when neither is
+possible the command is shown to be pasted into a terminal. Swapping
+PulseAudio for PipeWire is never offered as a button: it changes the whole
+machine, so it is shown as a command only.
+
+The ids never become part of a command line. A request names one of the
+router's own findings, and the command that runs is rebuilt from a fresh
+check, so a repair cannot be replayed once the problem is gone.
+
+`tfcz-audio fix` does the same from a terminal, and is the better place
+for the repairs that need root, because `sudo` can ask for a password
+there. Without arguments it lists what it found.
 
 ## HTTP API
 
@@ -348,6 +376,8 @@ client can drive it.
 | GET | `/config` | current config as JSON (token hidden) |
 | GET / PUT | `/audio` | read or change the system-wide buffer size (`quantum` in frames, 0 = automatic, `persist` to keep it) |
 | POST | `/audio/dropouts` | measure dropouts with pw-top |
+| GET | `/repair` | what is broken about the system and what can be repaired from here |
+| POST | `/repair/{action}` | run one of those repairs |
 | GET | `/versions` | versions of PipeWire, WirePlumber, the tools, the capture driver and the packages (`fresh=1` skips the 20 s cache) |
 | GET / POST | `/diagnostics` | read the last report, or start one (`kind`: `doctor` or `selftest`) |
 | GET | `/logs` | recent log lines (`level`, `limit`, `source`: `memory` or `journal`) |
