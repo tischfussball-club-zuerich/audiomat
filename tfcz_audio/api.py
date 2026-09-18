@@ -419,6 +419,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise BadRequest("quantum must be a number of frames (0 = automatic)") from None
             persist = params.get("persist") in (True, "true", "1")
             return ok, {"ok": True, **router.set_audio_buffer(frames, persist)}
+        if seg == ["graph"] and read:
+            return ok, {"ok": True, **router.signal_graph()}
         if seg == ["analysis"] and write:
             try:
                 seconds = float(params.get("seconds", 3.0))

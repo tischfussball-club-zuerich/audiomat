@@ -238,6 +238,13 @@
   .tab[aria-selected="true"] { color: var(--ink-strong); background: rgba(205, 168, 87, .10); box-shadow: var(--brand-select); }
   .tab[aria-selected="true"] .i { color: var(--gold); }
   .tabpanel > h3:first-of-type { margin-top: 18px; }
+  #wiring { overflow: auto; max-height: 620px; border: 1px solid var(--card-brd); border-radius: var(--r-lg); background: rgba(5, 17, 28, .45); margin-top: 10px; }
+  #wiring svg { display: block; }
+  #wiring .nd rect { transition: opacity var(--t-fast) var(--ease); }
+  #wiring .nd { cursor: default; }
+  #wiring .dim { opacity: .18; }
+  .legend .cat { display: inline-flex; align-items: center; gap: 7px; }
+  .legend .cat i { width: 11px; height: 11px; border-radius: 3px; border-top: 0; display: block; }
   table.an { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
   table.an th { text-align: left; color: var(--ink-muted); font-weight: 700; font-size: 12px; padding: 6px 10px; border-bottom: 1px solid var(--card-brd); }
   table.an td { padding: 7px 10px; border-bottom: 1px solid rgba(92,167,220,.10); vertical-align: top; }
@@ -446,6 +453,7 @@
         <div class="tabs" role="tablist" aria-label="Erweiterte Einstellungen">
           <button class="tab" role="tab" data-tab="setup" aria-selected="true"><svg class="i"><use href="#i-plug"/></svg>Einrichtung</button>
           <button class="tab" role="tab" data-tab="sound" aria-selected="false"><svg class="i"><use href="#i-volume"/></svg>Klang</button>
+          <button class="tab" role="tab" data-tab="wiring" aria-selected="false"><svg class="i"><use href="#i-sliders"/></svg>Signalweg</button>
           <button class="tab" role="tab" data-tab="diag" aria-selected="false"><svg class="i"><use href="#i-activity"/></svg>Diagnose</button>
           <button class="tab" role="tab" data-tab="system" aria-selected="false"><svg class="i"><use href="#i-file"/></svg>System</button>
         </div>
@@ -512,6 +520,19 @@
             <button class="btn" id="dropout-check"><svg class="i"><use href="#i-activity"/></svg>Auf Aussetzer prüfen</button>
           </div>
           <div id="dropout-result"></div>
+        </section>
+
+        <section class="tabpanel" data-tab="wiring" role="tabpanel" hidden>
+          <p class="hint">Die gesamte Verkabelung des Tonsystems, nicht nur die Verbindungen dieses Routers.
+            Links die Quellen, rechts die Ziele; jede Linie ist eine echte Verbindung. Zeigt auch, was sonst noch
+            an einem Gerät hängt und wo ein Weg wirklich endet. Fahr über einen Kasten, um seine Linien zu sehen.</p>
+          <div class="row">
+            <button class="btn btn-blue" id="wiring-load"><svg class="i"><use href="#i-refresh"/></svg>Verkabelung anzeigen</button>
+            <label class="check"><input type="checkbox" id="wiring-all"> auch unverbundene Geräte</label>
+            <span class="hint" style="margin:0" id="wiring-state"></span>
+          </div>
+          <div class="legend" id="wiring-legend"></div>
+          <div id="wiring"></div>
         </section>
 
         <section class="tabpanel" data-tab="diag" role="tabpanel" hidden>
@@ -957,6 +978,7 @@
     });
   });
   const TAB_ALIASES = { setup: 'setup', einrichtung: 'setup', sound: 'sound', klang: 'sound',
+                        wiring: 'wiring', signalweg: 'wiring', verkabelung: 'wiring',
                         diag: 'diag', diagnose: 'diag', system: 'system' };
   function openTabFromHash() {
     const want = TAB_ALIASES[(location.hash || '').replace('#', '').toLowerCase()];
@@ -1154,6 +1176,108 @@
     if (logTimer) { clearInterval(logTimer); logTimer = null; }
     if (e.target.checked) { loadLog(); logTimer = setInterval(loadLog, 3000); }
   });
+
+  // --------------------------------------------------------- Verkabelung
+  const WIRE_COLOUR = { router: '#5ca7dc', device: '#cda857', filter: '#c2453f', app: '#9aa7b2', system: '#6b7a88', other: '#6b7a88' };
+  function layerNodes(nodes, links) {
+    const layer = new Map(nodes.map(n => [n.id, 0]));
+    for (let pass = 0; pass < 12; pass++) {
+      let moved = false;
+      for (const l of links) {
+        if (!layer.has(l.from) || !layer.has(l.to)) continue;
+        if (layer.get(l.from) + 1 > layer.get(l.to)) { layer.set(l.to, layer.get(l.from) + 1); moved = true; }
+      }
+      if (!moved) break;   // a cycle would otherwise run forever
+    }
+    return layer;
+  }
+  function renderWiring(g) {
+    const box = $('#wiring');
+    const showAll = $('#wiring-all').checked;
+    const nodes = g.nodes.filter(n => showAll || n.connected);
+    if (!nodes.length) { box.innerHTML = '<p class="hint" style="padding:14px">Nichts zu zeigen.</p>'; return; }
+    const keep = new Set(nodes.map(n => n.id));
+    const links = g.links.filter(l => keep.has(l.from) && keep.has(l.to));
+
+    const layer = layerNodes(nodes, links);
+    const columns = [];
+    nodes.forEach(n => { const i = layer.get(n.id); (columns[i] = columns[i] || []).push(n); });
+    // two barycentre passes: fewer crossing lines, much easier to read
+    const incoming = new Map(nodes.map(n => [n.id, []]));
+    links.forEach(l => incoming.get(l.to).push(l.from));
+    const place = new Map();
+    columns.forEach((col, i) => {
+      if (i === 0) col.sort((a, b) => (a.category + a.friendly).localeCompare(b.category + b.friendly));
+      else col.sort((a, b) => bary(a) - bary(b));
+      col.forEach((n, j) => place.set(n.id, j));
+      function bary(n) {
+        const parents = (incoming.get(n.id) || []).map(id => place.get(id)).filter(v => v !== undefined);
+        return parents.length ? parents.reduce((x, y) => x + y, 0) / parents.length : 99;
+      }
+    });
+
+    const COL = 250, NW = 210, NH = 46, GAP = 12, PAD = 16;
+    const rows = Math.max(...columns.map(c => c.length));
+    const W = PAD * 2 + columns.length * COL - (COL - NW);
+    const H = PAD * 2 + rows * (NH + GAP);
+    const pos = new Map();
+    columns.forEach((col, i) => col.forEach((n, j) => pos.set(n.id, { x: PAD + i * COL, y: PAD + j * (NH + GAP) })));
+
+    const edges = links.map(l => {
+      const a = pos.get(l.from), b = pos.get(l.to);
+      const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2, mx = (x1 + x2) / 2;
+      const base = l.internal ? 'rgba(205,168,87,.5)' : 'rgba(92,167,220,.45)';
+      return `<path class="ln" data-a="${l.from}" data-b="${l.to}" data-base="${base}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"
+        fill="none" stroke="${base}" stroke-width="${l.internal ? 1.6 : Math.min(4, 1.2 + l.channels * 0.6)}"
+        ${l.internal ? 'stroke-dasharray="6 5"' : ''}/>`;
+    }).join('');
+
+    const boxes = nodes.map(n => {
+      const p = pos.get(n.id), c = WIRE_COLOUR[n.category] || WIRE_COLOUR.other;
+      const sub = [n.detail, n.media_class.replace('Audio/', '').replace('Stream/', '')].filter(Boolean).join(' · ');
+      return `<g class="nd" data-id="${n.id}">
+        <title>${esc(n.name)}</title>
+        <rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="9" fill="rgba(7,22,36,.85)" stroke="${c}"
+          stroke-width="${n.route ? 2 : 1.2}" ${n.connected ? '' : 'stroke-dasharray="5 4"'}/>
+        <rect x="${p.x}" y="${p.y}" width="4" height="${NH}" rx="2" fill="${c}"/>
+        <text x="${p.x + 12}" y="${p.y + 19}" font-size="12.5" font-weight="700" fill="#fff">${esc(ellipsis(n.friendly, 27))}</text>
+        <text x="${p.x + 12}" y="${p.y + 35}" font-size="10.5" fill="rgba(230,227,218,.55)">${esc(ellipsis(sub, 32))}</text>
+      </g>`;
+    }).join('');
+
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg"
+      role="img" aria-label="Verkabelung des Tonsystems">${edges}${boxes}</svg>`;
+    box.querySelectorAll('.nd').forEach(el => {
+      const id = Number(el.dataset.id);
+      el.addEventListener('mouseenter', () => {
+        const near = new Set([id]);
+        box.querySelectorAll('.ln').forEach(ln => {
+          const a = Number(ln.dataset.a), b = Number(ln.dataset.b);
+          const hit = a === id || b === id;
+          ln.classList.toggle('dim', !hit);
+          if (hit) { ln.setAttribute('stroke', 'var(--gold)'); near.add(a); near.add(b); }
+        });
+        box.querySelectorAll('.nd').forEach(o => o.classList.toggle('dim', !near.has(Number(o.dataset.id))));
+      });
+      el.addEventListener('mouseleave', () => {
+        box.querySelectorAll('.ln').forEach(ln => { ln.classList.remove('dim'); ln.setAttribute('stroke', ln.dataset.base); });
+        box.querySelectorAll('.nd').forEach(o => o.classList.remove('dim'));
+      });
+    });
+    const counts = {};
+    nodes.forEach(n => counts[n.category] = (counts[n.category] || 0) + 1);
+    const CAT_DE = { router: 'dieser Router', device: 'Gerät', filter: 'fremde Filterkette', app: 'Programm', system: 'System', other: 'sonstiges' };
+    $('#wiring-legend').innerHTML = Object.entries(counts).map(([k, v]) =>
+      `<span class="cat"><i style="background:${WIRE_COLOUR[k] || WIRE_COLOUR.other}"></i>${esc(CAT_DE[k] || k)} (${v})</span>`).join('')
+      + '<span class="cat"><i style="background:rgba(205,168,87,.6)"></i>im Router weitergereicht</span>';
+    $('#wiring-state').textContent = `${nodes.length} Knoten, ${links.length} Verbindungen`;
+  }
+  function loadWiring() {
+    $('#wiring-state').innerHTML = '<span class="spin"></span> wird gelesen …';
+    return api('GET', '/graph').then(g => { state.wiring = g; renderWiring(g); }, fail);
+  }
+  $('#wiring-load').addEventListener('click', loadWiring);
+  $('#wiring-all').addEventListener('change', () => { if (state.wiring) renderWiring(state.wiring); else loadWiring(); });
 
   // ------------------------------------------------- Analyse des Tonsystems
   const CATEGORY = {

@@ -1253,6 +1253,85 @@ class Router:
         except PwError as exc:
             return {"available": False, "errors": 0, "nodes": [], "drivers": [], "error": str(exc)}
 
+    def signal_graph(self) -> dict[str, Any]:
+        """Every audio node and every link between them, labelled by owner.
+
+        This is the whole wiring, not just our routes: it shows what else is
+        attached to a device and where a path really ends up.
+        """
+        from .pw import classify_node, describe_node
+
+        graph = self._graph_or_empty()
+        route_of = {}
+        for name, route in self.cfg.routes.items():
+            route_of[route.in_node] = (name, "in")
+            route_of[route.out_node] = (name, "out")
+
+        nodes: dict[int, dict[str, Any]] = {}
+        for node in graph.nodes.values():
+            media = node.media_class
+            if not (media.startswith("Audio/") or media.startswith("Stream/")):
+                continue
+            if media.startswith("Stream/") and "Audio" not in media and media != "Stream/Input" and media != "Stream/Output":
+                continue
+            info = describe_node(node, graph)
+            kind = "sink" if media.startswith("Audio/Sink") else "source" if media.startswith("Audio/Source") else "stream"
+            route_hit = route_of.get(node.name)
+            if route_hit:
+                route_name, side = route_hit
+                friendly = self._route_label(self.cfg.routes[route_name])
+                detail = "nimmt auf" if side == "in" else "gibt aus"
+            elif node.name == self.cfg.virtual.obs_mix_name:
+                friendly, detail = "Mischspur für OBS", "sammelt die Mikrofone"
+            elif node.name == self.cfg.virtual.obs_mic_name:
+                friendly, detail = self.cfg.virtual.obs_mic_description, "was OBS aufnimmt"
+            else:
+                friendly, detail = info["friendly"] or node.name, info.get("device_name") or ""
+            nodes[node.id] = {
+                "id": node.id,
+                "name": node.name,
+                "friendly": friendly,
+                "detail": detail,
+                "category": classify_node(node.name, node, graph),
+                "media_class": media,
+                "kind": kind,
+                "route": route_hit[0] if route_hit else None,
+                "device": info.get("device_name") or "",
+                "state": node.state,
+                "muted": bool(node.mute),
+                "default": any(node.name == v for v in graph.defaults.values()),
+            }
+
+        seen: dict[tuple[int, int], dict[str, Any]] = {}
+        for link in graph.links:
+            if link.output_node not in nodes or link.input_node not in nodes:
+                continue
+            key = (link.output_node, link.input_node)
+            entry = seen.setdefault(key, {"from": link.output_node, "to": link.input_node, "channels": 0})
+            entry["channels"] += 1
+
+        # A loopback's two streams carry the audio between them inside the
+        # module, with no PipeWire link. Without that hop the picture puts every
+        # playback stream in the first column, which reads backwards.
+        by_name = {n["name"]: n["id"] for n in nodes.values()}
+        internal = [(self.cfg.routes[r].in_node, self.cfg.routes[r].out_node) for r in self.cfg.routes]
+        internal.append((self.cfg.virtual.obs_mix_name, self.cfg.virtual.obs_mic_name))
+        for src_name, dst_name in internal:
+            a, b = by_name.get(src_name), by_name.get(dst_name)
+            if a is not None and b is not None:
+                seen.setdefault((a, b), {"from": a, "to": b, "channels": 1, "internal": True})
+
+        for entry in seen.values():
+            entry.setdefault("internal", False)
+        linked = {i for pair in seen for i in pair}
+        for node_id, node in nodes.items():
+            node["connected"] = node_id in linked
+        return {
+            "nodes": sorted(nodes.values(), key=lambda n: (n["kind"], n["name"])),
+            "links": list(seen.values()),
+            "defaults": dict(graph.defaults),
+        }
+
     def analyse(self, seconds: float = 3.0) -> dict[str, Any]:
         """A full picture of the audio system: who drives it, at what buffer
         size, who drops samples, and which nodes belong to this router, to real

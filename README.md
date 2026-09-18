@@ -104,6 +104,11 @@ who do not care about audio plumbing:
 * **Advanced** (collapsed), in four tabs:
   * **Einrichtung**: names, device assignment, connections, defaults.
   * **Klang**: buffer size and the dropout measurement.
+  * **Signalweg**: the whole wiring of the audio system drawn as a graph,
+    not only this router's connections. Sources on the left, targets on
+    the right, one line per real link, colour-coded by owner; hovering a
+    box highlights its lines. The hop a loopback makes internally is drawn
+    dashed, otherwise every playback stream would look like a source.
   * **Diagnose**: the checks, the audio-system analysis and the log.
   * **System**: API token, config path, which build is running, and an
     **Aktualisieren** button that runs `git pull` and `./install.sh` and
@@ -300,6 +305,7 @@ client can drive it.
 | GET | `/` | web UI (`/#setup` opens the wizard) |
 | GET | `/levels` | live signal levels per device and for the OBS mic |
 | GET | `/hardware` | plugged-in hardware grouped by device, with identity strategy |
+| GET | `/graph` | every audio node and link, labelled by owner, for the wiring view |
 | POST | `/setup` | `{headset_a: {mic, out, label}, headset_b: {...}, game, game_label}`: build the standard layout |
 | POST | `/fix/device/{alias}` | unmute a device / raise its system volume |
 | PUT | `/config/labels` | replace the names |

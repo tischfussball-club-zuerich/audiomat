@@ -1121,8 +1121,10 @@ def classify_node(name: str, node: Node | None, graph: Graph) -> str:
     if name in ("Dummy-Driver", "Freewheel-Driver", "Midi-Bridge"):
         return "system"
     by_name = _classify_by_name(name)
-    if by_name == "filter":
-        return "filter"  # capture.* / playback.* / *-clean: a filter chain's own streams
+    if by_name in ("filter", "device"):
+        # capture.* / playback.* / *-clean belong to a filter chain, alsa_* and
+        # bluez_* to hardware; both are clear from the name alone
+        return by_name
     if node is None:
         return by_name
     props = node.props

@@ -521,3 +521,34 @@ class UpdateTests(ApiTestCase):
         code, body = self.call("POST", "/update", {})
         self.assertEqual(code, 409)
         self.assertIn("bereits", body["problem"])
+
+
+class SignalGraphTests(ApiTestCase):
+    def test_graph_includes_the_hop_inside_each_loopback(self):
+        """A loopback's two streams carry audio between them with no PipeWire
+        link, so without that hop every playback stream looks like a source."""
+        code, body = self.call("GET", "/graph")
+        self.assertEqual(code, 200)
+        by_id = {n["id"]: n for n in body["nodes"]}
+        pairs = {(by_id[l["from"]]["name"], by_id[l["to"]]["name"]): l for l in body["links"]}
+        self.assertIn(("tfcz.a_to_b.in", "tfcz.a_to_b.out"), pairs)
+        self.assertTrue(pairs[("tfcz.a_to_b.in", "tfcz.a_to_b.out")]["internal"])
+        self.assertIn(("tfcz.obsmix", "tfcz.obsmic"), pairs, "the virtual mic pair is joined too")
+        real = pairs[("alsa_input.a", "tfcz.a_to_b.in")]
+        self.assertFalse(real["internal"], "a real link is not marked internal")
+
+    def test_nodes_are_labelled_for_people(self):
+        code, body = self.call("GET", "/graph")
+        by_name = {n["name"]: n for n in body["nodes"]}
+        self.assertEqual(by_name["tfcz.a_to_b.in"]["friendly"], self.router._route_label(self.router.cfg.routes["a_to_b"]))
+        self.assertEqual(by_name["tfcz.a_to_b.in"]["detail"], "nimmt auf")
+        self.assertEqual(by_name["tfcz.a_to_b.out"]["detail"], "gibt aus")
+        self.assertEqual(by_name["tfcz.obsmix"]["friendly"], "Mischspur für OBS")
+        self.assertEqual(by_name["tfcz.a_to_b.in"]["route"], "a_to_b")
+
+    def test_unconnected_devices_are_marked_not_dropped(self):
+        self.backend.add_device("alsa_output.spare", "Audio/Sink")
+        code, body = self.call("GET", "/graph")
+        spare = next(n for n in body["nodes"] if n["name"] == "alsa_output.spare")
+        self.assertFalse(spare["connected"])
+        self.assertEqual(spare["category"], "device")
