@@ -160,10 +160,26 @@ PORT=$(grep -E '^port *= *[0-9]+' "$CONFIG" | head -1 | grep -oE '[0-9]+' || ech
 # Prove that the running service serves the files just installed. A plain
 # `systemctl restart` re-runs the installed copy and cannot pick up a git pull.
 installed_build=$(sha256sum "$LIB/tfcz_audio/ui.html" 2>/dev/null | cut -c1-8 || echo "?")
-serving_build=$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null | grep -o '"build": *"[^"]*"' | cut -d'"' -f4 || true)
+health=$(curl -fsS --max-time 3 "http://127.0.0.1:${PORT}/health" 2>/dev/null || true)
+serving_build=$(printf '%s' "$health" | grep -o '"build": *"[^"]*"' | cut -d'"' -f4 || true)
+serving_module=$(printf '%s' "$health" | grep -o '"module": *"[^"]*"' | cut -d'"' -f4 || true)
+service_active=0
+command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet tfcz-audio && service_active=1
 echo
-if [[ -z $serving_build ]]; then
-  echo "==> could not ask the running service for its version (is it up?)"
+if (( ! service_active )); then
+  # Whatever answers on that port is not this service. Saying "serves the files
+  # just installed" here once sent someone hunting in the wrong place for an
+  # hour: a daemon started by hand from a checkout was answering.
+  echo "==> the service is not running, so nothing was verified" >&2
+  if [[ -n $serving_build ]]; then
+    echo "    note: something else answers on port ${PORT} (${serving_module:-unknown location})." >&2
+    echo "    stop it before starting the service, or they will fight over the port." >&2
+  fi
+elif [[ -z $serving_build ]]; then
+  echo "==> the service runs but does not answer on port ${PORT} yet"
+elif [[ $serving_module != "$LIB/tfcz_audio" && -n $serving_module ]]; then
+  echo "==> WARNING: the answer on port ${PORT} comes from ${serving_module}, not from ${LIB}/tfcz_audio" >&2
+  echo "    another copy is running: systemctl --user cat tfcz-audio | grep ExecStart" >&2
 elif [[ $serving_build == "$installed_build" ]]; then
   echo "==> the service serves the files just installed (build $serving_build)"
 else

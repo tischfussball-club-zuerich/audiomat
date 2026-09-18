@@ -18,6 +18,17 @@ if [[ $EUID -eq 0 ]]; then
   exit 1
 fi
 
+# Everything below deletes. A mangled environment (HOME unset, PREFIX pointing
+# somewhere unexpected) must not turn that into deleting something else.
+for pair in "LIB:$LIB:/share/tfcz-audio" "BIN:$BIN:/bin/tfcz-audio" \
+            "CONFIG_DIR:$CONFIG_DIR:/tfcz-audio" "STATE_DIR:$STATE_DIR:/tfcz-audio"; do
+  name=${pair%%:*}; rest=${pair#*:}; path=${rest%:*}; suffix=${rest##*:}
+  if [[ -z $path || $path != *"$suffix" || $path == "$suffix" ]]; then
+    echo "refusing to run: $name is '$path', which does not look like an installation" >&2
+    exit 1
+  fi
+done
+
 purge=0
 case ${1:-} in
   "") ;;
