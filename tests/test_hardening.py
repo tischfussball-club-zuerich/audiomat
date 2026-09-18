@@ -393,3 +393,34 @@ class ForgottenStateTests(unittest.TestCase):
                 self.assertAlmostEqual(router.route_status("again")["volume"], 0.9, places=3)
             finally:
                 router.stop()
+
+
+class ConnectionLimitTests(ApiTestCase):
+    """The API may be put on the LAN. A client gone wrong must not be able to
+    spawn threads until the machine gives up while the stream is running."""
+
+    def test_connections_beyond_the_limit_are_refused_not_queued(self):
+        import socket
+
+        self.server.max_connections = 4
+        held = []
+        try:
+            for _ in range(4):
+                sock = socket.create_connection(self.server.server_address[:2], timeout=5)
+                sock.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n")  # deliberately unfinished
+                held.append(sock)
+            extra = socket.create_connection(self.server.server_address[:2], timeout=5)
+            held.append(extra)
+            extra.sendall(b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n")
+            answer = extra.recv(200)
+            self.assertIn(b"503", answer)
+        finally:
+            for sock in held:
+                sock.close()
+
+    def test_the_count_comes_back_down_so_refusals_are_not_permanent(self):
+        self.server.max_connections = 4
+        for _ in range(10):
+            status, _ = self.call("GET", "/health")
+            self.assertEqual(status, 200)
+        self.assertLessEqual(self.server._connections, 1)

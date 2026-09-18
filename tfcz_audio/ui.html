@@ -2074,6 +2074,13 @@
       if (!state.wiz && !state.autoOpened && (!Object.keys(state.status.routes).length || location.hash === '#setup')) { state.autoOpened = true; openWizard(); }
     } catch (e) {
       console.error('Darstellung fehlgeschlagen', e);
+      // a half-empty page with no explanation is the worst outcome: say it
+      // right away, and keep saying it while it lasts
+      $('#problems').dataset.sig = '';
+      $('#problems').innerHTML = `<div class="problem error"><div class="t">${svg('i-x')}<span class="grow">Diese Seite kann die Antwort des Routers nicht darstellen</span></div>
+        <dl><dt>Warum</dt><dd>${esc(e.message || String(e))}</dd>
+        <dt>Was tun</dt><dd>Seite neu laden. Bleibt es so, hilft <code>systemctl --user restart tfcz-audio</code>.
+        Der Ton läuft unabhängig von dieser Seite weiter.</dd></dl></div>`;
       if (++renderErrors === 3) toast('Anzeigefehler: ' + (e.message || e), true);
       wantConfig = true;
     } finally { refreshing = false; }

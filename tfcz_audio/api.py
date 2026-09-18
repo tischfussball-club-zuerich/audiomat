@@ -237,6 +237,11 @@ def ui_build() -> str:
 class ApiServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    #: One thread per connection, so the number of connections is the number of
+    #: threads. The page needs a handful; anything near this is a client gone
+    #: wrong or someone knocking, and refusing beats running the machine out of
+    #: memory while the audio is on air.
+    max_connections = 64
 
     def __init__(self, address: tuple[str, int], router: Router, token: str = "", meters: Any = None):
         self.router = router
@@ -244,10 +249,40 @@ class ApiServer(ThreadingHTTPServer):
         self.meters = meters
         self.listen_host = address[0]
         self.diagnostics = Diagnostics()
+        self._connections = 0
+        self._connection_lock = threading.Lock()
+        self._refused_logged = 0.0
         from .repair import Runner
 
         self.repairs = Runner()
         super().__init__(address, Handler)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        with self._connection_lock:
+            refuse = self._connections >= self.max_connections
+            if not refuse:
+                self._connections += 1
+            elif time.time() - self._refused_logged > 10.0:  # one line per burst, not per connection
+                self._refused_logged = time.time()
+                log.warning("refusing connections: %d already open (limit %d)", self._connections, self.max_connections)
+        if refuse:
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nConnection: close\r\n"
+                                b"Content-Length: 0\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        # counted down here and nowhere else: a refused connection is closed
+        # without ever having been counted up
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            with self._connection_lock:
+                self._connections = max(0, self._connections - 1)
 
 
 MAX_BODY = 1_000_000  # bytes; nothing legitimate is anywhere near this

@@ -122,7 +122,10 @@ who do not care about audio plumbing:
     shows their output. It only works from a git checkout, and it runs as
     its own systemd unit because the installer restarts the service.
     Anyone who can reach the API can trigger it, which with the default
-    `listen = "127.0.0.1"` means local users only.
+    `listen = "127.0.0.1"` means local users only. The server answers at
+    most 64 connections at a time and refuses the rest with 503 rather
+    than spawning threads until the machine gives up; a stalled client
+    releases its slot after 15 seconds.
 
   Each tab is linkable: `/#einrichtung`, `/#klang`, `/#diagnose`,
   `/#system`, `/#api` open the page with that tab in front, which is handy
