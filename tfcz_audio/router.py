@@ -1699,11 +1699,18 @@ class Router:
         # bigger problem
         budget = [ORIGIN_VISITS]
         labels: dict[int, str] = {}
+        mine = {out.mix_name: out for out in self.cfg.virtual.outputs.values()}
 
         def label(node_id: int) -> str:
             if node_id not in labels:
                 node = graph.nodes.get(node_id)
-                labels[node_id] = (describe_node(node, graph).get("friendly") or node.name) if node else f"Knoten {node_id}"
+                if node is None:
+                    labels[node_id] = f"Knoten {node_id}"
+                elif node.name in mine:
+                    # our own mix bus is not "speakers", whatever it looks like
+                    labels[node_id] = f"Mikrofon für OBS «{mine[node.name].description}»"
+                else:
+                    labels[node_id] = describe_node(node, graph).get("friendly") or node.name
             return labels[node_id]
 
         # --- the same source reaching one sink over more than one path.
@@ -1716,15 +1723,20 @@ class Router:
             node = graph.nodes.get(sink_id)
             if node is None or not node.media_class.startswith("Audio/Sink"):
                 continue
+            # keyed by node name, never by the friendly one: two identical
+            # headsets carry the same label, and counting those as one origin
+            # turned the normal setup into a warning
             origins: dict[str, list[str]] = {}
             for feeder in feeders:
                 for origin in self._origins_of(feeder, graph, incoming=sources, seen=set(), budget=budget):
                     origins.setdefault(origin, []).append(label(feeder))
             for origin, paths in origins.items():
                 if len(paths) > 1:
+                    node = graph.by_name(origin)
+                    friendly = label(node.id) if node is not None else origin
                     findings.append({
                         "level": "warning",
-                        "title": f"«{label(sink_id)}» bekommt «{origin}» über {len(paths)} Wege",
+                        "title": f"«{label(sink_id)}» bekommt «{friendly}» über {len(paths)} Wege",
                         "why": "Über: " + ", ".join(sorted(set(paths))) + ".",
                         "effect": "Zweimal derselbe Ton, leicht versetzt: das klingt hohl und metallisch.",
                         "fix": "Einen der Wege abschalten. Meist ist es ein Mithören in OBS oder ein zusätzlicher "
@@ -1781,8 +1793,7 @@ class Router:
         if node is None:
             return set()
         if node.media_class.startswith("Audio/Source") and not node.name.startswith("tfcz."):
-            info = describe_node(node, graph)
-            return {info.get("friendly") or node.name}
+            return {node.name}
         found: set[str] = set()
         hop = self._internal_hop(node, graph)
         if hop is not None:

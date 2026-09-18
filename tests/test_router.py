@@ -362,3 +362,65 @@ class PathFindingTests(unittest.TestCase):
         findings = router.path_findings(graph)
         self.assertLess(time.monotonic() - started, 5.0)
         self.assertLessEqual(len([f for f in findings if "Kreis" in f["title"]]), 3)
+
+
+class PathFindingFalsePositiveTests(unittest.TestCase):
+    """The normal setup must stay quiet. Two identical headsets -- the whole
+    reason this project exists -- carry the same friendly name, and counting
+    them as one source turned the standard wiring into a warning."""
+
+    def test_two_identical_headsets_into_one_obs_mix_are_not_a_doubled_path(self):
+        from tfcz_audio.pw import Device, Node
+
+        router = Router(minimal_config(), fake_backend(), node_wait=0.05, sleep=lambda s: None)
+        router.start()
+        try:
+            graph = router.backend.graph()
+            # both microphones report the same model, as identical headsets do
+            device = Device(id=900, name="alsa_card.same", description="Logitech USB Headset",
+                            bus="usb", api="alsa")
+            graph.devices[900] = device
+            for name in ("alsa_input.a", "alsa_input.b"):
+                node = graph.by_name(name)
+                node.description = "Logitech USB Headset"
+                node.props["device.id"] = 900
+            router.reconcile()
+            findings = [f for f in router.path_findings() if "Wege" in f["title"]]
+            self.assertEqual(findings, [], "the standard wiring was reported as a fault")
+        finally:
+            router.stop()
+
+    def test_a_real_double_path_is_still_found(self):
+        from tfcz_audio.pw import Link
+
+        router = Router(minimal_config(), fake_backend(), node_wait=0.05, sleep=lambda s: None)
+        router.start()
+        router.reconcile()
+        try:
+            graph = router.backend.graph()
+            mic = graph.by_name("alsa_input.a")
+            sink = graph.by_name("alsa_output.b")
+            graph.links.append(Link(id=9500, output_node=mic.id, input_node=sink.id))
+            findings = [f for f in router.path_findings(graph) if "Wege" in f["title"]]
+            self.assertTrue(findings, "a genuinely doubled path went unnoticed")
+        finally:
+            router.stop()
+
+    def test_our_own_mix_bus_is_named_as_what_it_is(self):
+        router = Router(minimal_config(), fake_backend(), node_wait=0.05, sleep=lambda s: None)
+        router.start()
+        router.reconcile()
+        try:
+            graph = router.backend.graph()
+            from tfcz_audio.pw import Link
+
+            mic = graph.by_name("alsa_input.a")
+            mix = graph.by_name(router.cfg.virtual.primary().mix_name)
+            self.assertIsNotNone(mix)
+            graph.links.append(Link(id=9600, output_node=mic.id, input_node=mix.id))
+            findings = [f for f in router.path_findings(graph) if "Wege" in f["title"]]
+            if findings:
+                self.assertIn("Mikrofon für OBS", findings[0]["title"])
+                self.assertNotIn("Lautsprecher", findings[0]["title"])
+        finally:
+            router.stop()
