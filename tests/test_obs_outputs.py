@@ -212,3 +212,14 @@ class ApiTests(unittest.TestCase):
         self.assertIn('id="obs-separate"', page)
         self.assertIn("virtual_mics", page)
         self.assertNotIn("state.levels.obs;", page, "the meter key comes from the status, not from a fixed name")
+
+
+class DiagramTests(unittest.TestCase):
+    def test_the_columns_are_stacked_by_their_own_heights(self):
+        """A box for OBS is taller than a device box. With a fixed row height
+        the first one would overlap the next, which is what happened with two."""
+        from importlib import resources
+
+        page = resources.files("tfcz_audio").joinpath("ui.html").read_text()
+        self.assertIn("const stack = (aliases, side, x)", page)
+        self.assertNotIn("top + i * (nodeH + gap)", page, "no fixed row height any more")

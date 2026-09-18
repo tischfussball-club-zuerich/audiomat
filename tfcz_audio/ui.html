@@ -968,11 +968,20 @@
       return;
     }
     const W = 920, colW = 288, nodeH = 76, gap = 16, top = 34, obsH = 92;
-    const rows = Math.max(ins.length, outs.length);
-    const H = top + rows * (nodeH + gap) + (obsH - nodeH) + 12;
     const pos = {};
-    ins.forEach((a, i) => pos['in:' + a] = { x: 8, y: top + i * (nodeH + gap), w: colW, h: nodeH });
-    outs.forEach((a, i) => pos['out:' + a] = { x: W - colW - 8, y: top + i * (nodeH + gap), w: colW, h: isObs(a) ? obsH : nodeH });
+    // stack each column by its own heights: a box for OBS is taller, and with
+    // one per person a fixed row height would let the first one overlap the next
+    const stack = (aliases, side, x) => {
+      let y = top;
+      for (const alias of aliases) {
+        const h = side === 'out' && isObs(alias) ? obsH : nodeH;
+        pos[side + ':' + alias] = { x, y, w: colW, h };
+        y += h + gap;
+      }
+      return y;
+    };
+    const bottom = Math.max(stack(ins, 'in', 8), stack(outs, 'out', W - colW - 8));
+    const H = bottom - gap + 12;
     const present = alias => isObs(alias) ? !!(obsMic(alias) || state.status.virtual_mic || {}).present : (devs[alias] || {}).present !== false;
     const takenOrErr = a => devs[a] && (devs[a].taken_by || devs[a].error);
     const COLOUR = { blue: '#5ca7dc', gold: '#cda857', red: '#c2453f', muted: 'rgba(230,227,218,.45)' };
