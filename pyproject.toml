@@ -18,4 +18,4 @@ tfcz-audio = "tfcz_audio.cli:main"
 packages = ["tfcz_audio"]
 
 [tool.setuptools.package-data]
-tfcz_audio = ["ui.html", "logo.png", "example_config.toml"]
+tfcz_audio = ["ui.html", "apidocs.html", "logo.png", "example_config.toml"]

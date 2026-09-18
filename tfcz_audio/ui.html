@@ -292,6 +292,12 @@
   .vtable .d { color: var(--ink-muted); font-size: 12px; }
   .vtable .v.missing, .vtable .v.bad { color: #f0a6a2; }
   .vtable .d.bad { color: #f0a6a2; }
+  /* every output area carries a copy button in its top right corner; the
+     padding keeps it off the first line instead of covering it */
+  .report-wrap { position: relative; }
+  .report-wrap[hidden] { display: none; }
+  .report-wrap > .copy-all { position: absolute; top: 9px; right: 18px; z-index: 1; }
+  .report-wrap > pre.report { padding-top: 44px; }
   pre.report {
     background: rgba(5, 17, 28, .7); border: 1px solid var(--card-brd); border-radius: var(--r-lg);
     padding: 12px 14px; max-height: 340px; overflow: auto; margin: 10px 0 0; color: var(--ink);
@@ -425,6 +431,9 @@
   <symbol id="i-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/>
     <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
   </symbol>
   <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="m15.5 7.5 3 3L22 7l-3-3"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>
@@ -679,8 +688,16 @@
             <span>Voreinstellung</span><code>POST /presets/&lt;name&gt;</code>
             <span>Zustand lesen</span><code>GET /status</code>
           </div>
-          <p class="hint" style="margin-top:8px">Alles Weitere steht in <code>docs/advanced-scene-switcher.md</code>.
-            Die Namen der Routen und Voreinstellungen stehen im Reiter <b>Einrichtung</b>.</p>
+          <p class="hint" style="margin-top:8px">Die Namen der Routen und Voreinstellungen stehen im Reiter
+            <b>Einrichtung</b>, Beispiele für OBS in <code>docs/advanced-scene-switcher.md</code>.</p>
+
+          <h3>Dokumentation</h3>
+          <p class="hint">Jeder Aufruf mit Beschreibung, zum Ausprobieren direkt auf diesem Rechner.
+            Die Spezifikation lässt sich auch in ein anderes Werkzeug laden.</p>
+          <div class="row">
+            <a class="btn btn-blue" href="/api-docs" target="_blank" rel="noopener"><svg class="i"><use href="#i-file"/></svg>API-Dokumentation öffnen</a>
+            <a class="btn" href="/openapi.json" target="_blank" rel="noopener"><svg class="i"><use href="#i-copy"/></svg>openapi.json</a>
+          </div>
         </section>
       </div>
     </details>
@@ -1283,6 +1300,41 @@
   $('#vers-text').addEventListener('change', e => {
     $('#versions-text').hidden = !e.target.checked;
     $('#versions').hidden = e.target.checked;
+  });
+
+  // ------------------------------------------ Kopierknopf für jede Ausgabe
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+    // über das Netz (http://rechner:8787) ist die Zwischenablage-API gesperrt,
+    // der alte Weg über ein Hilfsfeld funktioniert dort noch
+    return new Promise((resolve, reject) => {
+      const box = document.createElement('textarea');
+      box.value = text; box.setAttribute('readonly', '');
+      box.style.cssText = 'position:fixed;top:-1000px;left:0;opacity:0';
+      document.body.appendChild(box);
+      box.select(); box.setSelectionRange(0, text.length);
+      let done = false;
+      try { done = document.execCommand('copy'); } catch (e) {}
+      box.remove();
+      done ? resolve() : reject(new Error('Dieser Browser lässt das Kopieren hier nicht zu. Text markieren und Strg+C drücken.'));
+    });
+  }
+  document.querySelectorAll('pre.report').forEach(pre => {
+    const wrap = document.createElement('div');
+    wrap.className = 'report-wrap';
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-sm copy-all';
+    btn.innerHTML = svg('i-copy', 'i-sm') + 'Alles kopieren';
+    btn.addEventListener('click', () => copyText(pre.textContent).then(
+      () => toast('in die Zwischenablage kopiert'), e => toast(e.message, true)));
+    wrap.appendChild(btn);
+    // the code around here hides the <pre> itself; the button has to follow
+    const sync = () => { wrap.hidden = pre.hidden; };
+    new MutationObserver(sync).observe(pre, { attributes: true, attributeFilter: ['hidden'] });
+    sync();
   });
 
   let logTimer = null;

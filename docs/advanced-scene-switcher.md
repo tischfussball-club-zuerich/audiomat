@@ -16,6 +16,10 @@ simplest ASS actions are enough.
 4. Add a second macro with the inverse condition and
    `http://127.0.0.1:8787/presets/default`.
 
+The complete list with descriptions is on the router itself:
+`http://127.0.0.1:8787/api-docs`. Every call can be tried out from there,
+and `/openapi.json` loads into Postman, Bruno or Insomnia.
+
 Useful URLs (all `POST`, no body needed):
 
 | Purpose | URL |

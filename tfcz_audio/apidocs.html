@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TFCZ Audio · API</title>
+<link rel="icon" href="logo.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
+<style>
+  :root {
+    --navy: #0d273d; --blue: #5ca7dc; --gold: #cda857; --sand: #e6e3da;
+    --ink: #e8eef5; --ink-muted: #9fb3c6; --card-brd: rgba(230, 227, 218, .14);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); font-family: "Nunito Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: radial-gradient(1100px 700px at 12% -10%, rgba(0, 90, 148, .55), transparent 60%),
+                linear-gradient(180deg, #0d273d 0%, #081c2d 100%);
+    background-attachment: fixed; min-height: 100vh;
+  }
+  header {
+    position: relative; background: linear-gradient(180deg, rgba(8, 24, 38, .96), rgba(8, 24, 38, .84));
+    border-bottom: 1px solid var(--card-brd);
+  }
+  /* Fenster-Signatur: Blau oben, Gold unten, harte Kante */
+  header::before, header::after { content: ""; position: absolute; left: 0; right: 0; height: 3px; }
+  header::before { top: 0; background: var(--blue); }
+  header::after { bottom: -1px; background: var(--gold); }
+  .head-in { max-width: 1160px; margin-inline: auto; padding: 12px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .head-in img { height: 38.8px; width: auto; display: block; }
+  .grow { flex: 1 1 auto; }
+  a.btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; border-radius: 9px;
+    border: 1px solid var(--card-brd); background: rgba(230, 227, 218, .06); color: var(--ink);
+    font-weight: 700; font-size: 14px; text-decoration: none;
+  }
+  a.btn:hover { box-shadow: inset 0 0 0 2px var(--blue); }
+  .wrap { max-width: 1160px; margin-inline: auto; padding: 22px; }
+  .lead { color: var(--ink-muted); font-size: 14px; line-height: 1.6; margin: 0 0 16px; }
+  .lead code { color: #e9c475; }
+  .sheet { background: #fff; border-radius: 16px; overflow: hidden; padding: 4px 0 12px; }
+  .sheet .swagger-ui .topbar { display: none; }
+  .fallback { padding: 18px 22px; }
+  .fallback h2 { margin: 0 0 6px; font-size: 18px; }
+  .fallback .grp { margin-top: 18px; }
+  .fallback .eyebrow { display: block; font-weight: 900; text-transform: uppercase; letter-spacing: .16em; font-size: 11px; color: var(--blue); margin-bottom: 6px; }
+  .fallback .op { display: grid; grid-template-columns: 70px max-content 1fr; gap: 4px 14px; padding: 4px 0; font-size: 13px; }
+  .fallback .m { font-weight: 900; font-size: 11px; text-transform: uppercase; color: var(--gold); }
+  .fallback .p { font-family: ui-monospace, Menlo, monospace; }
+  .fallback .s { color: var(--ink-muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="head-in">
+    <a href="/"><img src="logo.png" alt="Tischfussball Club Zürich"></a>
+    <span class="grow"></span>
+    <a class="btn" href="/openapi.json">openapi.json</a>
+    <a class="btn" href="/">Zurück zur Steuerung</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <p class="lead">Die komplette Schnittstelle dieses Routers. <b>Try it out</b> schickt die Aufrufe an genau
+    diesen Rechner — sie wirken also sofort auf den Ton. Ist ein Token gesetzt, oben rechts bei
+    <b>Authorize</b> eintragen.</p>
+  <div class="sheet" id="sheet">
+    <div class="fallback" id="fallback" hidden></div>
+    <div id="swagger"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" crossorigin="anonymous"></script>
+<script>
+(function () {
+  var mount = document.getElementById('swagger');
+  if (window.SwaggerUIBundle) {
+    SwaggerUIBundle({ url: 'openapi.json', dom_id: '#swagger', deepLinking: true,
+                      docExpansion: 'list', defaultModelsExpandDepth: -1, tryItOutEnabled: true });
+    return;
+  }
+  // kein Internet auf diesem Rechner: die Spezifikation selbst ist trotzdem da,
+  // also wird sie hier schlicht ausgelesen statt gar nichts zu zeigen
+  mount.remove();
+  var box = document.getElementById('fallback');
+  box.hidden = false;
+  document.getElementById('sheet').style.background = 'rgba(13, 39, 61, .74)';
+  document.getElementById('sheet').style.border = '1px solid rgba(230, 227, 218, .14)';
+  box.innerHTML = '<h2>Swagger konnte nicht geladen werden</h2><p class="s">Dieser Rechner erreicht ' +
+    'cdn.jsdelivr.net nicht. Die Schnittstelle steht trotzdem hier, und die Datei <b>openapi.json</b> ' +
+    'lässt sich in jedes andere Werkzeug laden.</p><div id="list"></div>';
+  fetch('openapi.json').then(function (r) { return r.json(); }).then(function (doc) {
+    var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); };
+    var groups = {};
+    Object.keys(doc.paths).forEach(function (path) {
+      Object.keys(doc.paths[path]).forEach(function (method) {
+        var op = doc.paths[path][method], tag = (op.tags || ['Übrige'])[0];
+        (groups[tag] = groups[tag] || []).push({ m: method, p: path, s: op.summary || '' });
+      });
+    });
+    document.getElementById('list').innerHTML = Object.keys(groups).map(function (tag) {
+      return '<div class="grp"><span class="eyebrow">' + esc(tag) + '</span>' + groups[tag].map(function (o) {
+        return '<div class="op"><span class="m">' + esc(o.m) + '</span><span class="p">' + esc(o.p) +
+               '</span><span class="s">' + esc(o.s) + '</span></div>';
+      }).join('') + '</div>';
+    }).join('');
+  }).catch(function (e) {
+    document.getElementById('list').textContent = 'openapi.json ist ebenfalls nicht erreichbar: ' + e;
+  });
+})();
+</script>
+</body>
+</html>

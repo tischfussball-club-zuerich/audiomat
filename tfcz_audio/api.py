@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from http import HTTPStatus
@@ -189,6 +190,22 @@ def load_ui() -> bytes:
     return _UI_CACHE[1]
 
 
+_DOCS_CACHE: tuple[float, bytes] | None = None
+
+
+def load_apidocs() -> bytes:
+    """The API documentation page, re-read when the file changes (like the UI)."""
+    global _DOCS_CACHE  # noqa: PLW0603
+    path = resources.files("tfcz_audio").joinpath("apidocs.html")
+    try:
+        stamp = Path(str(path)).stat().st_mtime
+    except OSError:
+        stamp = 0.0
+    if _DOCS_CACHE is None or _DOCS_CACHE[0] != stamp:
+        _DOCS_CACHE = (stamp, path.read_bytes())
+    return _DOCS_CACHE[1]
+
+
 _LOGO_CACHE: bytes | None = None
 
 
@@ -328,6 +345,16 @@ class Handler(BaseHTTPRequestHandler):
         o = urlsplit(origin)
         return bool(host) and (o.netloc.lower() == host)
 
+    def _base_url(self) -> str:
+        """Where this daemon answers, as the client reached it, so that «try it
+        out» in the documentation talks back to the same machine. The Host
+        header comes from the client, so only a plain host:port is accepted."""
+        host = (self.headers.get("Host") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9._\-]+(:\d{1,5})?|\[[0-9A-Fa-f:.]+\](:\d{1,5})?", host):
+            listen, port = self.server.server_address[:2]
+            host = f"{listen}:{port}"
+        return f"http://{host}"
+
     def _authorized(self, params: dict[str, Any]) -> bool:
         token = self.server.token
         if not token:
@@ -365,6 +392,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.command in ("GET", "HEAD") and path == "/logo.png":
                 self._send_asset(load_logo(), "image/png")
+                return
+            # the documentation and the spec stay open: a documentation page that
+            # needs a token to be read is no documentation, and neither contains
+            # anything the page itself does not already show
+            if self.command in ("GET", "HEAD") and path in ("/api-docs", "/api-docs/", "/docs"):
+                self._send_html(load_apidocs())
+                return
+            if self.command in ("GET", "HEAD") and path == "/openapi.json":
+                from . import openapi
+
+                self._send(HTTPStatus.OK, openapi.document(self._base_url()))
                 return
             if self.command not in ("GET", "HEAD") and not self._same_origin():
                 self._error(HTTPStatus.FORBIDDEN, "cross-site request rejected")

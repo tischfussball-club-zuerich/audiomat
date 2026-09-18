@@ -649,3 +649,30 @@ class VersionsApiTests(ApiTestCase):
         self.assertIn('id="token"', panels["api"])
         self.assertNotIn('id="token"', panels["system"])
         self.assertIn('id="versions"', panels["system"])
+
+
+class CopyButtonTests(ApiTestCase):
+    def test_every_output_area_gets_its_copy_button(self):
+        """The button is attached to all `pre.report` areas at once, so a new
+        output area cannot be added without one."""
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        areas = re.findall(r'<pre class="report" id="([a-z-]+)"', page)
+        self.assertGreaterEqual(len(areas), 4, areas)
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        self.assertIn("querySelectorAll('pre.report')", script)
+        self.assertIn("copy-all", script)
+        # the clipboard API is blocked outside a secure context, and this page is
+        # served over plain http on the LAN
+        self.assertIn("execCommand('copy')", script)
+
+    def test_the_api_tab_links_to_the_documentation(self):
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        self.assertIn('href="/api-docs"', page)
+        self.assertIn('href="/openapi.json"', page)

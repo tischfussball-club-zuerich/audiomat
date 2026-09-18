@@ -124,6 +124,18 @@ who do not care about audio plumbing:
   `/#system`, `/#api` open the page with that tab in front, which is handy
   when pointing someone at a specific control.
 
+  **API** holds the token field, the addresses an external tool talks to
+  and a link to `/api-docs`: the whole interface as a Swagger page, every
+  call with a description and a **try it out** button that talks to this
+  very daemon. Swagger itself is loaded from a CDN; without internet the
+  page falls back to a plain list built from `/openapi.json`, which can be
+  loaded into any other tool as well. Both are readable without a token,
+  because documentation behind a token is no documentation and neither
+  holds anything the page does not already show.
+
+  Every output area — reports, log, update protocol, the version list as
+  text — carries an **Alles kopieren** button in its top right corner.
+
   **System** also lists every tool the router builds on with its version:
   PipeWire and WirePlumber as they actually answer, the ALSA and kernel
   version, the `hws` capture driver, where each helper binary lives and
@@ -321,6 +333,8 @@ client can drive it.
 | POST | `/reset` | all routes back to config values |
 | GET | `/devices` | audio sources/sinks currently in PipeWire |
 | GET | `/` | web UI (`/#setup` opens the wizard) |
+| GET | `/api-docs` | this API as a Swagger page, «try it out» included (no token needed) |
+| GET | `/openapi.json` | the OpenAPI document, with this daemon as its server |
 | GET | `/levels` | live signal levels per device and for the OBS mic |
 | GET | `/hardware` | plugged-in hardware grouped by device, with identity strategy |
 | GET | `/graph` | every audio node and link, labelled by owner, for the wiring view |
