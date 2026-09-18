@@ -272,12 +272,25 @@ class Router:
         except (OSError, ValueError) as exc:
             log.warning("ignoring unreadable state file %s: %s", path, exc)
             return
-        for name, st in (data.get("routes") or {}).items():
+        # valid JSON of the wrong shape is as likely as invalid JSON, and it
+        # must not keep the daemon from starting: without sound, nobody can
+        # even reach the page that would explain it
+        if not isinstance(data, dict):
+            log.warning("ignoring state file %s: expected an object, found %s", path, type(data).__name__)
+            return
+        routes = data.get("routes")
+        if not isinstance(routes, dict):
+            if routes is not None:
+                log.warning("ignoring the routes in %s: expected an object", path)
+            return
+        for name, st in routes.items():
             if name in self.desired and isinstance(st, dict):
                 try:
                     vol = float(st.get("volume", self.desired[name].volume))
                     mute = bool(st.get("mute", self.desired[name].mute))
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if vol != vol or vol in (float("inf"), float("-inf")):  # NaN and infinity
                     continue
                 self.desired[name] = RouteState(min(max(vol, 0.0), MAX_VOLUME), mute)
         log.info("restored route state from %s", path)

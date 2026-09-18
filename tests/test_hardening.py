@@ -424,3 +424,61 @@ class ConnectionLimitTests(ApiTestCase):
             status, _ = self.call("GET", "/health")
             self.assertEqual(status, 200)
         self.assertLessEqual(self.server._connections, 1)
+
+
+class StateFileTests(unittest.TestCase):
+    """The saved volumes are the least important file in the system. Nothing in
+    it may keep the daemon from starting -- without sound nobody can even reach
+    the page that would explain the problem."""
+
+    CASES = {
+        "a list": "[1, 2, 3]",
+        "a string": '"hello"',
+        "a number": "42",
+        "routes as a list": '{"routes": [1, 2]}',
+        "routes as a string": '{"routes": "nope"}',
+        "not json at all": "{broken",
+        "empty": "",
+        "NaN volume": '{"routes": {"a_to_b": {"volume": NaN}}}',
+        "infinite volume": '{"routes": {"a_to_b": {"volume": 1e999}}}',
+        "wrong types": '{"routes": {"a_to_b": {"volume": "loud", "mute": "maybe"}}}',
+    }
+
+    def test_no_shape_of_state_file_stops_the_daemon(self):
+        import tempfile
+        from pathlib import Path as P
+
+        from tfcz_audio.router import Router
+
+        for label, content in self.CASES.items():
+            with tempfile.TemporaryDirectory() as tmp, self.subTest(label):
+                state = P(tmp) / "state.json"
+                state.write_text(content)
+                router = Router(minimal_config(state_file=state), fake_backend(),
+                                node_wait=0.01, sleep=lambda s: None)
+                router.start()
+                try:
+                    router.reconcile()
+                    volume = router.status()["routes"]["a_to_b"]["volume"]
+                    self.assertEqual(volume, 1.0, f"{label}: fell back to the config value")
+                finally:
+                    router.stop()
+
+    def test_a_usable_state_file_is_still_restored(self):
+        import json
+        import tempfile
+        from pathlib import Path as P
+
+        from tfcz_audio.router import Router
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = P(tmp) / "state.json"
+            state.write_text(json.dumps({"routes": {"a_to_b": {"volume": 0.25, "mute": True}}}))
+            router = Router(minimal_config(state_file=state), fake_backend(), node_wait=0.01, sleep=lambda s: None)
+            router.start()
+            try:
+                status = router.status()["routes"]["a_to_b"]
+                self.assertAlmostEqual(status["volume"], 0.25, places=3)
+                self.assertTrue(status["mute"])
+            finally:
+                router.stop()
