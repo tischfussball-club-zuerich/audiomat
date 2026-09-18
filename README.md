@@ -109,6 +109,9 @@ who do not care about audio plumbing:
     the right, one line per real link, colour-coded by owner; hovering a
     box highlights its lines. The hop a loopback makes internally is drawn
     dashed, otherwise every playback stream would look like a source.
+    **Vollbild** opens it over the whole window with zoom controls; on a
+    real setup the graph is far wider than the panel. Plus and minus zoom,
+    `einpassen` fits it, and Escape closes.
   * **Diagnose**: the checks, the audio-system analysis and the log.
   * **System**: API token, config path, which build is running, and an
     **Aktualisieren** button that runs `git pull` and `./install.sh` and

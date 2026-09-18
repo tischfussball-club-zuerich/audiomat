@@ -238,6 +238,26 @@
   .tab[aria-selected="true"] { color: var(--ink-strong); background: rgba(205, 168, 87, .10); box-shadow: var(--brand-select); }
   .tab[aria-selected="true"] .i { color: var(--gold); }
   .tabpanel > h3:first-of-type { margin-top: 18px; }
+  #wiring-full[hidden] { display: none; }
+  #wiring-full {
+    position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column;
+    background: radial-gradient(1200px 800px at 15% -10%, rgba(0, 90, 148, .5), transparent 60%),
+                linear-gradient(180deg, #0d273d 0%, #071a2b 100%);
+  }
+  #wiring-full .full-bar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 18px; border-bottom: 1px solid var(--card-brd);
+    background: rgba(8, 24, 38, .9); backdrop-filter: blur(10px);
+  }
+  #wiring-full .full-bar::after {
+    content: ""; position: absolute; left: 18px; right: 18px; top: 56px; height: 3px;
+    background: linear-gradient(90deg, var(--blue), var(--gold)); border-radius: var(--r-pill); pointer-events: none;
+  }
+  #wiring-full:fullscreen { width: 100%; height: 100%; }
+  #wiring-full::backdrop { background: #071a2b; }
+  #wiring-canvas { flex: 1 1 auto; overflow: auto; padding: 18px; }
+  #wiring-canvas svg { display: block; }
+  #wiring-full .legend { padding: 0 18px 14px; margin: 0; }
   #wiring { overflow: auto; max-height: 620px; border: 1px solid var(--card-brd); border-radius: var(--r-lg); background: rgba(5, 17, 28, .45); margin-top: 10px; }
   #wiring svg { display: block; }
   #wiring .nd rect { transition: opacity var(--t-fast) var(--ease); }
@@ -388,6 +408,12 @@
     <rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/>
     <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>
   </symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12h14"/>
+  </symbol>
+  <symbol id="i-maximize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+  </symbol>
   <symbol id="i-ban" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>
   </symbol>
@@ -535,6 +561,7 @@
             an einem Gerät hängt und wo ein Weg wirklich endet. Fahr über einen Kasten, um seine Linien zu sehen.</p>
           <div class="row">
             <button class="btn btn-blue" id="wiring-load"><svg class="i"><use href="#i-refresh"/></svg>Verkabelung anzeigen</button>
+            <button class="btn" id="wiring-full-open"><svg class="i"><use href="#i-maximize"/></svg>Vollbild</button>
             <label class="check"><input type="checkbox" id="wiring-all"> auch unverbundene Geräte</label>
             <span class="hint" style="margin:0" id="wiring-state"></span>
           </div>
@@ -605,6 +632,22 @@
       </div>
     </details>
   </section>
+</div>
+
+<div id="wiring-full" hidden>
+  <div class="full-bar">
+    <span class="eyebrow" style="margin:0">TFCZ · Signalweg</span>
+    <span class="hint" style="margin:0" id="wiring-full-state"></span>
+    <span class="grow"></span>
+    <button class="btn btn-sm btn-icon" id="zoom-out" title="kleiner"><svg class="i i-sm"><use href="#i-minus"/></svg></button>
+    <span id="zoom-label" class="hint" style="margin:0;min-width:54px;text-align:center">100 %</span>
+    <button class="btn btn-sm btn-icon" id="zoom-in" title="grösser"><svg class="i i-sm"><use href="#i-plus"/></svg></button>
+    <button class="btn btn-sm" id="zoom-fit">einpassen</button>
+    <label class="check"><input type="checkbox" id="wiring-all-full"> auch unverbundene</label>
+    <button class="btn btn-icon i-close" id="wiring-close" title="schliessen (Esc)"><svg class="i i-sm"><use href="#i-x"/></svg></button>
+  </div>
+  <div id="wiring-canvas"></div>
+  <div class="legend" id="wiring-full-legend"></div>
 </div>
 
 <div id="toast"></div>
@@ -1198,9 +1241,11 @@
     }
     return layer;
   }
-  function renderWiring(g) {
-    const box = $('#wiring');
-    const showAll = $('#wiring-all').checked;
+  function renderWiring(g, opts) {
+    const full = !!(opts && opts.full);
+    const box = full ? $('#wiring-canvas') : $('#wiring');
+    const zoom = full ? state.wiringZoom || 1 : 1;
+    const showAll = (full ? $('#wiring-all-full') : $('#wiring-all')).checked;
     const nodes = g.nodes.filter(n => showAll || n.connected);
     if (!nodes.length) { box.innerHTML = '<p class="hint" style="padding:14px">Nichts zu zeigen.</p>'; return; }
     const keep = new Set(nodes.map(n => n.id));
@@ -1252,8 +1297,9 @@
       </g>`;
     }).join('');
 
-    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg"
-      role="img" aria-label="Verkabelung des Tonsystems">${edges}${boxes}</svg>`;
+    state.wiringSize = { W, H };
+    box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${Math.round(W * zoom)}" height="${Math.round(H * zoom)}"
+      xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Verkabelung des Tonsystems">${edges}${boxes}</svg>`;
     box.querySelectorAll('.nd').forEach(el => {
       const id = Number(el.dataset.id);
       el.addEventListener('mouseenter', () => {
@@ -1274,17 +1320,65 @@
     const counts = {};
     nodes.forEach(n => counts[n.category] = (counts[n.category] || 0) + 1);
     const CAT_DE = { router: 'dieser Router', device: 'Gerät', filter: 'fremde Filterkette', app: 'Programm', system: 'System', other: 'sonstiges' };
-    $('#wiring-legend').innerHTML = Object.entries(counts).map(([k, v]) =>
+    (full ? $('#wiring-full-legend') : $('#wiring-legend')).innerHTML = Object.entries(counts).map(([k, v]) =>
       `<span class="cat"><i style="background:${WIRE_COLOUR[k] || WIRE_COLOUR.other}"></i>${esc(CAT_DE[k] || k)} (${v})</span>`).join('')
       + '<span class="cat"><i style="background:rgba(205,168,87,.6)"></i>im Router weitergereicht</span>';
-    $('#wiring-state').textContent = `${nodes.length} Knoten, ${links.length} Verbindungen`;
+    const summary = `${nodes.length} Knoten, ${links.length} Verbindungen`;
+    $('#wiring-state').textContent = summary;
+    $('#wiring-full-state').textContent = summary;
+  }
+  const wiringFullOpen = () => !$('#wiring-full').hidden;
+  function drawWiring() {
+    if (!state.wiring) return;
+    renderWiring(state.wiring, { full: wiringFullOpen() });
   }
   function loadWiring() {
     $('#wiring-state').innerHTML = '<span class="spin"></span> wird gelesen …';
-    return api('GET', '/graph').then(g => { state.wiring = g; renderWiring(g); }, fail);
+    return api('GET', '/graph').then(g => { state.wiring = g; drawWiring(); }, fail);
   }
   $('#wiring-load').addEventListener('click', loadWiring);
-  $('#wiring-all').addEventListener('change', () => { if (state.wiring) renderWiring(state.wiring); else loadWiring(); });
+  $('#wiring-all').addEventListener('change', e => { $('#wiring-all-full').checked = e.target.checked; state.wiring ? drawWiring() : loadWiring(); });
+  $('#wiring-all-full').addEventListener('change', e => { $('#wiring-all').checked = e.target.checked; drawWiring(); });
+
+  function setZoom(value) {
+    state.wiringZoom = Math.min(3, Math.max(0.3, value));
+    $('#zoom-label').textContent = Math.round(state.wiringZoom * 100) + ' %';
+    drawWiring();
+  }
+  function fitWiring() {
+    const size = state.wiringSize;
+    if (!size) return;
+    const canvas = $('#wiring-canvas');
+    setZoom(Math.min((canvas.clientWidth - 36) / size.W, (canvas.clientHeight - 36) / size.H, 3));
+  }
+  function openWiringFull() {
+    $('#wiring-full').hidden = false;
+    $('#wiring-all-full').checked = $('#wiring-all').checked;
+    const show = () => { state.wiring ? drawWiring() : loadWiring().then(fitWiring); if (state.wiring) fitWiring(); };
+    const el = $('#wiring-full');
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    setTimeout(show, 60);
+  }
+  function closeWiringFull() {
+    $('#wiring-full').hidden = true;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    drawWiring();
+  }
+  $('#wiring-full-open').addEventListener('click', openWiringFull);
+  $('#wiring-close').addEventListener('click', closeWiringFull);
+  $('#zoom-in').addEventListener('click', () => setZoom((state.wiringZoom || 1) * 1.25));
+  $('#zoom-out').addEventListener('click', () => setZoom((state.wiringZoom || 1) / 1.25));
+  $('#zoom-fit').addEventListener('click', fitWiring);
+  document.addEventListener('keydown', e => {
+    if (!wiringFullOpen()) return;
+    if (e.key === 'Escape') closeWiringFull();
+    else if (e.key === '+' || e.key === '=') setZoom((state.wiringZoom || 1) * 1.25);
+    else if (e.key === '-') setZoom((state.wiringZoom || 1) / 1.25);
+    else if (e.key === '0') fitWiring();
+  });
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && wiringFullOpen()) $('#wiring-full').hidden = true;
+  });
 
   // ------------------------------------------------- Analyse des Tonsystems
   const CATEGORY = {
