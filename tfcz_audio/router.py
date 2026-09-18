@@ -427,6 +427,17 @@ class Router:
         self._invalidate_graph()
         log.info("stopped loopback %s", name)
 
+    PER_NAME_STATE = ("_spec_used", "_applied", "_failures", "_retry_at", "_spawned_at", "_apply_retry_at",
+                      "_drift_retry_at", "_drift_count", "_unlinked_since", "_relink_at", "_relink_attempts")
+
+    def _forget(self, keep: set[str]) -> None:
+        """Drop everything remembered about names that no longer exist."""
+        keep = keep | {"virtual"}  # the shared drift counter of the OBS nodes
+        for attribute in self.PER_NAME_STATE:
+            store = getattr(self, attribute)
+            for stale in [k for k in store if k not in keep]:
+                store.pop(stale, None)
+
     def _spec(self, name: str) -> LoopbackSpec:
         if is_virtual(name):
             return virtual_spec(self.cfg, virtual_key(name))
@@ -784,13 +795,13 @@ class Router:
             self.cfg = new_cfg
             self.desired = desired
             self.resolved = new_resolved
-            for stale in ((set(self._failures) | set(self._unlinked_since) | set(self._relink_attempts))
-                          - set(new_cfg.routes) - set(new_virtual)):
-                self._failures.pop(stale, None)
-                self._retry_at.pop(stale, None)
-                self._unlinked_since.pop(stale, None)
-                self._relink_attempts.pop(stale, None)
-                self._relink_at.pop(stale, None)
+            # Every per-route note has to go when the route does. Two reasons:
+            # a daemon that runs for weeks while an automation creates and
+            # deletes routes would grow these dicts forever, and a route
+            # created again under an old name would inherit the old entries --
+            # including "its volume is already applied", which would leave the
+            # fresh stream at whatever it started with.
+            self._forget(set(new_cfg.routes) | set(new_virtual))
             self._save_state()
 
             if self._started:

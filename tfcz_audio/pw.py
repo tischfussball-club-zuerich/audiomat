@@ -357,7 +357,34 @@ def _iter_json_documents(text: str):
         idx = end
 
 
+def _object_id(value: Any) -> int | None:
+    """PipeWire ids are small integers. Anything else -- a string, a float, an
+    infinity from a mangled dump -- means this object is not readable, and one
+    unreadable object must not cost the whole graph."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if 0 <= number < 1 << 31 else None
+
+
 def parse_dump(text: str) -> Graph:
+    """The graph as pw-dump describes it.
+
+    Raises PwError for output that cannot be read at all -- the same error a
+    dead pw-dump raises, because for every caller it means the same thing: no
+    usable picture of the audio system right now. An empty graph would be a
+    lie; it reads as "no devices connected".
+    """
+    try:
+        return _parse_dump(text)
+    except PwError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - json, unicode, recursion, whatever a broken dump brings
+        raise PwError(f"cannot read the output of pw-dump ({type(exc).__name__}: {exc})") from exc
+
+
+def _parse_dump(text: str) -> Graph:
     graph = Graph()
     for doc in _iter_json_documents(text):
         if not isinstance(doc, list):
@@ -367,10 +394,13 @@ def parse_dump(text: str) -> Graph:
                 continue
             otype = obj.get("type", "")
             info = obj.get("info") or {}
+            object_id = _object_id(obj.get("id"))
+            if object_id is None:
+                continue
             if otype == "PipeWire:Interface:Node":
                 props = info.get("props") or {}
                 node = Node(
-                    id=int(obj["id"]),
+                    id=object_id,
                     name=str(props.get("node.name", "")),
                     description=str(props.get("node.description") or props.get("node.nick") or ""),
                     media_class=str(props.get("media.class", "")),
@@ -391,8 +421,8 @@ def parse_dump(text: str) -> Graph:
                 graph.nodes[node.id] = node
             elif otype == "PipeWire:Interface:Device":
                 props = info.get("props") or {}
-                graph.devices[int(obj["id"])] = Device(
-                    id=int(obj["id"]),
+                graph.devices[object_id] = Device(
+                    id=object_id,
                     name=str(props.get("device.name", "")),
                     description=str(props.get("device.description") or props.get("device.nick") or props.get("device.product.name") or ""),
                     bus=str(props.get("device.bus", "")),
@@ -423,16 +453,11 @@ def parse_dump(text: str) -> Graph:
                             if name:
                                 graph.defaults[key] = str(name)
             elif otype == "PipeWire:Interface:Link":
-                try:
-                    graph.links.append(
-                        Link(
-                            id=int(obj["id"]),
-                            output_node=int(info["output-node-id"]),
-                            input_node=int(info["input-node-id"]),
-                        )
-                    )
-                except (KeyError, TypeError, ValueError):
+                output_node = _object_id(info.get("output-node-id"))
+                input_node = _object_id(info.get("input-node-id"))
+                if output_node is None or input_node is None:
                     continue
+                graph.links.append(Link(id=object_id, output_node=output_node, input_node=input_node))
     return graph
 
 

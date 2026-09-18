@@ -333,3 +333,63 @@ class HelperErrorCaptureTests(unittest.TestCase):
         self.assertTrue(mm.enabled, "a working shape was found instead of switching the bars off")
         self.assertEqual(mm.shape_label(), "pw-record ohne --raw und ohne -P")
         self.assertTrue(any("--raw" not in c and "-P" not in c for c in tried))
+
+
+class ForgottenStateTests(unittest.TestCase):
+    """A daemon runs for weeks while an automation creates and deletes routes.
+    Nothing may accumulate, and a name that comes back must start clean."""
+
+    def _router(self, tmp):
+        from pathlib import Path as P
+
+        from tfcz_audio.config import save
+        from tfcz_audio.router import Router
+
+        path = P(tmp) / "config.toml"
+        cfg = minimal_config()
+        cfg.path = path
+        save(cfg, path)
+        router = Router(cfg, fake_backend(), node_wait=0.01, sleep=lambda s: None)
+        router.start()
+        return router
+
+    def test_nothing_is_remembered_about_a_deleted_route(self):
+        import tempfile
+
+        from tfcz_audio import edit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            router = self._router(tmp)
+            try:
+                for index in range(20):
+                    name = f"tmp{index}"
+                    edit.upsert_route(router, name, {"from": "a_mic", "to": "b_out", "volume": 0.4})
+                    router.reconcile()
+                    edit.delete_route(router, name)
+                for attribute in router.PER_NAME_STATE:
+                    left = [k for k in getattr(router, attribute) if k.startswith("tmp")]
+                    self.assertEqual(left, [], f"{attribute} kept entries for deleted routes")
+            finally:
+                router.stop()
+
+    def test_a_reused_name_does_not_inherit_the_old_notes(self):
+        """'its volume is already applied' from a previous route of the same
+        name would leave the new stream wherever it started."""
+        import tempfile
+
+        from tfcz_audio import edit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            router = self._router(tmp)
+            try:
+                edit.upsert_route(router, "again", {"from": "a_mic", "to": "b_out", "volume": 0.4})
+                router.reconcile()
+                self.assertIn("again", router._applied)
+                edit.delete_route(router, "again")
+                self.assertNotIn("again", router._applied, "the note outlived the route")
+                # the name comes back, and the new stream really carries the new volume
+                edit.upsert_route(router, "again", {"from": "a_mic", "to": "b_out", "volume": 0.9})
+                router.reconcile()
+                self.assertAlmostEqual(router.route_status("again")["volume"], 0.9, places=3)
+            finally:
+                router.stop()

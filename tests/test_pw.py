@@ -98,3 +98,53 @@ class LoopbackSpecTests(unittest.TestCase):
         self.assertTrue(any('target.object = "dst"' in a for a in cmd if a.startswith("--playback-props=")))
         self.assertEqual(spec.capture_node, "tfcz.r.in")
         self.assertEqual(spec.playback_node, "tfcz.r.out")
+
+
+class BrokenDumpTests(unittest.TestCase):
+    """pw-dump output that cannot be read means the same as a dead pw-dump, and
+    has to arrive as the same error -- everything already handles that one."""
+
+    def test_garbage_raises_the_declared_error(self):
+        from tfcz_audio.pw import PwError, parse_dump
+
+        for text in ("", "not json", "<html>nope</html>", "{", "\x00\x01\x02"):
+            if text == "":
+                self.assertEqual(len(parse_dump(text).nodes), 0)
+                continue
+            with self.assertRaises(PwError, msg=text):
+                parse_dump(text)
+
+    def test_one_unreadable_object_does_not_cost_the_graph(self):
+        from tfcz_audio.pw import parse_dump
+
+        graph = parse_dump(
+            '[{"id": 3, "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "keep"}}},'
+            ' {"id": 1e999, "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "broken"}}},'
+            ' {"id": "abc", "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "also-broken"}}}]'
+        )
+        self.assertEqual([n.name for n in graph.nodes.values()], ["keep"])
+
+    def test_a_link_with_impossible_ids_is_skipped_not_fatal(self):
+        from tfcz_audio.pw import parse_dump
+
+        graph = parse_dump(
+            '[{"id": 9, "type": "PipeWire:Interface:Link", "info": {"output-node-id": 1e999, "input-node-id": 2}},'
+            ' {"id": 10, "type": "PipeWire:Interface:Link", "info": {"output-node-id": 1, "input-node-id": 2}}]'
+        )
+        self.assertEqual([(l.output_node, l.input_node) for l in graph.links], [(1, 2)])
+
+    def test_the_daemon_treats_it_as_pipewire_being_unreachable(self):
+        from tfcz_audio.pw import PwError
+        from tfcz_audio.router import Router
+
+        from .helpers import fake_backend, minimal_config
+
+        backend = fake_backend()
+        backend.graph = lambda *a, **k: (_ for _ in ()).throw(PwError("cannot read the output of pw-dump"))
+        router = Router(minimal_config(), backend, node_wait=0.01, sleep=lambda s: None)
+        router.start()
+        try:
+            router.reconcile()  # must not raise
+            self.assertIn("cannot talk to PipeWire", router.last_error)
+        finally:
+            router.stop()
