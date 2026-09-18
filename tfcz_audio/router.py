@@ -1914,6 +1914,16 @@ class Router:
         """(node, label) for a test tone, or a clear refusal."""
         graph = graph if graph is not None else self._graph_or_empty()
         if alias not in self.cfg.devices:
+            # the setup wizard plays a tone before anything is configured, so a
+            # plain node name is allowed too -- as long as it really plays sound
+            from .pw import describe_node
+
+            raw = graph.by_name(alias)
+            if raw is not None:
+                if not raw.media_class.startswith("Audio/Sink"):
+                    raise RouterError(f"{describe_node(raw, graph).get('friendly') or alias} ist kein Ausgabegerät; "
+                                      "ein Testton geht nur an Kopfhörer oder Lautsprecher")
+                return raw.name, describe_node(raw, graph).get("friendly") or raw.name
             known = ", ".join(sorted(self.cfg.devices)) or "keine"
             raise RouterError(f"Das Gerät «{alias}» ist nicht eingerichtet (bekannt: {known})")
         res = self.resolved.get(alias)

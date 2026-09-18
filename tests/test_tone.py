@@ -190,3 +190,35 @@ class TargetTests(unittest.TestCase):
         with self.assertRaises(RouterError) as caught:
             self.router.tone_target("a_out")
         self.assertIn("nicht angeschlossen", str(caught.exception))
+
+
+class WizardToneTests(unittest.TestCase):
+    """The wizard plays a tone before anything is configured -- that is the
+    moment the question matters: which headset is this one?"""
+
+    def setUp(self):
+        self.router = Router(minimal_config(), fake_backend(), node_wait=0.05, sleep=lambda s: None)
+        self.router.start()
+        self.addCleanup(self.router.stop)
+
+    def test_a_plain_node_name_works_as_a_target(self):
+        node, label = self.router.tone_target("alsa_output.a")
+        self.assertEqual(node, "alsa_output.a")
+        self.assertTrue(label)
+
+    def test_a_node_that_records_is_still_refused(self):
+        with self.assertRaises(RouterError) as caught:
+            self.router.tone_target("alsa_input.a")
+        self.assertIn("kein Ausgabegerät", str(caught.exception))
+
+    def test_something_that_is_neither_is_refused(self):
+        with self.assertRaises(RouterError) as caught:
+            self.router.tone_target("alsa_output.does-not-exist")
+        self.assertIn("nicht eingerichtet", str(caught.exception))
+
+    def test_the_wizard_offers_the_button_without_selecting_the_headset(self):
+        from importlib import resources
+
+        page = resources.files("tfcz_audio").joinpath("ui.html").read_text()
+        self.assertIn("data-tone-node", page)
+        self.assertIn("e.stopPropagation()", page)

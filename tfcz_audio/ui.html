@@ -1987,7 +1987,9 @@
         ${idText ? `<div class="sub">${esc(idText)}</div>` : ''}
         ${taken ? '<div class="sub">bereits für die andere Person gewählt</div>' : ''}
       </div>
-      ${showMeter && g.inputs.length ? `<div class="meter" style="max-width:190px"><i style="width:${levelWidth(lvl)}%"></i></div>` : ''}
+      ${g.outputs.length ? `<button class="btn btn-sm wiz-tone" data-tone-node="${esc(g.outputs[0].name)}"
+        title="kurzer Ton auf diesem Kopfhörer">${svg('i-headphones', 'i-sm')}Testton</button>` : ''}
+      ${showMeter && g.inputs.length ? `<div class="meter" style="max-width:150px"><i style="width:${levelWidth(lvl)}%"></i></div>` : ''}
     </div>`;
   }
   function renderWizard() {
@@ -2016,6 +2018,14 @@
           : `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Kein Headset gefunden</span></div><dl>
              <dt>Warum</dt><dd>Kein angeschlossenes Gerät hat sowohl Mikrofon als auch Kopfhörer.</dd>
              <dt>Was tun</dt><dd>Steck das USB-Headset ein und warte kurz; diese Liste aktualisiert sich von selbst.</dd></dl></div>`}`;
+      // the tone button sits inside a choice: playing must not also pick it
+      body.querySelectorAll('button[data-tone-node]').forEach(b => b.addEventListener('click', e => {
+        e.stopPropagation();
+        b.disabled = true;
+        api('POST', `/tone/${encodeURIComponent(b.dataset.toneNode)}?side=both`)
+          .then(() => toast('Testton läuft: hörst du ihn auf diesem Kopfhörer?'), fail)
+          .finally(() => setTimeout(() => { b.disabled = false; }, 2000));
+      }));
       body.querySelectorAll('.choice:not(.taken)').forEach(el => el.addEventListener('click', () => {
         if (w.step === 0) w.a = el.dataset.id; else w.b = el.dataset.id;
         if (w.game && (w.game === w.a || w.game === w.b)) w.game = null;
