@@ -180,7 +180,7 @@ def virtual_spec(cfg: Config, key: str = OBS_MIC) -> LoopbackSpec:
         "application.name": out.mix_name,
     }
     playback = {
-        "media.class": "Audio/Source/Virtual",
+        "media.class": "Audio/Source",
         "node.name": out.mic_name,
         "node.description": out.description,
         "audio.position": position,

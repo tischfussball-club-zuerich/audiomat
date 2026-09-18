@@ -456,7 +456,7 @@ With `token` set, send `Authorization: Bearer <token>` or `?token=<token>`.
 
 * On start the daemon terminates helper processes left over from a crashed
   previous instance, then spawns one `pw-loopback` for the virtual mic (an
-  `Audio/Sink` mix bus feeding an `Audio/Source/Virtual` node) and one per
+  `Audio/Sink` mix bus feeding an `Audio/Source` node) and one per
   route, each targeting the resolved node names with
   `node.dont-fallback = true` so a missing headset leaves the route silent
   instead of falling back to the default device.

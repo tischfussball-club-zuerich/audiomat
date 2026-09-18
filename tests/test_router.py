@@ -36,7 +36,7 @@ class SpecTests(unittest.TestCase):
         cfg = minimal_config()
         spec = virtual_spec(cfg)
         self.assertEqual(spec.capture_props["media.class"], "Audio/Sink")
-        self.assertEqual(spec.playback_props["media.class"], "Audio/Source/Virtual")
+        self.assertEqual(spec.playback_props["media.class"], "Audio/Source")
         self.assertEqual(spec.playback_node, "tfcz.obsmic")
 
     def test_capture_sink_flag(self):
