@@ -218,9 +218,6 @@
   .state.bad { color: #f0a6a2; font-weight: 700; }
 
   /* --------------------------------------------------------------- Presets */
-  .presets { display: flex; flex-wrap: wrap; gap: 12px; }
-  .preset { display: flex; flex-direction: column; gap: 4px; max-width: 250px; }
-  .preset .cap { color: var(--ink-muted); font-size: 12px; }
 
   /* -------------------------------------------------------------- Advanced */
   details.adv > summary { cursor: pointer; list-style: none; font-weight: 800; font-size: 17px; color: var(--ink-strong); display: flex; align-items: center; gap: 10px; }
@@ -524,13 +521,6 @@
     <h2>Lautstärke</h2>
     <p class="hint">Eine Karte pro Pfeil. 100 % ist die normale Lautstärke. Schalte eine Verbindung aus, statt sie auf 0 % zu ziehen.</p>
     <div class="cards" id="cards"></div>
-  </section>
-
-  <section class="panel" id="presets-section">
-    <span class="eyebrow">Voreinstellungen</span>
-    <h2>Schnell umschalten</h2>
-    <p class="hint">Mehrere Lautstärken auf einmal. Jeder Knopf sagt, was er ändert.</p>
-    <div class="presets" id="presets"></div>
   </section>
 
   <section class="panel">
@@ -1070,34 +1060,6 @@
     card.addEventListener('click', e => { if (e.target.closest('input,button,label')) return; selectRoute(name, false); });
   }
   const sendVolume = (name, value) => api('PUT', `/routes/${encodeURIComponent(name)}`, { volume: parseInt(value, 10) / 100 }).then(() => refresh(false), fail);
-
-  const PRESET_NAMES = {
-    default: 'Standard', everything_on: 'Alles ein',
-    mics_off_air: 'Mikrofone aus', mics_on_air: 'Mikrofone ein',
-    game_off: 'Spielton aus', game_on: 'Spielton ein', game_quiet: 'Spielton leise',
-    hdmi_off: 'Spielton aus', hdmi_on: 'Spielton ein', hdmi_quiet: 'Spielton leise',
-  };
-  const presetName = p => PRESET_NAMES[p] || p.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
-  function renderPresets() {
-    const box = $('#presets'), presets = state.config.presets || {};
-    const names = Object.keys(presets);
-    $('#presets-section').hidden = !names.length;
-    box.innerHTML = '';
-    for (const p of names) {
-      const wrap = document.createElement('div'); wrap.className = 'preset';
-      const b = document.createElement('button'); b.className = 'btn'; b.textContent = presetName(p);
-      const lines = Object.entries(presets[p]).map(([r, v]) => {
-        const c = state.config.routes[r], label = c ? human(c.from) + ' zu ' + human(c.to) : r;
-        if (typeof v === 'object') return `${label}: ${'mute' in v ? (v.mute ? 'aus' : 'ein') : ''}${'volume' in v ? ' ' + pct(v.volume) : ''}`.trim();
-        return `${label}: ${pct(v)}`;
-      });
-      b.title = lines.join('\n');
-      const cap = document.createElement('div'); cap.className = 'cap';
-      cap.textContent = lines.slice(0, 3).join(' · ') + (lines.length > 3 ? ' · …' : '');
-      b.addEventListener('click', () => api('POST', `/presets/${encodeURIComponent(p)}`).then(() => { toast('angewendet: ' + presetName(p)); refresh(false); }, fail));
-      wrap.appendChild(b); wrap.appendChild(cap); box.appendChild(wrap);
-    }
-  }
 
   // -------------------------------------------------------- Reiter (Tabs)
   function showTab(name) {
@@ -1858,7 +1820,7 @@
         const serialized = JSON.stringify(data.cfg);
         if (serialized !== lastConfig) {
           lastConfig = serialized; state.config = data.cfg;
-          renderPresets(); renderLabels(); renderRouteForm();
+          renderLabels(); renderRouteForm();
           $('#cfgpath').textContent = data.cfg.path || '(keine)';
           api('GET', '/health').then(h => { $('#build').textContent = `${h.version} · ${h.build} · ${h.module || ''}`; }).catch(() => {});
           api('GET', '/audio').then(renderAudio).catch(() => {});

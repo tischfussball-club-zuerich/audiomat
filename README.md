@@ -96,7 +96,6 @@ who do not care about audio plumbing:
   arriving; the OBS box tells you in words whether sound is reaching OBS.
 * **Volume controls**: one card per arrow with a percent slider and an
   On/Off switch.
-* **Quick settings**: the presets as big buttons.
 * **Set up devices**: a three-step wizard, opened from the header as a
   dialog over the page so nothing else can be changed halfway through
   (Esc or a click beside it closes). Pick person A's headset (speak into
@@ -330,7 +329,7 @@ client can drive it.
 | POST | `/routes/{r}/volume/{v}` | set volume without a body |
 | POST | `/routes/{r}/volume_db/{db}` | set volume in dB without a body |
 | POST | `/routes/{r}/mute` `/unmute` `/toggle` | mute control |
-| GET | `/presets` | list presets |
+| GET | `/presets` | list presets (presets are for automation; the page itself does not show them) |
 | POST | `/presets/{p}` | apply a preset |
 | POST | `/reset` | all routes back to config values |
 | GET | `/devices` | audio sources/sinks currently in PipeWire |
