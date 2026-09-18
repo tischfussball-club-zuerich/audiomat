@@ -185,5 +185,6 @@ if (( first_install )); then
 MSG
 fi
 cat <<MSG
-    useful:  tfcz-audio doctor | tfcz-audio status | journalctl --user -u tfcz-audio -f
+    useful:  tfcz-audio doctor | tfcz-audio fix | tfcz-audio status
+             journalctl --user -u tfcz-audio -f
 MSG

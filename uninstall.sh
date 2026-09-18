@@ -50,6 +50,18 @@ rm -f "$BIN" && echo "==> removed $BIN"
 rm -rf "$LIB" && echo "==> removed $LIB"
 command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload || true
 
+# drop-ins this tool wrote into PipeWire's config: they keep changing the buffer
+# size and the sample rate of the whole machine long after the router is gone
+PW_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/pipewire/pipewire.conf.d"
+for dropin in "$PW_CONF"/10-tfcz-*.conf; do
+  [[ -e $dropin ]] || continue
+  rm -f "$dropin" && echo "==> removed PipeWire setting $(basename "$dropin")"
+  restart_sound=1
+done
+if [[ ${restart_sound:-0} == 1 ]] && command -v systemctl >/dev/null 2>&1; then
+  echo "    (the sound system keeps the old values until: systemctl --user restart pipewire wireplumber)"
+fi
+
 if (( purge )); then
   rm -rf "$CONFIG_DIR" "$STATE_DIR"
   echo "==> removed $CONFIG_DIR and $STATE_DIR"

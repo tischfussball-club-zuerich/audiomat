@@ -490,7 +490,8 @@ class Handler(BaseHTTPRequestHandler):
         if seg == ["repair"] and read:
             from . import repair
 
-            return ok, {"ok": True, **repair.plan(router), "run": self.server.repairs.state()}
+            fresh = str(params.get("fresh", "")).lower() in TRUE_WORDS
+            return ok, {"ok": True, **repair.plan(router, fresh), "run": self.server.repairs.state()}
         if len(seg) == 2 and seg[0] == "repair" and write:
             from . import repair
 

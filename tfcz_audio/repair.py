@@ -41,6 +41,7 @@ class Action:
     why: str
     effect: str
     command: tuple[str, ...] = ()
+    before: tuple[str, ...] = ()  # runs first, with the same rights
     needs_root: bool = False
     manual: bool = False  # shown with its command, never run from here
     note: str = ""
@@ -54,7 +55,7 @@ class Action:
             "title": self.title,
             "why": self.why,
             "effect": self.effect,
-            "command": " ".join(self.command),
+            "command": " && ".join(" ".join(c) for c in (self.before, self.command) if c),
             "needs_root": self.needs_root,
             "manual": self.manual,
             "runnable": runnable and not self.manual,
@@ -77,8 +78,26 @@ def _run(cmd: list[str], timeout: float = 5.0) -> tuple[int, str]:
     return r.returncode, (r.stdout + r.stderr).strip()
 
 
-def root_mode() -> dict[str, Any]:
-    """How this daemon could become root, if at all."""
+_root_cache: tuple[float, dict[str, Any]] | None = None
+
+
+def root_mode(fresh: bool = False) -> dict[str, Any]:
+    """How this daemon could become root, if at all.
+
+    Cached: the sudo probe writes a line to the authentication log every time,
+    and the answer does not change between two clicks."""
+    global _root_cache  # noqa: PLW0603
+
+    with _plan_lock:
+        if _root_cache and not fresh and time.time() - _root_cache[0] < 60.0:
+            return _root_cache[1]
+    mode = _root_mode()
+    with _plan_lock:
+        _root_cache = (time.time(), mode)
+    return mode
+
+
+def _root_mode() -> dict[str, Any]:
     if os.getuid() == 0:
         return {"available": True, "how": "root", "why": "läuft bereits als root"}
     if shutil.which("sudo") and _run(["sudo", "-n", "true"], timeout=4)[0] == 0:
@@ -90,6 +109,18 @@ def root_mode() -> dict[str, Any]:
         "how": "",
         "why": "Dieser Dienst darf nicht Administrator werden. Führe den Befehl in einem Terminal aus, "
                "dort fragt sudo nach deinem Passwort.",
+    }
+
+
+def _env() -> dict[str, str]:
+    """No command may stop and wait for an answer: nobody is sitting at this
+    terminal, and a question would only end in the timeout."""
+    return {
+        **os.environ,
+        "DEBIAN_FRONTEND": "noninteractive",
+        "APT_LISTCHANGES_FRONTEND": "none",
+        "GIT_TERMINAL_PROMPT": "0",
+        "SYSTEMD_PAGER": "",
     }
 
 
@@ -157,8 +188,10 @@ def detect(router: Any = None) -> list[Action]:
             why="Ohne diese Programme kann der Router weder Verbindungen bauen noch Pegel messen: "
                 + ", ".join(missing),
             effect="Einzelne Funktionen fehlen ganz oder still: keine Pegelanzeige, keine Messung, kein Ton.",
+            before=("apt-get", "update"),
             command=("apt-get", "install", "-y", *missing),
             needs_root=True,
+            note="Holt zuerst die Paketlisten, sonst scheitert die Installation an einer veralteten Liste.",
         ))
 
     if shutil.which("systemctl"):
@@ -240,14 +273,38 @@ def detect(router: Any = None) -> list[Action]:
     return actions
 
 
-def plan(router: Any = None) -> dict[str, Any]:
+PLAN_CACHE_SECONDS = 8.0
+_plan_lock = threading.Lock()
+_plan_cache: tuple[float, dict[str, Any]] | None = None
+
+
+def plan(router: Any = None, fresh: bool = False) -> dict[str, Any]:
+    """Cached briefly: every call runs systemctl, loginctl, pactl and a sudo
+    probe, and the page asks again every second while a repair runs."""
+    global _plan_cache  # noqa: PLW0603
+
+    with _plan_lock:
+        if _plan_cache and not fresh and time.time() - _plan_cache[0] < PLAN_CACHE_SECONDS:
+            return _plan_cache[1]
     root = root_mode()
     actions = detect(router)
-    return {
+    result = {
         "root": root,
         "actions": [a.to_dict(root) for a in actions],
         "healthy": not actions,
     }
+    with _plan_lock:
+        _plan_cache = (time.time(), result)
+    return result
+
+
+def invalidate() -> None:
+    """After a repair the world has changed; the next look must be a fresh one."""
+    global _plan_cache, _root_cache  # noqa: PLW0603
+
+    with _plan_lock:
+        _plan_cache = None
+        _root_cache = None
 
 
 def action_by_id(action_id: str, router: Any = None) -> Action | None:
@@ -303,26 +360,36 @@ class Runner:
             if action.python:
                 rc = self._python_fix(action)
             else:
-                cmd = _elevate(action.command, root) if action.needs_root else list(action.command)
-                self._write("$ " + " ".join(cmd) + "\n\n")
-                try:
-                    proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
-                                          timeout=TIMEOUT, check=False, stdin=subprocess.DEVNULL)
-                    self._write((proc.stdout or "") + (proc.stderr or ""))
-                    rc = proc.returncode
-                except subprocess.TimeoutExpired:
-                    self._write(f"\nAbgebrochen: der Befehl lief länger als {int(TIMEOUT)} Sekunden.\n")
-                    rc = 124
-                except (OSError, subprocess.SubprocessError) as exc:
-                    self._write(f"\nDer Befehl liess sich nicht starten: {exc}\n")
-                    rc = 127
+                rc = 0
+                for step in (action.before, action.command):
+                    if not step:
+                        continue
+                    rc = self._step(step, action, root)
+                    if rc != 0:
+                        break
         except Exception as exc:  # noqa: BLE001 - a failed repair must not take the daemon with it
             log.exception("repair %s failed", action.id)
             self._write(f"\nUnerwarteter Fehler: {exc}\n")
             rc = 1
         self._write(f"\n=== fertig (rc={rc})\n")
+        invalidate()  # whatever was wrong may be fixed now
         with self._lock:
             self.running, self.rc, self.finished = False, rc, time.time()
+
+    def _step(self, command: tuple[str, ...], action: Action, root: dict[str, Any]) -> int:
+        cmd = _elevate(command, root) if action.needs_root else list(command)
+        self._write("$ " + " ".join(cmd) + "\n\n")
+        try:
+            proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace",
+                                  timeout=TIMEOUT, check=False, stdin=subprocess.DEVNULL, env=_env())
+            self._write((proc.stdout or "") + (proc.stderr or "") + "\n")
+            return proc.returncode
+        except subprocess.TimeoutExpired:
+            self._write(f"\nAbgebrochen: der Befehl lief länger als {int(TIMEOUT)} Sekunden.\n")
+            return 124
+        except (OSError, subprocess.SubprocessError) as exc:
+            self._write(f"\nDer Befehl liess sich nicht starten: {exc}\n")
+            return 127
 
     def _python_fix(self, action: Action) -> int:
         if action.python == "rate_dropin":

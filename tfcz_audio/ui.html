@@ -58,6 +58,8 @@
   h3 { font-size: 15px; font-weight: 700; margin: 24px 0 8px; }
   p { margin: 0; }
   .hint { color: var(--ink-muted); font-size: 14px; margin: 4px 0 16px; }
+  .hint a { color: var(--blue); text-underline-offset: 3px; }
+  .hint a:hover { color: var(--gold-light); }
   .eyebrow { display: block; font-weight: 900; text-transform: uppercase; letter-spacing: .16em; font-size: 11px; color: var(--blue); margin-bottom: 4px; }
   code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: 12px; color: var(--gold-light); }
 
@@ -105,6 +107,10 @@
   .problem.warning { border-color: rgba(205, 168, 87, .45); background: rgba(205, 168, 87, .08); }
   .problem.info { border-color: rgba(92, 167, 220, .35); background: rgba(92, 167, 220, .07); }
   .problem .t { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--ink-strong); }
+  details.problem > summary { cursor: pointer; list-style: none; }
+  details.problem > summary::-webkit-details-marker { display: none; }
+  details.problem > summary::after { content: "mehr"; color: var(--ink-muted); font-size: 12px; font-weight: 700; }
+  details.problem[open] > summary::after { content: "weniger"; }
   .problem.error .t > .i { color: var(--red); }
   .problem.warning .t > .i { color: var(--gold); }
   .problem.info .t > .i { color: var(--blue); }
@@ -525,6 +531,8 @@
         <p class="hint" style="margin:2px 0 0">Das nimmt OBS als «TFCZ OBS Mic» auf. Wenn sich dieser Balken bewegt, hören es deine Zuschauer.</p>
       </div>
     </div>
+    <p class="hint" style="margin:12px 0 0">Klingt etwas schlecht oder fehlt ganz? Unter
+      <a href="#diagnose">Erweitert → Diagnose</a> stehen Reparaturen, Prüfungen und eine Liste zum Durchgehen.</p>
   </section>
 
   <section class="panel">
@@ -626,16 +634,8 @@
         </section>
 
         <section class="tabpanel" data-tab="diag" role="tabpanel" hidden>
-          <p class="hint">Wenn etwas nicht funktioniert: hier messen und nachlesen. Jedes Ergebnis lässt sich kopieren
-            und weiterschicken.</p>
-
-          <h3>Prüfungen</h3>
-          <div class="row">
-            <button class="btn" id="run-doctor"><svg class="i"><use href="#i-checks"/></svg>System prüfen</button>
-            <button class="btn" id="run-selftest"><svg class="i"><use href="#i-activity"/></svg>Tonweg testen</button>
-            <span class="hint" style="margin:0" id="diag-state"></span>
-          </div>
-          <pre class="report" id="diag-output" hidden></pre>
+          <p class="hint">Wenn etwas nicht funktioniert: hier reparieren, messen und nachlesen — in dieser
+            Reihenfolge. Jedes Ergebnis lässt sich kopieren und weiterschicken.</p>
 
           <h3>System reparieren</h3>
           <p class="hint">Was am Rechner selbst fehlt oder falsch steht — fehlende Programme, ein nicht gestartetes
@@ -647,6 +647,14 @@
           </div>
           <div id="repair"></div>
           <pre class="report" id="repair-log" hidden></pre>
+
+          <h3>Prüfungen</h3>
+          <div class="row">
+            <button class="btn" id="run-doctor"><svg class="i"><use href="#i-checks"/></svg>System prüfen</button>
+            <button class="btn" id="run-selftest"><svg class="i"><use href="#i-activity"/></svg>Tonweg testen</button>
+            <span class="hint" style="margin:0" id="diag-state"></span>
+          </div>
+          <pre class="report" id="diag-output" hidden></pre>
 
           <h3>Was läuft im Tonsystem</h3>
           <p class="hint">Misst kurz mit und zeigt, wer den Takt vorgibt, mit welcher Puffergrösse gearbeitet wird und wo
@@ -872,14 +880,26 @@
   function renderOverall() {
     const st = state.status, box = $('#problems');
     const problems = st.problems || [];
-    box.innerHTML = problems.map(p => `
-      <div class="problem ${esc(p.level)}">
-        <div class="t">${svg(LEVEL_ICON[p.level] || 'i-info')}<span class="grow">${esc(p.title)}</span>
-          ${p.fixable ? `<button class="btn btn-sm" data-fix="${esc(p.what)}">${svg('i-wrench', 'i-sm')}Beheben</button>` : ''}</div>
-        <dl>${p.why ? `<dt>Warum</dt><dd>${esc(p.why)}</dd>` : ''}${p.effect ? `<dt>Folge</dt><dd>${esc(p.effect)}</dd>` : ''}${p.fix ? `<dt>Was tun</dt><dd>${esc(p.fix)}</dd>` : ''}</dl>
-      </div>`).join('');
-    box.querySelectorAll('button[data-fix]').forEach(b => b.addEventListener('click', () =>
-      api('POST', `/fix/device/${encodeURIComponent(b.dataset.fix)}`).then(() => { toast('behoben'); refresh(false); }, fail)));
+    // Hinweise stehen dauerhaft da; ausgeklappt sehen sie aus wie Fehler.
+    // Fehler und Warnungen bleiben offen, Hinweise zeigen nur ihre Zeile.
+    const details = p => `<dl>${p.why ? `<dt>Warum</dt><dd>${esc(p.why)}</dd>` : ''}${p.effect ? `<dt>Folge</dt><dd>${esc(p.effect)}</dd>` : ''}${p.fix ? `<dt>Was tun</dt><dd>${esc(p.fix)}</dd>` : ''}</dl>`;
+    const head = p => `${svg(LEVEL_ICON[p.level] || 'i-info')}<span class="grow">${esc(p.title)}</span>
+      ${p.fixable ? `<button class="btn btn-sm" data-fix="${esc(p.what)}">${svg('i-wrench', 'i-sm')}Beheben</button>` : ''}`;
+    // diese Funktion läuft alle zwei Sekunden: ohne diese Sperre würde ein
+    // aufgeklappter Hinweis sofort wieder zuklappen
+    const sig = JSON.stringify(problems);
+    if (box.dataset.sig !== sig) {
+      const open = new Set([...box.querySelectorAll('details[open]')].map(d => d.dataset.key));
+      box.innerHTML = problems.map(p => p.level === 'info'
+        ? `<details class="problem info" data-key="${esc(p.title)}" ${open.has(p.title) ? 'open' : ''}><summary class="t">${head(p)}</summary>${details(p)}</details>`
+        : `<div class="problem ${esc(p.level)}"><div class="t">${head(p)}</div>${details(p)}</div>`).join('');
+      box.dataset.sig = sig;
+    }
+    box.querySelectorAll('button[data-fix]:not([data-bound])').forEach(b => {
+      b.dataset.bound = '1';
+      b.addEventListener('click', () =>
+        api('POST', `/fix/device/${encodeURIComponent(b.dataset.fix)}`).then(() => { toast('behoben'); refresh(false); }, fail));
+    });
   }
   function renderUnreachable() {
     $('#problems').innerHTML = `<div class="problem error"><div class="t">${svg('i-x')}<span class="grow">Der Audio-Router antwortet nicht</span></div>
@@ -1308,6 +1328,7 @@
     state.versionsLoaded = true;
     $('#vers-state').innerHTML = '<span class="spin"></span> lese …';
     return api('GET', '/versions' + (fresh ? '?fresh=1' : '')).then(renderVersions, e => {
+      state.versionsLoaded = false;  // sonst bliebe der Fehler bis zum Neuladen stehen
       $('#vers-state').textContent = '';
       $('#versions').innerHTML = `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Versionen nicht lesbar</span></div><dl><dd>${esc(e.message)}</dd></dl></div>`;
     });
@@ -1355,17 +1376,17 @@
       if (!repairTimer) repairTimer = setInterval(loadRepair, 1200);
     } else {
       if (run.title) $('#repair-state').textContent = run.rc === 0 ? `${run.title}: erledigt` : `${run.title}: fehlgeschlagen`;
-      if (repairTimer) { clearInterval(repairTimer); repairTimer = null; if (run.title) loadRepair(); }
+      if (repairTimer) { clearInterval(repairTimer); repairTimer = null; if (run.title) loadRepair(true); }
     }
   }
-  function loadRepair() {
-    return api('GET', '/repair').then(renderRepair, e => {
+  function loadRepair(fresh) {
+    return api('GET', '/repair' + (fresh ? '?fresh=1' : '')).then(renderRepair, e => {
       $('#repair').innerHTML = `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Prüfung nicht möglich</span></div><dl><dd>${esc(e.message)}</dd></dl></div>`;
     });
   }
   $('#repair-scan').addEventListener('click', () => {
     $('#repair-state').innerHTML = '<span class="spin"></span> prüft …';
-    loadRepair().then(() => { if (!repairTimer) $('#repair-state').textContent = ''; });
+    loadRepair(true).then(() => { if (!repairTimer) $('#repair-state').textContent = ''; });
   });
 
   // -------------------------------------------- Prüfliste zum Selbstprüfen

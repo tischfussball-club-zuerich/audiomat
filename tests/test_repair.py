@@ -6,6 +6,8 @@ from tfcz_audio import repair
 
 
 class PlanTests(unittest.TestCase):
+    def setUp(self):
+        repair.invalidate()  # the plan and the sudo probe are cached
     def test_a_missing_tool_becomes_a_package_to_install(self):
         with mock.patch.object(repair.shutil, "which", lambda name: None):
             actions = repair.detect()
@@ -28,6 +30,15 @@ class PlanTests(unittest.TestCase):
              mock.patch.object(repair, "_run", lambda cmd, timeout=5.0: (0, "active")), \
              mock.patch.object(repair, "_unit_active", lambda unit: True):
             self.assertIsNone(repair.action_by_id("install-packages"))
+
+    def test_the_plan_is_cached_but_a_repair_clears_it(self):
+        with mock.patch.object(repair.shutil, "which", lambda name: None):
+            first = repair.plan()
+            self.assertTrue(first["actions"])
+            self.assertIs(repair.plan(), first)          # same object: served from the cache
+            self.assertIsNot(repair.plan(fresh=True), first)
+        repair.invalidate()
+        self.assertIsNot(repair.plan(), first)
 
     def test_root_is_never_taken_quietly(self):
         with mock.patch.object(repair.shutil, "which", lambda name: None), \

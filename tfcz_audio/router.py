@@ -335,6 +335,14 @@ class Router:
                     log.warning("device %s (%s) is gone", alias, old.node)
         self.resolved = new
 
+    def refresh_devices(self, graph: Graph | None = None) -> Graph:
+        """Resolve the configured devices against the current graph and nothing
+        else. Read-only on purpose: one-off callers like the command line want
+        to know what is connected without starting a single stream."""
+        graph = graph if graph is not None else self._graph_or_empty()
+        self._refresh_resolution(graph)
+        return graph
+
     def start(self) -> None:
         with self._lock:
             self._started = True
