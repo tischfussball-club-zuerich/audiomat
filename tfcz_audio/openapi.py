@@ -93,6 +93,9 @@ PATHS: dict[str, dict[str, Any]] = {
     "/config": {"get": _op("Einstellungen als JSON", "Das Token wird nicht mitgeschickt.", tag="Einstellungen")},
     "/config/devices": {"put": _op("Zuordnung Kürzel zu Gerät ersetzen", tag="Einstellungen", body={"type": "object"})},
     "/config/labels": {"put": _op("Namen der Geräte ersetzen", tag="Einstellungen", body={"type": "object"})},
+    "/config/obs-mode": {"put": _op(
+        "Ein gemeinsames OBS-Mikrofon oder eines pro Person", tag="Einstellungen",
+        body={"type": "object", "properties": {"separate": {"type": "boolean"}}})},
     "/config/audio": {"put": _op("Tonparameter ändern", tag="Einstellungen", body={"type": "object"})},
     "/config/save-defaults": {"post": _op("Aktuelle Werte als Standard speichern", tag="Einstellungen")},
     "/config/routes/{route}": {

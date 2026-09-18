@@ -31,6 +31,16 @@ meters = true
 obs_mic_name = "tfcz.obsmic"
 obs_mic_description = "TFCZ OBS Mic"   # what OBS shows in "Audio Input Capture"
 
+# One microphone per person instead of one mixed one. OBS then sees two sources
+# and can filter each voice on its own -- an expander per person keeps the
+# other one's voice out of the stream while they are not speaking. The routes
+# to OBS have to point at these names ("to = obs_mic_a"); the web UI does that
+# for you under Erweitert -> Einrichtung -> Mikrofone für OBS.
+# [virtual.outputs.obs_mic_a]
+# description = "TFCZ Hans"
+# [virtual.outputs.obs_mic_b]
+# description = "TFCZ Karl"
+
 # Friendly aliases for PipeWire node.name values (see `tfcz-audio devices`).
 [devices]
 headset_a_mic = "alsa_input.usb-Logitech_Logitech_USB_Headset-00.mono-fallback"

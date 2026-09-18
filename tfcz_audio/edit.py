@@ -129,8 +129,10 @@ def public_config(cfg: Config) -> dict[str, Any]:
     data["api"] = {"listen": cfg.api.listen, "port": cfg.api.port, "token_set": bool(cfg.api.token)}
     data["path"] = str(cfg.path) if cfg.path else None
     data["obs_mic_target"] = OBS_MIC
+    data["obs_mic_targets"] = sorted(cfg.virtual.outputs)
     data["labels"] = dict(cfg.labels)
-    data["names"] = {alias: human(cfg, alias) for alias in cfg.devices} | {OBS_MIC: human(cfg, OBS_MIC)}
+    data["names"] = ({alias: human(cfg, alias) for alias in cfg.devices}
+                     | {key: human(cfg, key) for key in cfg.virtual.outputs})
     return data
 
 
@@ -160,9 +162,27 @@ def _pair(spec: Any, label: str) -> tuple[str, str, str]:
     return str(spec["mic"]), str(spec["out"]), name
 
 
+OBS_A, OBS_B = "obs_mic_a", "obs_mic_b"
+
+
+def obs_outputs(separate: bool, name_a: str, name_b: str) -> dict[str, Any]:
+    """The microphones OBS sees: one shared, or one per person.
+
+    Separate ones are what lets OBS filter each voice on its own -- a gate or
+    expander can only work on a channel it can see by itself.
+    """
+    if not separate:
+        return {}
+    return {
+        OBS_A: {"description": f"TFCZ {name_a}"},
+        OBS_B: {"description": f"TFCZ {name_b}"},
+    }
+
+
 def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
     """Replace devices, routes and presets with the standard two-headset layout.
-    body = {headset_a: {mic, out}, headset_b: {mic, out}, game: node|null, game_volume: 0.6}"""
+    body = {headset_a: {mic, out}, headset_b: {mic, out}, game: node|null,
+            game_volume: 0.6, separate_obs: false}"""
     a_mic, a_out, a_label = _pair(body.get("headset_a"), "Headset A")
     b_mic, b_out, b_label = _pair(body.get("headset_b"), "Headset B")
     if {a_mic, a_out} & {b_mic, b_out}:
@@ -181,16 +201,18 @@ def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
         raise EditError("game_volume must be a number") from None
     if game and game in (a_mic, b_mic, a_out, b_out):
         raise EditError("The game sound input cannot be part of a headset; pick the HDMI capture input")
+    separate = bool(body.get("separate_obs", router.cfg.virtual.separate))
 
     def mutate(data: dict[str, Any]) -> None:
         devices = {"headset_a_mic": ids[a_mic], "headset_a_out": ids[a_out], "headset_b_mic": ids[b_mic], "headset_b_out": ids[b_out]}
         na, nb, ng = a_label or "Headset A", b_label or "Headset B", game_label or "Game sound"
         labels = {"headset_a": na, "headset_b": nb}
+        obs_a, obs_b = (OBS_A, OBS_B) if separate else (OBS_MIC, OBS_MIC)
         routes: dict[str, Any] = {
             "a_to_b": {"description": f"{na} spricht zu {nb}", "from": "headset_a_mic", "to": "headset_b_out", "volume": 1.0},
             "b_to_a": {"description": f"{nb} spricht zu {na}", "from": "headset_b_mic", "to": "headset_a_out", "volume": 1.0},
-            "a_to_obs": {"description": f"{na} auf dem Stream", "from": "headset_a_mic", "to": OBS_MIC, "volume": 1.0},
-            "b_to_obs": {"description": f"{nb} auf dem Stream", "from": "headset_b_mic", "to": OBS_MIC, "volume": 1.0},
+            "a_to_obs": {"description": f"{na} auf dem Stream", "from": "headset_a_mic", "to": obs_a, "volume": 1.0},
+            "b_to_obs": {"description": f"{nb} auf dem Stream", "from": "headset_b_mic", "to": obs_b, "volume": 1.0},
         }
         presets: dict[str, Any] = {
             "everything_on": {"a_to_b": 1.0, "b_to_a": 1.0, "a_to_obs": 1.0, "b_to_obs": 1.0},
@@ -215,6 +237,42 @@ def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
         data["labels"] = labels
         data["routes"] = routes
         data["presets"] = presets
+        virtual = data.setdefault("virtual", {})
+        outputs = obs_outputs(separate, na, nb)
+        if outputs:
+            virtual["outputs"] = outputs
+        else:
+            virtual.pop("outputs", None)
+
+    return _commit(router, mutate)
+
+
+def set_obs_mode(router: Router, separate: bool) -> dict[str, Any]:
+    """Switch between one microphone for OBS and one per person, without
+    touching anything else. The routes to OBS follow along, so the change is
+    complete: a route pointing at a microphone that no longer exists would
+    refuse to load."""
+    cfg = router.cfg
+    labels = cfg.labels
+    name_a = labels.get("headset_a") or "A"
+    name_b = labels.get("headset_b") or "B"
+
+    def mutate(data: dict[str, Any]) -> None:
+        virtual = data.setdefault("virtual", {})
+        outputs = obs_outputs(separate, name_a, name_b)
+        if outputs:
+            virtual["outputs"] = outputs
+        else:
+            virtual.pop("outputs", None)
+        targets = list(outputs) or [OBS_MIC]
+        obs_routes = [n for n, r in sorted(data["routes"].items()) if str(r.get("to", "")).startswith(OBS_MIC)]
+        if separate and len(obs_routes) != len(targets):
+            raise EditError("Getrennte OBS-Mikrofone brauchen genau zwei Verbindungen zum Stream; "
+                            "richte die Geräte neu ein.")
+        # every route has to land on a microphone that exists afterwards: going
+        # back to one means all of them point at it, not just the first
+        for index, route_name in enumerate(obs_routes):
+            data["routes"][route_name]["to"] = targets[index] if separate else targets[0]
 
     return _commit(router, mutate)
 

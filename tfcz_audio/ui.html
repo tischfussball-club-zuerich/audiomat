@@ -524,13 +524,7 @@
       <span class="off"><i></i>Ausgeschaltet</span>
       <span class="miss"><i></i>Gerät fehlt oder ist blockiert</span>
     </div>
-    <div class="obsline">
-      <svg class="i i-lg"><use href="#i-tower"/></svg>
-      <div style="flex:1 1 220px">
-        <div class="big" id="obs-text">OBS-Mikrofon wird geprüft …</div>
-        <p class="hint" style="margin:2px 0 0">Das nimmt OBS als «TFCZ OBS Mic» auf. Wenn sich dieser Balken bewegt, hören es deine Zuschauer.</p>
-      </div>
-    </div>
+    <div id="obslines"></div>
     <p class="hint" style="margin:12px 0 0">Klingt etwas schlecht oder fehlt ganz? Unter
       <a href="#diagnose">Erweitert → Diagnose</a> stehen Reparaturen, Prüfungen und eine Liste zum Durchgehen.</p>
   </section>
@@ -575,6 +569,17 @@
             <button class="btn" id="add-alias"><svg class="i i-sm"><use href="#i-plus"/></svg>Gerät hinzufügen</button>
             <button class="btn btn-blue" id="save-devices">Geräte speichern</button>
           </div>
+
+          <h3>Mikrofone für OBS</h3>
+          <p class="hint">Wie viele Mikrofone OBS von hier bekommt.</p>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="obs-separate"> Für jede Person ein eigenes Mikrofon</label>
+            <span class="hint" style="margin:0" id="obs-mode-state"></span>
+          </div>
+          <p class="hint" id="obs-mode-why">Mit einem gemeinsamen Mikrofon hört OBS beide Stimmen bereits gemischt.
+            Getrennt sieht OBS zwei Quellen und kann jede einzeln behandeln — ein Expander pro Person macht zu, solange
+            diese Person nicht spricht, und dann landet die Stimme der anderen nicht doppelt im Stream. In OBS musst du
+            danach beide Quellen einmal hinzufügen.</p>
 
           <h3>Verbindungen</h3>
           <p class="hint">Neuen Pfeil anlegen, oder den Namen eines bestehenden eintippen, um ihn zu ändern.
@@ -811,14 +816,22 @@
   const fail = e => toast(e.message || String(e), true);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const pct = v => Math.round(v * 100) + ' %';
+  // One microphone for OBS, or one per person: everything below works off this
+  // list instead of a fixed «obs_mic».
+  const obsMics = () => (state.status && state.status.virtual_mics) || [];
+  const obsMic = alias => obsMics().find(m => m.key === alias);
+  const isObs = alias => !!obsMic(alias) || alias === 'obs_mic';
+  const meterKey = alias => (obsMic(alias) || {}).meter || alias;
   function human(alias) {
+    const mic = obsMic(alias);
+    if (mic) return obsMics().length > 1 ? mic.description : 'OBS-Stream';
     if (alias === 'obs_mic') return 'OBS-Stream';
     const names = (state.config && state.config.names) || {};
     if (names[alias]) return names[alias];
     return alias.replace(/_/g, ' ').replace(/\bmic\b/, 'Mikrofon').replace(/\bout\b/, 'Kopfhörer').replace(/^./, c => c.toUpperCase());
   }
   const isGame = alias => /hdmi|game|tv|pc|konsole|spiel|play/i.test(alias) || ((state.status && state.status.devices[alias] || {}).friendly || '').includes('HDMI');
-  const iconFor = (alias, kind) => alias === 'obs_mic' ? ICON.obs : isGame(alias) ? ICON.game : kind === 'in' ? ICON.mic : ICON.out;
+  const iconFor = (alias, kind) => isObs(alias) ? ICON.obs : isGame(alias) ? ICON.game : kind === 'in' ? ICON.mic : ICON.out;
   const ellipsis = (text, max) => text.length <= max ? text : text.slice(0, text.lastIndexOf(' ', max - 1) > max / 2 ? text.lastIndexOf(' ', max - 1) : max - 1).trimEnd() + '…';
   const levelWidth = lvl => (!lvl || !lvl.active) ? 0 : Math.max(0, Math.min(1, (lvl.db + 60) / 60)) * 100;
   const identityShort = dev => !dev || !dev.identity ? '' : dev.identity.strategy === 'port' ? 'nur ' + (dev.identity.port || 'ein fester USB-Anschluss') : dev.identity.strategy === 'serial' ? 'jeder USB-Anschluss' : '';
@@ -921,9 +934,10 @@
     for (const name of Object.keys(state.status.routes)) {
       const r = routeInfo(name);
       if (!ins.includes(r.from)) ins.push(r.from);
-      if (r.to !== 'obs_mic' && !outs.includes(r.to)) outs.push(r.to);
+      if (!isObs(r.to) && !outs.includes(r.to)) outs.push(r.to);
     }
-    outs.push('obs_mic');
+    for (const m of obsMics()) outs.push(m.key);
+    if (!obsMics().length) outs.push('obs_mic');
     return { ins, outs };
   }
   function boxStatus(alias, kind, ok, taken, dev, lvl) {
@@ -936,12 +950,12 @@
   }
   function updateMeters() {
     document.querySelectorAll('#diagram rect[data-meter]').forEach(r => {
-      const alias = r.dataset.meter, lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
+      const alias = r.dataset.meter, lvl = state.levels[meterKey(alias)];
       r.setAttribute('width', (parseFloat(r.dataset.full) * levelWidth(lvl) / 100).toFixed(1));
     });
     document.querySelectorAll('#diagram text[data-status]').forEach(t => {
       if (t.dataset.broken === '1') return;
-      const alias = t.dataset.status, lvl = state.levels[alias === 'obs_mic' ? 'obs' : alias];
+      const alias = t.dataset.status, lvl = state.levels[meterKey(alias)];
       t.textContent = boxStatus(alias, t.dataset.kind, true, null, state.status.devices[alias], lvl);
     });
   }
@@ -958,8 +972,8 @@
     const H = top + rows * (nodeH + gap) + (obsH - nodeH) + 12;
     const pos = {};
     ins.forEach((a, i) => pos['in:' + a] = { x: 8, y: top + i * (nodeH + gap), w: colW, h: nodeH });
-    outs.forEach((a, i) => pos['out:' + a] = { x: W - colW - 8, y: top + i * (nodeH + gap), w: colW, h: a === 'obs_mic' ? obsH : nodeH });
-    const present = alias => alias === 'obs_mic' ? state.status.virtual_mic.present : (devs[alias] || {}).present !== false;
+    outs.forEach((a, i) => pos['out:' + a] = { x: W - colW - 8, y: top + i * (nodeH + gap), w: colW, h: isObs(a) ? obsH : nodeH });
+    const present = alias => isObs(alias) ? !!(obsMic(alias) || state.status.virtual_mic || {}).present : (devs[alias] || {}).present !== false;
     const takenOrErr = a => devs[a] && (devs[a].taken_by || devs[a].error);
     const COLOUR = { blue: '#5ca7dc', gold: '#cda857', red: '#c2453f', muted: 'rgba(230,227,218,.45)' };
 
@@ -983,7 +997,7 @@
       const broken = !present(c.from) || !present(c.to) || takenOrErr(c.from) || takenOrErr(c.to);
       const off = r.mute || r.volume === 0;
       const flowing = !broken && !off;
-      const key = broken ? 'red' : flowing ? (c.to === 'obs_mic' ? 'gold' : 'blue') : 'muted';
+      const key = broken ? 'red' : flowing ? (isObs(c.to) ? 'gold' : 'blue') : 'muted';
       const stroke = COLOUR[key];
       const width = flowing ? 2 + 3.5 * Math.min(1.5, r.volume) : 2;
       const dash = flowing ? '' : 'stroke-dasharray="9 6"';
@@ -1002,22 +1016,22 @@
     });
 
     const box = (key, alias, kind) => {
-      const p = pos[key], ok = present(alias), isObs = alias === 'obs_mic';
+      const p = pos[key], ok = present(alias), obs = isObs(alias);
       const dev = devs[alias], taken = dev && dev.taken_by;
-      const lvl = state.levels[isObs ? 'obs' : alias];
+      const lvl = state.levels[meterKey(alias)];
       const bad = !ok || taken || (dev && dev.error);
       const status = boxStatus(alias, kind, ok, taken, dev, lvl);
-      const sub2 = isObs ? 'was deine Zuschauer hören' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
-      const stroke = bad ? COLOUR.red : isObs ? COLOUR.gold : 'rgba(92,167,220,.28)';
-      const accent = bad ? COLOUR.red : isObs ? COLOUR.gold : COLOUR.blue;
+      const sub2 = obs ? 'was deine Zuschauer hören' : [dev && dev.friendly ? dev.friendly.split(' · ')[0] : '', identityShort(dev)].filter(Boolean).join(' · ');
+      const stroke = bad ? COLOUR.red : obs ? COLOUR.gold : 'rgba(92,167,220,.28)';
+      const accent = bad ? COLOUR.red : obs ? COLOUR.gold : COLOUR.blue;
       return `<g>
-        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="rgba(7,22,36,.62)" stroke="${stroke}" stroke-width="${bad || isObs ? 2 : 1.2}" ${!ok ? 'stroke-dasharray="7 5"' : ''}/>
+        <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="12" fill="rgba(7,22,36,.62)" stroke="${stroke}" stroke-width="${bad || obs ? 2 : 1.2}" ${!ok ? 'stroke-dasharray="7 5"' : ''}/>
         <use href="#${iconFor(alias, kind)}" x="${p.x + 15}" y="${p.y + 16}" width="20" height="20" style="color:${accent}"/>
         <text x="${p.x + 48}" y="${p.y + 25}" class="dev-name" fill="${bad ? COLOUR.red : '#fff'}">${esc(human(alias))}</text>
         <text x="${p.x + 48}" y="${p.y + 43}" class="dev-sub" data-status="${esc(alias)}" data-kind="${kind}" data-broken="${bad ? 1 : 0}" fill="${bad ? COLOUR.red : 'rgba(230,227,218,.62)'}">${esc(status)}</text>
         <text x="${p.x + 48}" y="${p.y + 58}" class="dev-sub2">${esc(ellipsis(sub2, 44))}</text>
         ${ok ? `<rect x="${p.x + 48}" y="${p.y + p.h - 14}" width="${p.w - 64}" height="6" rx="3" fill="rgba(230,227,218,.14)"/>
-        <rect x="${p.x + 48}" y="${p.y + p.h - 14}" width="0" height="6" rx="3" fill="${isObs ? COLOUR.gold : COLOUR.blue}" data-meter="${esc(alias)}" data-full="${p.w - 64}"/>` : ''}
+        <rect x="${p.x + 48}" y="${p.y + p.h - 14}" width="0" height="6" rx="3" fill="${obs ? COLOUR.gold : COLOUR.blue}" data-meter="${esc(alias)}" data-full="${p.w - 64}"/>` : ''}
       </g>`;
     };
     ins.forEach(a => out += box('in:' + a, a, 'in'));
@@ -1036,19 +1050,37 @@
     }
   }
 
+  function obsState(mic) {
+    const lvl = state.levels[mic.meter];
+    const fed = (mic.feeders || []).some(n => {
+      const r = state.status.routes[n];
+      return r && !r.mute && r.volume > 0 && r.source_present;
+    });
+    if (!mic.present) return ['Fehlt gerade. OBS bekommt keinen Ton.', '#f0a6a2'];
+    if (!Object.keys(state.status.routes).length) return ['Noch nichts eingerichtet. Nutze oben «Geräte einrichten».', 'var(--ink-muted)'];
+    if (!fed) return ['Nichts ist damit verbunden. Schalte einen Pfeil dorthin ein.', '#f0a6a2'];
+    if (lvl && lvl.signal) return ['Ton erreicht OBS gerade', '#9bd8b4'];
+    if (lvl && lvl.active) return ['Bereit. Gerade ruhig: niemand spricht.', 'var(--ink-strong)'];
+    if (state.levelsAvailable && lvl && lvl.running) return ['Da, aber es kommen keine Tondaten an. Prüf die Mikrofone links.', 'var(--gold-light)'];
+    return ['Verfügbar und verbunden. Der Ton läuft; nur die Pegelanzeige fehlt'
+            + (state.levelsReason ? ': ' + state.levelsReason : '.'), '#9bd8b4'];
+  }
   function renderObs() {
-    const vm = state.status.virtual_mic, lvl = state.levels.obs, text = $('#obs-text');
-    const anyToObs = Object.entries(state.status.routes).some(([n, r]) => routeInfo(n).to === 'obs_mic' && !r.mute && r.volume > 0 && r.source_present);
-    let msg, colour = 'var(--ink-strong)';
-    if (!vm.present) { msg = 'Das OBS-Mikrofon fehlt. OBS bekommt gerade keinen Ton.'; colour = '#f0a6a2'; }
-    else if (!Object.keys(state.status.routes).length) { msg = 'Noch nichts eingerichtet. Nutze oben «Geräte einrichten».'; colour = 'var(--ink-muted)'; }
-    else if (!anyToObs) { msg = 'Nichts ist mit OBS verbunden. Schalte einen Pfeil zum OBS-Stream ein.'; colour = '#f0a6a2'; }
-    else if (lvl && lvl.signal) { msg = 'Ton erreicht OBS gerade'; colour = '#9bd8b4'; }
-    else if (lvl && lvl.active) { msg = 'Bereit. Gerade ruhig: niemand spricht.'; }
-    else if (state.levelsAvailable && lvl && lvl.running) { msg = 'OBS-Mikrofon ist da, aber es kommen keine Tondaten an. Prüf die Mikrofone links.'; colour = 'var(--gold-light)'; }
-    else { msg = 'Das OBS-Mikrofon ist verfügbar, die Mikrofone sind damit verbunden. Der Ton läuft; nur die Pegelanzeige fehlt'
-             + (state.levelsReason ? ': ' + state.levelsReason : '.'); colour = '#9bd8b4'; }
-    text.textContent = msg; text.style.color = colour;
+    const mics = obsMics();
+    const many = mics.length > 1;
+    $('#obslines').innerHTML = mics.map(mic => {
+      const [msg, colour] = obsState(mic);
+      const what = many
+        ? `In OBS heisst diese Quelle «${esc(mic.description)}». Getrennt pro Person, damit OBS jede Stimme einzeln filtern kann.`
+        : `Das nimmt OBS als «${esc(mic.description)}» auf. Wenn sich dieser Balken bewegt, hören es deine Zuschauer.`;
+      return `<div class="obsline">
+        <svg class="i i-lg"><use href="#i-tower"/></svg>
+        <div style="flex:1 1 220px">
+          <div class="big" style="color:${colour}">${many ? esc(mic.description) + ': ' : ''}${esc(msg)}</div>
+          <p class="hint" style="margin:2px 0 0">${what}</p>
+        </div>
+      </div>`;
+    }).join('');
   }
 
   function renderCards() {
@@ -1259,15 +1291,34 @@
     api('PUT', '/config/devices', devices).then(() => { toast('Geräte gespeichert'); refresh(true); }, fail);
   });
 
+  function renderObsMode() {
+    const box = $('#obs-separate');
+    if (document.activeElement === box) return;
+    box.checked = !!state.status.separate_obs;
+    const mics = obsMics().map(m => m.description).join(' · ');
+    $('#obs-mode-state').textContent = mics ? (obsMics().length > 1 ? 'zwei Quellen: ' : 'eine Quelle: ') + mics : '';
+  }
+  $('#obs-separate').addEventListener('change', e => {
+    const separate = e.target.checked;
+    e.target.disabled = true;
+    api('PUT', '/config/obs-mode', { separate }).then(() => {
+      toast(separate ? 'OBS bekommt jetzt zwei Mikrofone' : 'OBS bekommt wieder ein Mikrofon');
+      refresh(true);
+    }, err => { e.target.checked = !separate; fail(err); }).finally(() => { e.target.disabled = false; });
+  });
+
   function renderRouteForm() {
     const fromMount = $('#r-from-mount'), toMount = $('#r-to-mount');
     if (editing($('#advanced')) && fromMount._csel) { advancedDirty = true; return; }
     const aliases = Object.keys(state.config.devices), usage = aliasUsage();
     const fromItems = aliases.filter(a => !usage[a] || usage[a].has('from') || !usage[a].has('to')).map(a => ({ value: a, label: human(a) }));
-    const toItems = [{ value: 'obs_mic', label: 'OBS-Stream (was Zuschauer hören)' }]
+    const obsItems = obsMics().length
+      ? obsMics().map(m => ({ value: m.key, label: obsMics().length > 1 ? `${m.description} (OBS)` : 'OBS-Stream (was Zuschauer hören)' }))
+      : [{ value: 'obs_mic', label: 'OBS-Stream (was Zuschauer hören)' }];
+    const toItems = obsItems
       .concat(aliases.filter(a => !usage[a] || usage[a].has('to') || !usage[a].has('from')).map(a => ({ value: a, label: human(a) })));
     mountCsel('r-from-mount', fromItems, fromMount._csel ? fromMount._csel.value : (fromItems[0] || {}).value);
-    mountCsel('r-to-mount', toItems, toMount._csel ? toMount._csel.value : 'obs_mic');
+    mountCsel('r-to-mount', toItems, toMount._csel ? toMount._csel.value : toItems[0].value);
   }
   $('#r-save').addEventListener('click', () => {
     const name = $('#r-name').value.trim();
@@ -1995,7 +2046,7 @@
         const serialized = JSON.stringify(data.cfg);
         if (serialized !== lastConfig) {
           lastConfig = serialized; state.config = data.cfg;
-          renderLabels(); renderRouteForm();
+          renderLabels(); renderRouteForm(); renderObsMode();
           $('#cfgpath').textContent = data.cfg.path || '(keine)';
           api('GET', '/health').then(h => { $('#build').textContent = `${h.version} · ${h.build} · ${h.module || ''}`; }).catch(() => {});
           api('GET', '/audio').then(renderAudio).catch(() => {});

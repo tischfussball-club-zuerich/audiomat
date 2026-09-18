@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any
 
 #: Special sink name a route may target: the virtual microphone consumed by OBS.
+#: More of them can be defined under [virtual.outputs]; this one always exists
+#: and keeps the node names it has always had, so an OBS scene that uses it
+#: keeps working.
 OBS_MIC = "obs_mic"
+
+VIRTUAL_KEY_RE = re.compile(r"^obs_mic(_[a-z0-9][a-z0-9_-]*)?$")
 
 ROUTE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 MAX_VOLUME = 1.5
@@ -41,10 +46,41 @@ class AudioConfig:
 
 
 @dataclass
+class VirtualOutput:
+    """One microphone that OBS can pick up.
+
+    Two nodes make it: a sink the routes play into (the mix bus) and a source
+    OBS records from. One of these per person is what lets OBS filter each
+    voice on its own.
+    """
+
+    key: str
+    mix_name: str
+    mic_name: str
+    description: str
+
+
+@dataclass
 class VirtualConfig:
     obs_mix_name: str = "tfcz.obsmix"
     obs_mic_name: str = "tfcz.obsmic"
     obs_mic_description: str = "TFCZ OBS Mic"
+    outputs: dict[str, VirtualOutput] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # a Config built in code (recovery, tests) has the one microphone that
+        # has always existed, exactly like a config file without [virtual.outputs]
+        if not self.outputs:
+            self.outputs = {OBS_MIC: VirtualOutput(OBS_MIC, self.obs_mix_name, self.obs_mic_name,
+                                                   self.obs_mic_description)}
+
+    def primary(self) -> VirtualOutput:
+        return self.outputs.get(OBS_MIC) or next(iter(self.outputs.values()))
+
+    @property
+    def separate(self) -> bool:
+        """More than one microphone, i.e. one per person."""
+        return len(self.outputs) > 1
 
 
 @dataclass
@@ -202,14 +238,19 @@ def parse(data: dict) -> Config:
         obs_mic_name=str(virt.get("obs_mic_name", cfg.virtual.obs_mic_name)),
         obs_mic_description=str(virt.get("obs_mic_description", cfg.virtual.obs_mic_description)),
     )
+    cfg.virtual.outputs = _virtual_outputs(virt, cfg.virtual)
     # The 'tfcz.' prefix is how the daemon tells its own nodes from hardware
     # everywhere (cleanup of leftovers, device lists, loop detection).
-    for key in ("obs_mic_name", "obs_mix_name"):
-        value = getattr(cfg.virtual, key)
-        if not value.startswith("tfcz."):
-            raise ConfigError(f"[virtual] {key} must start with 'tfcz.' (got {value!r})")
-    if cfg.virtual.obs_mic_name == cfg.virtual.obs_mix_name:
-        raise ConfigError("[virtual] obs_mic_name and obs_mix_name must differ")
+    seen_names: dict[str, str] = {}
+    for out in cfg.virtual.outputs.values():
+        for field_name, value in (("mic_name", out.mic_name), ("mix_name", out.mix_name)):
+            if not value.startswith("tfcz."):
+                raise ConfigError(f"[virtual.outputs.{out.key}] {field_name} must start with 'tfcz.' (got {value!r})")
+            if value in seen_names:
+                raise ConfigError(f"[virtual.outputs.{out.key}] {field_name} {value!r} is already used by {seen_names[value]}")
+            seen_names[value] = out.key
+        if out.mic_name == out.mix_name:
+            raise ConfigError(f"[virtual.outputs.{out.key}]: mic_name and mix_name must differ")
 
     devices = _section(data, "devices")
     for key, value in devices.items():
@@ -257,13 +298,20 @@ def parse(data: dict) -> Config:
             src, dst = spec["from"], spec["to"]
         except KeyError as exc:
             raise ConfigError(f"{where}: missing key {exc}") from None
-        if src == OBS_MIC:
-            raise ConfigError(f"{where}: '{OBS_MIC}' can only be used as 'to'")
-        if str(src).startswith("tfcz.") or (dst != OBS_MIC and str(dst).startswith("tfcz.")):
-            raise ConfigError(f"{where}: the router's own nodes (tfcz.*) cannot be routed; use '{OBS_MIC}' as the target for the OBS microphone")
+        if src in cfg.virtual.outputs:
+            raise ConfigError(f"{where}: '{src}' is a microphone for OBS and can only be used as 'to'")
+        virtual_sink = dst in cfg.virtual.outputs
+        if not virtual_sink and VIRTUAL_KEY_RE.match(str(dst)):
+            # a target that looks like a microphone for OBS but is not declared
+            # would silently become a node name nothing answers to
+            known = ", ".join(sorted(cfg.virtual.outputs))
+            raise ConfigError(f"{where}: there is no microphone for OBS called '{dst}' (known: {known})")
+        if str(src).startswith("tfcz.") or (not virtual_sink and str(dst).startswith("tfcz.")):
+            known = ", ".join(sorted(cfg.virtual.outputs)) or OBS_MIC
+            raise ConfigError(f"{where}: the router's own nodes (tfcz.*) cannot be routed; use one of {known} as the target for OBS")
         # static node names are known now; matcher-based devices resolve at runtime
         source = cfg.devices[src].node if src in cfg.devices else src
-        sink = OBS_MIC if dst == OBS_MIC else (cfg.devices[dst].node if dst in cfg.devices else dst)
+        sink = dst if virtual_sink else (cfg.devices[dst].node if dst in cfg.devices else dst)
         cfg.routes[name] = RouteConfig(
             name=name,
             source=source,
@@ -332,6 +380,13 @@ def to_dict(cfg: Config) -> dict[str, Any]:
         "obs_mic_name": cfg.virtual.obs_mic_name,
         "obs_mic_description": cfg.virtual.obs_mic_description,
     }
+    # only written once there is more than the one microphone that has always
+    # existed, so an untouched config keeps its familiar shape
+    if cfg.virtual.separate:
+        data["virtual"]["outputs"] = {
+            out.key: {"description": out.description, "mix_name": out.mix_name, "mic_name": out.mic_name}
+            for out in cfg.virtual.outputs.values()
+        }
     data["devices"] = {alias: spec.to_value() for alias, spec in cfg.devices.items()}
     if cfg.labels:
         data["labels"] = dict(cfg.labels)
@@ -497,8 +552,43 @@ def _reject_cycles(cfg: Config) -> None:
             walk(start, [])
 
 
+def _virtual_outputs(virt: dict[str, Any], defaults: VirtualConfig) -> dict[str, VirtualOutput]:
+    """The microphones OBS can see.
+
+    Without a [virtual.outputs] section there is exactly one, with the node
+    names this tool has always used, so an existing OBS scene keeps working.
+    """
+    declared = virt.get("outputs") or {}
+    if not isinstance(declared, dict):
+        raise ConfigError("[virtual.outputs] must be a table of tables")
+    if not declared:
+        return {OBS_MIC: VirtualOutput(OBS_MIC, defaults.obs_mix_name, defaults.obs_mic_name,
+                                       defaults.obs_mic_description)}
+    outputs: dict[str, VirtualOutput] = {}
+    for key, spec in declared.items():
+        where = f"[virtual.outputs.{key}]"
+        if not VIRTUAL_KEY_RE.match(str(key)):
+            raise ConfigError(f"{where}: the name must be 'obs_mic' or start with 'obs_mic_'")
+        if not isinstance(spec, dict):
+            raise ConfigError(f"{where}: must be a table")
+        suffix = str(key)[len("obs_mic"):].strip("_")
+        outputs[str(key)] = VirtualOutput(
+            key=str(key),
+            mix_name=str(spec.get("mix_name") or (defaults.obs_mix_name if key == OBS_MIC else f"{defaults.obs_mix_name}.{suffix}")),
+            mic_name=str(spec.get("mic_name") or (defaults.obs_mic_name if key == OBS_MIC else f"{defaults.obs_mic_name}.{suffix}")),
+            description=str(spec.get("description") or (defaults.obs_mic_description if key == OBS_MIC
+                                                        else f"{defaults.obs_mic_description} {suffix.upper()}")),
+        )
+    return outputs
+
+
 def human(cfg: Config | None, alias: str) -> str:
     """Friendly name for an alias: user label first, then a readable fallback."""
+    outputs = cfg.virtual.outputs if cfg else {}
+    if alias in outputs:
+        if len(outputs) == 1:
+            return "OBS-Stream"
+        return outputs[alias].description
     if alias == OBS_MIC:
         return "OBS-Stream"
     labels = cfg.labels if cfg else {}

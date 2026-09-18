@@ -317,6 +317,28 @@ tfcz-audio fix [id ...] [--all]         what is broken about the system, and rep
 tfcz-audio run [--dry-run]              run the daemon in the foreground
 ```
 
+### One microphone for OBS, or one per person
+
+By default both headset microphones are mixed into a single source,
+`TFCZ OBS Mic`. That is the simplest thing for OBS, and it is enough as
+long as the two people are not sitting next to each other.
+
+When they are, each microphone picks up the other person's voice through
+the air. In the stream that voice then arrives twice, a millisecond apart,
+which sums to a hollow, metallic sound. The fix is a gate or expander per
+person — and OBS can only apply one to a channel it can see by itself.
+
+**Erweitert → Einrichtung → Mikrofone für OBS** switches between the two
+shapes. Separate gives `TFCZ <name A>` and `TFCZ <name B>` as two sources
+in OBS, each fed by one route, each with its own level meter and its own
+line in the overview. The routes follow the switch, and the intercom
+between the headsets is untouched either way: a gate belongs in the
+stream, not in a conversation.
+
+In OBS both sources have to be added once after switching. Nothing else
+changes, and switching back restores the single microphone with the node
+name it always had, so an old scene keeps working.
+
 ### Repairing the system
 
 **Erweitert → Diagnose → System reparieren** looks at the machine around
@@ -372,6 +394,7 @@ client can drive it.
 | POST | `/setup` | `{headset_a: {mic, out, label}, headset_b: {...}, game, game_label}`: build the standard layout |
 | POST | `/fix/device/{alias}` | unmute a device / raise its system volume |
 | PUT | `/config/labels` | replace the names |
+| PUT | `/config/obs-mode` | `{"separate": true}`: one microphone for OBS per person, or one shared |
 | POST | `/meters/watch` | `{nodes: [{name, kind}]}`: meter extra devices for two minutes |
 | GET | `/config` | current config as JSON (token hidden) |
 | GET / PUT | `/audio` | read or change the system-wide buffer size (`quantum` in frames, 0 = automatic, `persist` to keep it) |

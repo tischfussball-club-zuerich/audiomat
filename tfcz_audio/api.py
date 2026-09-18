@@ -622,6 +622,8 @@ class Handler(BaseHTTPRequestHandler):
                 return ok, edit.set_devices(router, body)
             if seg[1:] == ["audio"] and method == "PUT":
                 return ok, edit.set_audio(router, body)
+            if seg[1:] == ["obs-mode"] and method in ("PUT", "POST"):
+                return ok, edit.set_obs_mode(router, parse_bool(params.get("separate", False)))
             if seg[1:] == ["labels"] and method == "PUT":
                 return ok, edit.set_labels(router, body)
             if seg[1:] == ["save-defaults"] and write:

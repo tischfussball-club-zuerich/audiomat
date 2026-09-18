@@ -34,6 +34,12 @@ SILENCE_DB = -60.0
 OBS_KEY = "obs"
 
 
+def obs_meter_key(virtual_key: str) -> str:
+    """Meter key of one microphone for OBS. The first one keeps the short name
+    it has always had, so anything that stored it keeps working."""
+    return OBS_KEY if virtual_key == OBS_MIC else virtual_key
+
+
 @dataclass
 class Level:
     peak: float = 0.0  # 0..1 linear
@@ -445,7 +451,8 @@ def meter_specs(cfg: Config, resolved: dict[str, str | None] | None = None) -> l
     monitor_sources = {r.source_ref for r in cfg.routes.values() if r.capture_sink}
     specs = [MeterSpec(a, resolved[a], capture_sink=a in monitor_sources) for a in sorted(sources) if resolved.get(a)]
     specs += [MeterSpec(a, resolved[a], capture_sink=True) for a in sorted(sinks - sources) if resolved.get(a)]
-    specs.append(MeterSpec(OBS_KEY, cfg.virtual.obs_mic_name, capture_sink=False))
+    for out in cfg.virtual.outputs.values():
+        specs.append(MeterSpec(obs_meter_key(out.key), out.mic_name, capture_sink=False))
     return specs
 
 
@@ -679,16 +686,17 @@ class FakeMeterManager:
         now = time.monotonic()
         out: dict[str, Any] = {}
         inputs: dict[str, float] = {}
+        obs_keys = {obs_meter_key(k) for k in cfg.virtual.outputs}
         for spec in specs:
-            if spec.key == OBS_KEY or spec.capture_sink:
+            if spec.key in obs_keys or spec.capture_sink:
                 continue
             inputs[spec.key] = self._input_level(spec.key, now)
-        outputs: dict[str, float] = {OBS_KEY: 0.0}
+        outputs: dict[str, float] = dict.fromkeys(obs_keys, 0.0)
         for name, route in cfg.routes.items():
             st = desired.get(name)
             if st is None or st.mute or route.source_ref not in inputs:
                 continue
-            target = OBS_KEY if route.sink == OBS_MIC else route.sink_ref
+            target = obs_meter_key(route.sink_ref) if route.sink_ref in cfg.virtual.outputs else route.sink_ref
             outputs[target] = max(outputs.get(target, 0.0), inputs[route.source_ref] * (st.volume ** 3))
         for spec in specs:
             peak = inputs.get(spec.key, outputs.get(spec.key, 0.0))

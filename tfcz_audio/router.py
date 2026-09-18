@@ -111,8 +111,10 @@ def resolve_devices(cfg: Config, graph: Graph) -> dict[str, Resolved]:
 
 
 def _target(cfg: Config, ref: str, resolved: dict[str, Resolved]) -> str:
+    if ref in cfg.virtual.outputs:
+        return cfg.virtual.outputs[ref].mix_name
     if ref == OBS_MIC:
-        return cfg.virtual.obs_mix_name
+        return cfg.virtual.primary().mix_name
     if ref in cfg.devices:
         node = resolved.get(ref, Resolved(None, False)).node
         return node or f"{UNRESOLVED_PREFIX}{ref}"
@@ -154,30 +156,54 @@ def route_spec(cfg: Config, route: RouteConfig, resolved: dict[str, Resolved]) -
     return LoopbackSpec(name=f"tfcz.{route.name}", capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
 
 
-def virtual_spec(cfg: Config) -> LoopbackSpec:
+def virtual_spec(cfg: Config, key: str = OBS_MIC) -> LoopbackSpec:
+    """The loopback behind one microphone for OBS: a sink to play into and a
+    source for OBS to record from."""
+    out = cfg.virtual.outputs.get(key) or cfg.virtual.primary()
     position = ["FL", "FR"] if cfg.audio.channels == 2 else ["MONO"]
     capture = {
         "media.class": "Audio/Sink",
-        "node.name": cfg.virtual.obs_mix_name,
-        "node.description": f"{cfg.virtual.obs_mic_description} (mix bus)",
+        "node.name": out.mix_name,
+        "node.description": f"{out.description} (mix bus)",
         "audio.position": position,
-        "media.role": cfg.virtual.obs_mix_name,
-        "application.id": cfg.virtual.obs_mix_name,
-        "application.name": cfg.virtual.obs_mix_name,
+        "media.role": out.mix_name,
+        "application.id": out.mix_name,
+        "application.name": out.mix_name,
     }
     playback = {
         "media.class": "Audio/Source/Virtual",
-        "node.name": cfg.virtual.obs_mic_name,
-        "node.description": cfg.virtual.obs_mic_description,
+        "node.name": out.mic_name,
+        "node.description": out.description,
         "audio.position": position,
-        "media.role": cfg.virtual.obs_mic_name,
-        "application.id": cfg.virtual.obs_mic_name,
-        "application.name": cfg.virtual.obs_mic_name,
+        "media.role": out.mic_name,
+        "application.id": out.mic_name,
+        "application.name": out.mic_name,
     }
     if cfg.audio.latency != "auto":
         capture["node.latency"] = cfg.audio.latency
         playback["node.latency"] = cfg.audio.latency
-    return LoopbackSpec(name="tfcz.virtual", capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
+    name = "tfcz.virtual" if out.key == OBS_MIC else f"tfcz.virtual.{out.key}"
+    return LoopbackSpec(name=name, capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
+
+
+def virtual_names(cfg: Config) -> list[str]:
+    """Supervisor names of the virtual microphones, one per output.
+
+    The first one keeps the historical name so nothing that remembers it -- a
+    saved state file, a log -- has to be migrated.
+    """
+    return [VIRTUAL if key == OBS_MIC else f"{VIRTUAL}:{key}" for key in cfg.virtual.outputs]
+
+
+def virtual_key(name: str) -> str:
+    """The config key behind a supervisor name, or "" if it is a route."""
+    if name == VIRTUAL:
+        return OBS_MIC
+    return name.split(":", 1)[1] if name.startswith(f"{VIRTUAL}:") else ""
+
+
+def is_virtual(name: str) -> bool:
+    return name == VIRTUAL or name.startswith(f"{VIRTUAL}:")
 
 
 ORIGIN_VISITS = 20000  # nodes the "where does this come from" walk may look at per analysis
@@ -350,8 +376,10 @@ class Router:
         with self._lock:
             self._started = True
             self._refresh_resolution(self._graph_or_empty())
-            self._spawn(VIRTUAL)
-            self._wait_for_node(self.cfg.virtual.obs_mix_name)
+            for name in virtual_names(self.cfg):
+                self._spawn(name)
+            for out in self.cfg.virtual.outputs.values():
+                self._wait_for_node(out.mix_name)
             for name in self.cfg.routes:
                 self._spawn(name)
             self.reconcile()
@@ -400,8 +428,8 @@ class Router:
         log.info("stopped loopback %s", name)
 
     def _spec(self, name: str) -> LoopbackSpec:
-        if name == VIRTUAL:
-            return virtual_spec(self.cfg)
+        if is_virtual(name):
+            return virtual_spec(self.cfg, virtual_key(name))
         return route_spec(self.cfg, self.cfg.routes[name], self.resolved)
 
     def _spawn(self, name: str) -> bool:
@@ -457,13 +485,13 @@ class Router:
                 self._refresh_resolution(graph)
 
             restarts = self.max_restarts_per_pass
-            for name in [VIRTUAL, *self.cfg.routes]:
+            for name in [*virtual_names(self.cfg), *self.cfg.routes]:
                 proc = self.procs.get(name)
                 if proc is not None and proc.poll() is None:
                     if self._failures.get(name) and now - self._spawned_at.get(name, now) > 30.0:
                         self._failures.pop(name, None)  # healthy for a while: forget crash history
                     # device resolved to a different node (replug, other port, first appearance)?
-                    if graph is not None and name != VIRTUAL and self._spec_used.get(name) != self._spec(name):
+                    if graph is not None and not is_virtual(name) and self._spec_used.get(name) != self._spec(name):
                         if restarts <= 0:
                             continue  # next pass (1 s later) takes the rest; keeps this pass short
                         restarts -= 1
@@ -611,7 +639,9 @@ class Router:
         now = self._clock()
         if now < self._virtual_fix_at:
             return
-        for node_name in (self.cfg.virtual.obs_mic_name, self.cfg.virtual.obs_mix_name):
+        node_names = [n for out in self.cfg.virtual.outputs.values() for n in (out.mic_name, out.mix_name)]
+        last_mic = node_names[0] if node_names else ""
+        for node_name in node_names:
             if self._clock() >= pass_end:
                 return
             node = graph.by_name(node_name)
@@ -629,7 +659,7 @@ class Router:
                 except PwError as exc:
                     log.error("cannot restore %s: %s", node_name, exc)
                 self._virtual_fix_at = now + (30.0 if count >= self.drift_alert_after else 5.0)
-            elif node_name == self.cfg.virtual.obs_mic_name:
+            elif node_name == last_mic:
                 self._drift_count.pop("virtual", None)
 
     def _apply_all(self, graph: Graph, pass_end: float = float("inf")) -> None:
@@ -730,7 +760,9 @@ class Router:
             graph = self._graph_or_empty()
             new_resolved = resolve_devices(new_cfg, graph)
             new_specs = {n: route_spec(new_cfg, r, new_resolved) for n, r in new_cfg.routes.items()}
-            virtual_changed = virtual_spec(self.cfg) != virtual_spec(new_cfg)
+            # one microphone per output, so each is compared on its own: adding
+            # a second one must not restart the first and cut its sound
+            new_virtual = {name: virtual_spec(new_cfg, virtual_key(name)) for name in virtual_names(new_cfg)}
 
             desired: dict[str, RouteState] = {}
             for name, route in new_cfg.routes.items():
@@ -741,8 +773,8 @@ class Router:
                     desired[name] = RouteState(route.volume, route.mute)
 
             for name in list(self.procs):
-                if name == VIRTUAL:
-                    if virtual_changed:
+                if is_virtual(name):
+                    if name not in new_virtual or self._spec_used.get(name) != new_virtual[name]:
                         self._terminate(name)
                     continue
                 if name not in new_specs or self._spec_used.get(name) != new_specs[name]:
@@ -752,7 +784,8 @@ class Router:
             self.cfg = new_cfg
             self.desired = desired
             self.resolved = new_resolved
-            for stale in (set(self._failures) | set(self._unlinked_since) | set(self._relink_attempts)) - set(new_cfg.routes) - {VIRTUAL}:
+            for stale in ((set(self._failures) | set(self._unlinked_since) | set(self._relink_attempts))
+                          - set(new_cfg.routes) - set(new_virtual)):
                 self._failures.pop(stale, None)
                 self._retry_at.pop(stale, None)
                 self._unlinked_since.pop(stale, None)
@@ -761,8 +794,9 @@ class Router:
             self._save_state()
 
             if self._started:
-                if VIRTUAL not in self.procs:
-                    self._spawn(VIRTUAL)  # routes to it link as soon as it exists; no blocking wait here
+                for name in virtual_names(self.cfg):
+                    if name not in self.procs:
+                        self._spawn(name)  # routes to it link as soon as it exists; no blocking wait here
                 for name in self.cfg.routes:
                     if name not in self.procs:
                         self._spawn(name)
@@ -884,8 +918,10 @@ class Router:
         return graph.by_name(res.node)
 
     def _ref_node(self, ref: str, graph: Graph) -> Node | None:
+        if ref in self.cfg.virtual.outputs:
+            return graph.by_name(self.cfg.virtual.outputs[ref].mix_name)
         if ref == OBS_MIC:
-            return graph.by_name(self.cfg.virtual.obs_mix_name)
+            return graph.by_name(self.cfg.virtual.primary().mix_name)
         if ref in self.cfg.devices:
             return self._device_node(ref, graph)
         return graph.by_name(ref)
@@ -972,19 +1008,35 @@ class Router:
 
         return port_label(match.get("device.bus-path", ""))
 
+    def virtual_mics(self, graph: Graph) -> list[dict[str, Any]]:
+        mics = []
+        for name in virtual_names(self.cfg):
+            out = self.cfg.virtual.outputs[virtual_key(name)]
+            proc = self.procs.get(name)
+            from .meters import obs_meter_key
+
+            mics.append({
+                "key": out.key,
+                "meter": obs_meter_key(out.key),
+                "node": out.mic_name,
+                "description": out.description,
+                "running": proc is not None and proc.poll() is None,
+                "present": graph.by_name(out.mic_name) is not None,
+                "feeders": sorted(r.name for r in self.cfg.routes.values() if r.sink_ref == out.key),
+            })
+        return mics
+
     def status(self, graph: Graph | None = None) -> dict[str, Any]:
         graph = graph or self._graph_or_empty()
-        vproc = self.procs.get(VIRTUAL)
         problems = self.problems(graph)
+        mics = self.virtual_mics(graph)
         return {
             "ok": not any(p["level"] == "error" for p in problems),
             "problems": problems,
-            "virtual_mic": {
-                "node": self.cfg.virtual.obs_mic_name,
-                "description": self.cfg.virtual.obs_mic_description,
-                "running": vproc is not None and vproc.poll() is None,
-                "present": graph.by_name(self.cfg.virtual.obs_mic_name) is not None,
-            },
+            # the first one keeps its old shape: an automation may read it
+            "virtual_mic": {k: v for k, v in mics[0].items() if k != "feeders"} if mics else {},
+            "virtual_mics": mics,
+            "separate_obs": self.cfg.virtual.separate,
             "devices": {alias: self.device_status(alias, graph) for alias in self.cfg.devices},
             "labels": dict(self.cfg.labels),
             "routes": {name: self.route_status(name, graph) for name in self.cfg.routes},
@@ -1022,8 +1074,11 @@ class Router:
                 "Alle Verbindungen bleiben stumm.",
                 "systemctl --user restart wireplumber   (danach: systemctl --user restart tfcz-audio). Stirbt er immer wieder, zeigt 'journalctl --user -u wireplumber' den Fehler, meist in einer Konfigurationsregel.")
 
-        if graph.by_name(cfg.virtual.obs_mic_name) is None:
-            add("error", "obs_mic_missing", "obs_mic", "Das OBS-Mikrofon gibt es gerade nicht",
+        missing_mics = [mic for mic in cfg.virtual.outputs.values() if graph.by_name(mic.mic_name) is None]
+        if missing_mics:
+            which = "Das OBS-Mikrofon" if len(cfg.virtual.outputs) == 1 else \
+                "«" + "», «".join(mic.description for mic in missing_mics) + "»"
+            add("error", "obs_mic_missing", OBS_MIC, f"{which} gibt es gerade nicht",
                 "Dieses virtuelle Mikrofon wird vom Router erzeugt und im Moment neu angelegt.",
                 "OBS nimmt Stille auf, bis es wieder da ist (ein paar Sekunden).",
                 "Nichts zu tun, ausser es bleibt eine Minute lang so; dann: systemctl --user restart tfcz-audio")
@@ -1140,17 +1195,33 @@ class Router:
                     "Was du hier einstellst, bleibt nicht stehen.",
                     "Schliesse Mischpult-Programme, die «TFCZ»-Ströme anfassen. Der Router korrigiert weiter, aber seltener.")
 
-        # routes to OBS
-        obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref == OBS_MIC]
+        # routes to OBS, checked per microphone: with one per person, a single
+        # dead one is exactly what nobody notices until the stream is out
+        obs_routes = [(n, r) for n, r in cfg.routes.items() if r.sink_ref in cfg.virtual.outputs]
         live_obs = [n for n, _ in obs_routes if n in self.desired and not self.desired[n].mute and self.desired[n].volume > 0]
         if cfg.routes and not obs_routes:
-            add("warning", "obs_unconnected", "obs_mic", "Nichts ist mit dem OBS-Stream verbunden",
+            add("warning", "obs_unconnected", OBS_MIC, "Nichts ist mit dem OBS-Stream verbunden",
                 "Kein Pfeil zeigt auf den OBS-Stream.", "Deine Zuschauer hören kein Mikrofon.",
                 "Lege von jedem Headset-Mikrofon eine Verbindung zum OBS-Stream an, oder richte die Geräte neu ein.")
         elif obs_routes and not live_obs:
-            add("warning", "obs_all_off", "obs_mic", "Alle Verbindungen zum OBS-Stream sind ausgeschaltet",
+            add("warning", "obs_all_off", OBS_MIC, "Alle Verbindungen zum OBS-Stream sind ausgeschaltet",
                 "Jeder Pfeil zu OBS ist aus oder auf 0 %.", "Deine Zuschauer hören kein Mikrofon.",
                 "Schalte mindestens eine Verbindung Mikrofon zum OBS-Stream ein.")
+        elif cfg.virtual.separate:
+            # `out` is the problem list in this method; the microphones need
+            # their own name here
+            for mic in cfg.virtual.outputs.values():
+                feeders = [n for n, r in obs_routes if r.sink_ref == mic.key]
+                live = [n for n in feeders if n in self.desired and not self.desired[n].mute and self.desired[n].volume > 0]
+                if not feeders:
+                    add("warning", f"obs_empty_{mic.key}", mic.key, f"«{mic.description}» bekommt nichts",
+                        "Dieses Mikrofon für OBS hat keine Verbindung.",
+                        "In OBS bleibt diese Spur stumm.",
+                        "Lege eine Verbindung von einem Headset-Mikrofon zu diesem Mikrofon an.")
+                elif not live:
+                    add("warning", f"obs_off_{mic.key}", mic.key, f"«{mic.description}» ist ausgeschaltet",
+                        "Alle Verbindungen zu diesem Mikrofon sind aus oder auf 0 %.",
+                        "In OBS bleibt diese Spur stumm.", "Schalte die Verbindung wieder ein.")
 
         # risky combinations
         dev_of_node = {n["name"]: g for g in physical for n in g["inputs"] + g["outputs"]}
@@ -1160,7 +1231,7 @@ class Router:
                 add("warning", "route_restarting", name, f"Verbindung {self._route_label(route)} startet neu",
                     "Ihr Hilfsprozess hat gestoppt und wird automatisch wieder gestartet.",
                     "Eine kurze Unterbrechung auf diesem Weg.", "Nichts zu tun; wiederholt es sich, schau ins Protokoll.")
-            if route.sink_ref == OBS_MIC:
+            if route.sink_ref in cfg.virtual.outputs:
                 continue
             src_node = self._ref_node(route.source_ref, graph)
             dst_node = self._ref_node(route.sink_ref, graph)
@@ -1277,6 +1348,8 @@ class Router:
         for name, route in self.cfg.routes.items():
             route_of[route.in_node] = (name, "in")
             route_of[route.out_node] = (name, "out")
+        mix_names = {out.mix_name: out for out in self.cfg.virtual.outputs.values()}
+        mic_names = {out.mic_name: out for out in self.cfg.virtual.outputs.values()}
 
         nodes: dict[int, dict[str, Any]] = {}
         for node in graph.nodes.values():
@@ -1292,10 +1365,11 @@ class Router:
                 route_name, side = route_hit
                 friendly = self._route_label(self.cfg.routes[route_name])
                 detail = "nimmt auf" if side == "in" else "gibt aus"
-            elif node.name == self.cfg.virtual.obs_mix_name:
-                friendly, detail = "Mischspur für OBS", "sammelt die Mikrofone"
-            elif node.name == self.cfg.virtual.obs_mic_name:
-                friendly, detail = self.cfg.virtual.obs_mic_description, "was OBS aufnimmt"
+            elif node.name in mix_names:
+                target = "OBS" if len(mix_names) == 1 else f"«{mix_names[node.name].description}»"
+                friendly, detail = f"Mischspur für {target}", "sammelt die Mikrofone"
+            elif node.name in mic_names:
+                friendly, detail = mic_names[node.name].description, "was OBS aufnimmt"
             else:
                 friendly, detail = info["friendly"] or node.name, info.get("device_name") or ""
             nodes[node.id] = {
@@ -1326,7 +1400,7 @@ class Router:
         # playback stream in the first column, which reads backwards.
         by_name = {n["name"]: n["id"] for n in nodes.values()}
         internal = [(self.cfg.routes[r].in_node, self.cfg.routes[r].out_node) for r in self.cfg.routes]
-        internal.append((self.cfg.virtual.obs_mix_name, self.cfg.virtual.obs_mic_name))
+        internal += [(out.mix_name, out.mic_name) for out in self.cfg.virtual.outputs.values()]
         for src_name, dst_name in internal:
             a, b = by_name.get(src_name), by_name.get(dst_name)
             if a is not None and b is not None:
@@ -1628,8 +1702,9 @@ class Router:
         name = node.name
         if name.startswith("tfcz.") and name.endswith(".out"):
             return graph.by_name(name[: -len(".out")] + ".in")
-        if name == self.cfg.virtual.obs_mic_name:
-            return graph.by_name(self.cfg.virtual.obs_mix_name)
+        for out in self.cfg.virtual.outputs.values():
+            if name == out.mic_name:
+                return graph.by_name(out.mix_name)
         return None
 
     def _origins_of(self, node_id: int, graph: Any, incoming: dict[int, set[int]] | None = None,

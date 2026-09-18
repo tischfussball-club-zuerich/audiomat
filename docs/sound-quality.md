@@ -84,6 +84,36 @@ plays it twice with a small offset: hollow and metallic. And when sound
 comes back to where it started, that is feedback, which can get loud
 enough to hurt. Both are reported with the path that causes them.
 
+### The other person's voice in this microphone
+
+Two headsets side by side: each microphone picks up the other person
+through the air. In the stream that voice arrives twice, about a
+millisecond apart, and the sum is hollow and metallic — the acoustic
+version of the doubled path above.
+
+Nothing can subtract it after the fact. What works, in order of effect:
+
+1. **Microphone position.** A boom 2 cm from the mouth against a voice
+   from 50 cm is 25–30 dB. No filter comes close, and it costs no
+   latency and no CPU. Headphones quieter helps too: what leaks out of
+   them ends up in the microphone as well.
+2. **An expander per person in OBS**, which needs one source per person:
+   see "One microphone for OBS, or one per person" in the README. While
+   only one of them speaks — the normal case — the other channel is
+   closed and the doubling is gone. While both speak it is back; that is
+   inherent.
+3. An automixer would share the gain between the two instead of opening
+   and closing each channel on its own. PipeWire has none built in.
+
+Adaptive cancellation using the other microphone as a reference is
+possible in principle and not worth it here: it only holds while nobody
+moves, reaches maybe 6–12 dB, costs latency, and puts exactly the kind of
+foreign filter chain into the path that this page spends its length
+warning about.
+
+Noise suppression does not help at all. It is trained to keep speech and
+remove everything else — the person next to you is speech.
+
 ## Checked by hand
 
 ### A microphone clips
