@@ -311,7 +311,7 @@ tfcz-audio preset hdmi_off              apply a preset; no name lists them
 tfcz-audio reset                        back to config values
 tfcz-audio devices [-p]                 PipeWire audio nodes (+ ALSA card props)
 tfcz-audio check                        validate config, report missing devices
-tfcz-audio selftest [--seconds N]       record from every device and show what arrives
+tfcz-audio selftest [--seconds N]       record from every device and judge what arrives
 tfcz-audio versions [--json]            versions of every tool this router depends on
 tfcz-audio fix [id ...] [--all]         what is broken about the system, and repair it
 tfcz-audio run [--dry-run]              run the daemon in the foreground
@@ -485,8 +485,10 @@ Start with `tfcz-audio doctor`. It checks everything the daemon needs and
 prints the fix for each failing line.
 
 * **It sounds noisy, distorted or unintelligible**, or the level bars stay
-  empty: run `tfcz-audio selftest`. It records from every device, prints
-  what actually arrives, shows the exact helper command with its error if
+  empty: run `tfcz-audio selftest`. It records from every device and says
+  what the signal is: too quiet, clipped, one channel only, digital
+  silence, or not audio at all but a compressed stream (an HDMI source set
+  to Dolby/DTS instead of PCM). It also prints what actually arrives, shows the exact helper command with its error if
   one fails, and lists what each router stream is really linked to. Then:
   switch the game-sound connections off in the web UI for a moment. If the
   intercom becomes clean, the capture card is the source of the noise

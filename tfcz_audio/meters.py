@@ -117,6 +117,121 @@ def peak_of(chunk: bytes) -> float:
     return min(1.0, peak / 32768.0)
 
 
+def _channel_stats(samples: "array[int]") -> dict[str, float]:
+    count = len(samples)
+    if not count:
+        return {"peak": 0.0, "rms": 0.0, "zcr": 0.0, "dc": 0.0, "clipped": 0.0}
+    total = 0.0
+    squares = 0.0
+    crossings = 0
+    clipped = 0
+    peak = 0
+    previous = samples[0]
+    for value in samples:
+        total += value
+        squares += float(value) * value
+        if (value >= 0) != (previous >= 0):
+            crossings += 1
+        previous = value
+        magnitude = -value if value < 0 else value
+        if magnitude > peak:
+            peak = magnitude
+        if magnitude >= 32700:
+            clipped += 1
+    return {
+        "peak": min(1.0, peak / 32768.0),
+        "rms": min(1.0, math.sqrt(squares / count) / 32768.0),
+        "zcr": crossings / count,
+        "dc": total / count / 32768.0,
+        "clipped": clipped / count,
+    }
+
+
+def signal_stats(chunk: bytes, channels: int = CHANNELS) -> dict[str, Any]:
+    """Describe a piece of s16 audio well enough to tell what it is.
+
+    Everything is measured per channel and then combined -- interleaved samples
+    would fake a zero crossing on every second value as soon as the two
+    channels differ, which is exactly the case this is meant to judge.
+
+    * ``peak`` and ``rms``: how loud,
+    * ``crest`` (peak over rms): speech and music peak far above their average,
+      uniform noise barely does,
+    * ``zcr``: the share of samples where the wave changes sign. Random data
+      sits near 0.5, anything with a pitch far below,
+    * ``clipped``: samples pinned to the end of the scale.
+
+    Loud with a high ``zcr`` is what an HDMI input carrying a compressed stream
+    looks like: structureless noise, which no microphone and no game produces.
+    """
+    channels = max(1, channels)
+    empty = {"frames": 0, "peak": 0.0, "rms": 0.0, "crest": 0.0, "zcr": 0.0, "clipped": 0.0,
+             "dc": 0.0, "channels": [0.0] * channels, "silent": True}
+    if len(chunk) < 2 * channels:
+        return empty
+    samples = array("h")
+    usable = len(chunk) - (len(chunk) % (2 * channels))
+    samples.frombytes(chunk[:usable])
+    if not len(samples):
+        return empty
+
+    per_channel = [_channel_stats(samples[c::channels]) for c in range(channels)]
+    peak = max(c["peak"] for c in per_channel)
+    rms = max(c["rms"] for c in per_channel)
+    return {
+        "frames": len(samples) // channels,
+        "peak": round(peak, 5),
+        "rms": round(rms, 5),
+        "crest": round(peak / rms, 2) if rms > 0 else 0.0,
+        "zcr": round(sum(c["zcr"] for c in per_channel) / channels, 4),
+        "clipped": round(max(c["clipped"] for c in per_channel), 5),
+        "dc": round(max(per_channel, key=lambda c: abs(c["dc"]))["dc"], 5),
+        "channels": [round(c["peak"], 5) for c in per_channel],
+        "silent": peak < 0.0005,
+    }
+
+
+def signal_verdict(stats: dict[str, Any], kind: str = "input") -> list[dict[str, str]]:
+    """Plain sentences about what the numbers mean. Empty means: looks fine."""
+    out: list[dict[str, str]] = []
+    if not stats.get("frames"):
+        return [{"level": "error", "title": "Es kam gar nichts an",
+                 "fix": "Gerät prüfen: steckt es, ist es im System stummgeschaltet, hält es ein anderes Programm?"}]
+    if stats["silent"]:
+        return [{"level": "warning", "title": "Digitale Stille",
+                 "fix": "Sprich hinein bzw. starte den Ton an der Quelle und miss nochmals. Bleibt es exakt still, "
+                        "liefert das Gerät nichts."}]
+    # loud, structureless, almost no silence between samples: that is not sound
+    if stats["zcr"] > 0.35 and stats["rms"] > 0.15 and stats["crest"] < 2.6:
+        out.append({"level": "error", "title": "Das sieht nicht nach Ton aus, sondern nach Rauschen",
+                    "why": f"Laut und ohne Form: Nulldurchgänge bei {int(stats['zcr'] * 100)} % der Werte "
+                           f"(Sprache liegt unter 10 %), Scheitelfaktor {stats['crest']}.",
+                    "fix": "Typisch für eine HDMI-Quelle, die Dolby/DTS statt PCM sendet. Stell die Tonausgabe der "
+                           "Quelle auf PCM / Stereo. Sonst: Kabel oder Eingang prüfen."})
+    if stats["clipped"] > 0.001:
+        out.append({"level": "warning", "title": f"Übersteuert ({stats['clipped'] * 100:.1f} % der Werte am Anschlag)",
+                    "why": "Werte am Ende der Skala werden abgeschnitten.",
+                    "fix": "Aufnahmepegel des Geräts senken (etwa 70 %) und den Mikrofon-Boost ausschalten."})
+    elif stats["peak"] > 0.98:
+        out.append({"level": "info", "title": "Sehr nahe an der Grenze",
+                    "fix": "Etwas leiser stellen, sonst verzerrt es bei lauten Stellen."})
+    channels = stats.get("channels") or []
+    if len(channels) == 2 and max(channels) > 0.02 and min(channels) < max(channels) * 0.02:
+        side = "links" if channels[0] > channels[1] else "rechts"
+        out.append({"level": "warning", "title": f"Nur ein Kanal hat Ton ({side})",
+                    "why": f"links {channels[0]:.3f}, rechts {channels[1]:.3f}.",
+                    "fix": "Bei einem Mikrofon ist das normal. Bei Spielton oder Kopfhörern deutet es auf ein "
+                           "falsches Profil, ein defektes Kabel oder einen stummen Kanal hin."})
+    if abs(stats["dc"]) > 0.02:
+        out.append({"level": "warning", "title": "Gleichspannungsanteil im Signal",
+                    "why": f"Mittelwert {stats['dc']:+.3f} statt 0.",
+                    "fix": "Meist ein Treiber- oder Kabelproblem; es klingt dumpf und kann knacken."})
+    if kind == "input" and not out and stats["peak"] < 0.02:
+        out.append({"level": "info", "title": "Sehr leise",
+                    "fix": "Falls jemand hineingesprochen hat: Aufnahmepegel des Geräts erhöhen."})
+    return out
+
+
 def to_db(peak: float) -> float:
     if peak <= 0:
         return SILENCE_DB

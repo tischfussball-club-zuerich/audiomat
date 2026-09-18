@@ -180,6 +180,9 @@ def virtual_spec(cfg: Config) -> LoopbackSpec:
     return LoopbackSpec(name="tfcz.virtual", capture_props=capture, playback_props=playback, channels=cfg.audio.channels)
 
 
+ORIGIN_VISITS = 20000  # nodes the "where does this come from" walk may look at per analysis
+
+
 class Router:
     def __init__(
         self,
@@ -1456,6 +1459,8 @@ class Router:
                 add(**finding)
         for finding in self.rate_findings(graph, rows, formats):
             add(**finding)
+        for finding in self.path_findings(graph):
+            add(**finding)
 
         return {
             "available": True,
@@ -1549,6 +1554,149 @@ class Router:
                 "findings": findings,
             })
         return out
+
+    def path_findings(self, graph: Any = None) -> list[dict[str, str]]:
+        """Two problems that are only visible in the shape of the graph.
+
+        *The same sound arriving twice*: a headphone that receives the same
+        microphone over two different paths plays it slightly offset, which
+        sounds hollow and metallic.
+
+        *A loop*: sound that comes back to where it started. That is feedback,
+        and it can get loud enough to hurt.
+        """
+        from .pw import classify_node, describe_node
+
+        graph = graph if graph is not None else self._graph_or_empty()
+        findings: list[dict[str, str]] = []
+        if not graph.nodes:
+            return findings
+
+        # a graph where everything is linked to everything is broken in its own
+        # right; the walk gets a budget so a diagnosis can never become the
+        # bigger problem
+        budget = [ORIGIN_VISITS]
+        labels: dict[int, str] = {}
+
+        def label(node_id: int) -> str:
+            if node_id not in labels:
+                node = graph.nodes.get(node_id)
+                labels[node_id] = (describe_node(node, graph).get("friendly") or node.name) if node else f"Knoten {node_id}"
+            return labels[node_id]
+
+        # --- the same source reaching one sink over more than one path.
+        # The incoming edges are indexed once: walking them through
+        # graph.peers_of_input() would rescan every link for every node.
+        sources: dict[int, set[int]] = {}
+        for link in graph.links:
+            sources.setdefault(link.input_node, set()).add(link.output_node)
+        for sink_id, feeders in sources.items():
+            node = graph.nodes.get(sink_id)
+            if node is None or not node.media_class.startswith("Audio/Sink"):
+                continue
+            origins: dict[str, list[str]] = {}
+            for feeder in feeders:
+                for origin in self._origins_of(feeder, graph, incoming=sources, seen=set(), budget=budget):
+                    origins.setdefault(origin, []).append(label(feeder))
+            for origin, paths in origins.items():
+                if len(paths) > 1:
+                    findings.append({
+                        "level": "warning",
+                        "title": f"«{label(sink_id)}» bekommt «{origin}» über {len(paths)} Wege",
+                        "why": "Über: " + ", ".join(sorted(set(paths))) + ".",
+                        "effect": "Zweimal derselbe Ton, leicht versetzt: das klingt hohl und metallisch.",
+                        "fix": "Einen der Wege abschalten. Meist ist es ein Mithören in OBS oder ein zusätzlicher "
+                               "Monitor-Ausgang neben der Verbindung dieses Routers.",
+                    })
+
+        # --- a cycle: sound that comes back to where it started
+        for cycle in self._link_cycles(graph):
+            findings.append({
+                "level": "error",
+                "title": "Der Ton läuft im Kreis",
+                "why": " → ".join(label(n) for n in cycle) + f" → {label(cycle[0])}.",
+                "effect": "Rückkopplung. Das schaukelt sich auf und kann laut genug werden, um weh zu tun.",
+                "fix": "Eine Verbindung in diesem Kreis sofort abschalten. Meist entsteht er, wenn ein Ausgang "
+                       "wieder auf einen Eingang gelegt wird, der schon dorthin spielt.",
+            })
+        return findings
+
+    def _internal_hop(self, node: Any, graph: Any) -> Any:
+        """A loopback is one process: its playback side is fed by its capture
+        side, but PipeWire shows no link between the two. The same holds for the
+        virtual microphone, which is fed by its mix sink."""
+        name = node.name
+        if name.startswith("tfcz.") and name.endswith(".out"):
+            return graph.by_name(name[: -len(".out")] + ".in")
+        if name == self.cfg.virtual.obs_mic_name:
+            return graph.by_name(self.cfg.virtual.obs_mix_name)
+        return None
+
+    def _origins_of(self, node_id: int, graph: Any, incoming: dict[int, set[int]] | None = None,
+                    depth: int = 6, seen: set[int] | None = None, budget: list[int] | None = None) -> set[str]:
+        """Which real capture devices feed this node, looking through our own
+        loopbacks and through filter chains.
+
+        `seen` is not optional in spirit: without it a densely linked graph
+        would be walked along every possible path instead of every node.
+        """
+        from .pw import describe_node
+
+        seen = seen if seen is not None else set()
+        budget = budget if budget is not None else [ORIGIN_VISITS]
+        budget[0] -= 1
+        if budget[0] <= 0:
+            return set()
+        if incoming is None:
+            incoming = {}
+            for link in graph.links:
+                incoming.setdefault(link.input_node, set()).add(link.output_node)
+        if node_id in seen or depth <= 0:
+            return set()
+        seen.add(node_id)
+        node = graph.nodes.get(node_id)
+        if node is None:
+            return set()
+        if node.media_class.startswith("Audio/Source") and not node.name.startswith("tfcz."):
+            info = describe_node(node, graph)
+            return {info.get("friendly") or node.name}
+        found: set[str] = set()
+        hop = self._internal_hop(node, graph)
+        if hop is not None:
+            found |= self._origins_of(hop.id, graph, incoming, depth - 1, seen, budget)
+        for feeder in incoming.get(node_id, ()):  # noqa: PLR1702
+            found |= self._origins_of(feeder, graph, incoming, depth - 1, seen, budget)
+        return found
+
+    def _link_cycles(self, graph: Any, limit: int = 3) -> list[list[int]]:
+        """Cycles in the link graph, at most `limit` of them: one is enough to
+        act on, and a broken graph must not turn this into a long walk."""
+        colour: dict[int, int] = {}
+        stack: list[int] = []
+        cycles: list[list[int]] = []
+        edges: dict[int, set[int]] = {}
+        for link in graph.links:
+            edges.setdefault(link.output_node, set()).add(link.input_node)
+
+        def walk(node_id: int) -> None:
+            if len(cycles) >= limit:
+                return
+            colour[node_id] = 1
+            stack.append(node_id)
+            for nxt in sorted(edges.get(node_id, ())):
+                if colour.get(nxt) == 1:  # back edge: everything from nxt on the stack is the cycle
+                    cycles.append(stack[stack.index(nxt):])
+                    if len(cycles) >= limit:
+                        break
+                elif colour.get(nxt, 0) == 0:
+                    walk(nxt)
+            stack.pop()
+            colour[node_id] = 2
+
+        for node_id in sorted(edges):
+            if colour.get(node_id, 0) == 0:
+                walk(node_id)
+        return cycles
 
     def rate_findings(self, graph: Any = None, rows: list[dict[str, Any]] | None = None,
                       formats: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:

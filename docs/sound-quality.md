@@ -54,17 +54,37 @@ context.properties = {
 
 then `systemctl --user restart pipewire wireplumber`.
 
+### What the signal itself says
+
+**Tonweg testen** records a moment from every device and measures four
+things: how loud it is (peak, rms), how far the peaks rise above the
+average (crest), how often the wave changes sign (zero crossings), and
+how many samples sit at the end of the scale.
+
+That is enough to name the fault instead of the symptom:
+
+* **Not sound at all, but noise.** A console or PC set to "Bitstream"
+  or "Automatic" sends Dolby or DTS over HDMI, and the capture card
+  records that stream as what it is. Compressed data is close to random:
+  it crosses zero on about half of all samples and stays loud, which no
+  microphone and no game does. *Fix*: set the source's audio output to
+  PCM / stereo.
+* **Clipping**, counted rather than guessed: the share of samples pinned
+  to the end of the scale.
+* **Digital silence** — the device delivers, but delivers nothing.
+* **One dead channel**, which is normal for a microphone and a fault for
+  a headphone or the game sound.
+* **A DC offset**, which sounds dull and can click.
+
+### The same sound twice, or in a circle
+
+**Tonsystem analysieren** also reads the shape of the graph. When a
+headphone receives the same microphone over two different paths, it
+plays it twice with a small offset: hollow and metallic. And when sound
+comes back to where it started, that is feedback, which can get loud
+enough to hurt. Both are reported with the path that causes them.
+
 ## Checked by hand
-
-### The game source sends a compressed stream
-
-A console or PC set to "Bitstream" or "Automatic" sends Dolby or DTS
-over HDMI. The capture card records that stream as what it is: noise.
-
-*Sounds like*: loud hiss or rattling instead of game sound, from the
-first second, independent of the volume.
-
-*Fix*: set the source's audio output to PCM / stereo.
 
 ### A microphone clips
 
@@ -86,16 +106,6 @@ before this router.
 
 *Fix*: disable the chain and listen again. The analysis lists such
 nodes; names containing `clean` or `sidetone` give them away.
-
-### The same sound arrives twice
-
-A route of this router plus a monitor output or OBS monitoring make two
-paths to the same destination.
-
-*Sounds like*: hollow, metallic, a slight echo, at worst feedback.
-
-*Fix*: the **Signalweg** view in full screen shows two arrows ending at
-the same box. In OBS, check "Monitor and Output" per source.
 
 ### USB
 

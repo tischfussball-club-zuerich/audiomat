@@ -649,6 +649,9 @@
           <pre class="report" id="repair-log" hidden></pre>
 
           <h3>Prüfungen</h3>
+          <p class="hint"><b>System prüfen</b> geht die Voraussetzungen durch. <b>Tonweg testen</b> nimmt von jedem
+            Gerät kurz auf und beurteilt, was ankommt: zu leise, übersteuert, nur ein Kanal, digitale Stille — oder
+            gar kein Ton, sondern ein komprimierter Datenstrom.</p>
           <div class="row">
             <button class="btn" id="run-doctor"><svg class="i"><use href="#i-checks"/></svg>System prüfen</button>
             <button class="btn" id="run-selftest"><svg class="i"><use href="#i-activity"/></svg>Tonweg testen</button>
@@ -658,7 +661,8 @@
 
           <h3>Was läuft im Tonsystem</h3>
           <p class="hint">Misst kurz mit und zeigt, wer den Takt vorgibt, mit welcher Puffergrösse gearbeitet wird und wo
-            Ton verloren geht. Auch Knoten, die nicht zu diesem Router gehören, etwa eine eigene Filterkette.</p>
+            Ton verloren geht. Auch Knoten, die nicht zu diesem Router gehören, etwa eine eigene Filterkette. Ausserdem:
+            womit jedes Gerät läuft, ob derselbe Ton zweimal am gleichen Ziel ankommt und ob er irgendwo im Kreis läuft.</p>
           <div class="row">
             <button class="btn" id="run-analysis"><svg class="i"><use href="#i-activity"/></svg>Tonsystem analysieren</button>
             <span class="hint" style="margin:0" id="analysis-state"></span>
@@ -1394,11 +1398,11 @@
     { id: 'hdmi-pcm', t: 'Gibt die Spielquelle PCM aus, nicht Dolby/DTS?',
       why: 'Schickt die Konsole oder der PC über HDMI einen komprimierten Tonstrom, nimmt die Karte ihn als Rauschen auf.',
       sign: 'Lautes Zischen oder Knattern statt Spielton, von Anfang an und unabhängig von der Lautstärke.',
-      fix: 'In den Toneinstellungen der Quelle auf PCM / Stereo stellen, nicht auf «Automatisch» oder «Bitstream».' },
+      fix: 'In den Toneinstellungen der Quelle auf PCM / Stereo stellen, nicht auf «Automatisch» oder «Bitstream». «Tonweg testen» erkennt diesen Fall inzwischen selbst und meldet ihn als Rauschen.' },
     { id: 'mic-level', t: 'Übersteuert ein Mikrofon?',
       why: 'USB-Headsets haben oft einen Mikrofon-Boost, und die Systemlautstärke kann über 100 % stehen.',
       sign: 'Kratzige, harte Sprache, die lauter wird statt deutlicher. «Tonweg testen» zeigt einen Spitzenpegel nahe 0 dB.',
-      fix: 'Im Reiter Einrichtung die Aufnahme auf etwa 70 % stellen und in alsamixer -c <Karte> den Mic-Boost ausschalten.' },
+      fix: '«Tonweg testen» misst, wie viele Werte am Anschlag liegen. Dann die Aufnahme auf etwa 70 % stellen und in alsamixer -c <Karte> den Mic-Boost ausschalten.' },
     { id: 'filter-chain', t: 'Läuft eine eigene Filterkette mit?',
       why: 'Rauschunterdrückung oder Mithören aus ~/.config/pipewire/ liegen vor diesem Router im Tonweg.',
       sign: 'Blecherne, wässrige Stimme, einzelne Silben fallen weg. Die Messung oben listet solche Knoten.',
@@ -1406,7 +1410,7 @@
     { id: 'double-path', t: 'Kommt derselbe Ton zweimal an?',
       why: 'Eine Verbindung dieses Routers plus ein Monitor-Ausgang oder OBS-Monitoring ergeben zwei Wege zum selben Ziel.',
       sign: 'Hohl, metallisch, leichtes Echo, im schlimmsten Fall Rückkopplung.',
-      fix: 'Im Signalweg (Vollbild) nachsehen, ob zwei Pfeile am selben Ziel landen, und in OBS «Monitor und Ausgabe» prüfen.' },
+      fix: '«Tonsystem analysieren» meldet das inzwischen selbst. Sonst im Signalweg (Vollbild) nachsehen, ob zwei Pfeile am selben Ziel landen, und in OBS «Monitor und Ausgabe» prüfen.' },
     { id: 'usb-ports', t: 'Hängen die Geräte an eigenen USB-Anschlüssen?',
       why: 'Zwei Headsets und die Aufnahmekarte an einem Hub teilen sich Bandbreite und Strom.',
       sign: 'Sporadisches Knacken, das kommt und geht, oft bei Bewegung am Kabel.',

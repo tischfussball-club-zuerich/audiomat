@@ -261,12 +261,12 @@ class SelftestTests(unittest.TestCase):
                 # first device delivers audio; the next refuses --raw once and then
                 # works, the rest fail with something that cannot be dropped
                 if len(probes) == 1:
-                    return 9600, 0.5, "", 0
+                    return cli.Probe(9600, 0.5, "", 0, {})
                 if "--raw" in cmd and len(probes) == 2:
-                    return 0, 0.0, "pw-record: unrecognized option '--raw'\nusage...", 1
+                    return cli.Probe(0, 0.0, "pw-record: unrecognized option '--raw'\nusage...", 1, {})
                 if len(probes) == 3:
-                    return 4800, 0.2, "", 0
-                return 0, 0.0, "pw-record: unrecognized option '--nope'", 1
+                    return cli.Probe(4800, 0.2, "", 0, {})
+                return cli.Probe(0, 0.0, "pw-record: unrecognized option '--nope'", 1, {})
 
             cli._probe = fake_probe
             out = io.StringIO()

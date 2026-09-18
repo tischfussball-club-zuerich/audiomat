@@ -17,6 +17,8 @@ import time
 import urllib.error
 import urllib.request
 from importlib import resources
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 from typing import Any
 
@@ -272,8 +274,22 @@ def _shutdown_http(server_box: dict[str, Any]) -> None:
 # ----------------------------------------------------------------- selftest
 
 
-def _probe(cmd: list[str], seconds: float = 2.0, skip_wav: bool = False) -> tuple[int, float, str, int | None]:
-    """Run a capture command for a while; return (bytes, peak 0..1, stderr, rc)."""
+@dataclass
+class Probe:
+    """What a short recording from one device produced."""
+
+    total: int = 0
+    peak: float = 0.0
+    error: str = ""
+    rc: int | None = None
+    stats: dict[str, Any] = dc_field(default_factory=dict)
+
+
+PROBE_KEEP = 4 * 1024 * 1024  # enough samples to judge the signal, never unbounded
+
+
+def _probe(cmd: list[str], seconds: float = 2.0, skip_wav: bool = False) -> Probe:
+    """Run a capture command for a while and describe what came out of it."""
     import select
 
     from .meters import peak_of, wav_data_offset
@@ -283,8 +299,9 @@ def _probe(cmd: list[str], seconds: float = 2.0, skip_wav: bool = False) -> tupl
             cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
         )
     except OSError as exc:
-        return 0, 0.0, str(exc), 127
+        return Probe(error=str(exc), rc=127)
     total, peak = 0, 0.0
+    kept = bytearray()
     header = bytearray()
     deadline = time.monotonic() + seconds
     try:
@@ -305,6 +322,8 @@ def _probe(cmd: list[str], seconds: float = 2.0, skip_wav: bool = False) -> tupl
                         continue
                 total += len(chunk)
                 peak = max(peak, peak_of(chunk))
+                if len(kept) < PROBE_KEEP:
+                    kept += chunk
             elif proc.poll() is not None:
                 break
     finally:
@@ -319,7 +338,9 @@ def _probe(cmd: list[str], seconds: float = 2.0, skip_wav: bool = False) -> tupl
         err = (proc.stderr.read() or b"").decode("utf-8", "replace").strip()
     except Exception:  # noqa: BLE001
         pass
-    return total, peak, err, proc.returncode
+    from .meters import signal_stats
+
+    return Probe(total=total, peak=peak, error=err, rc=proc.returncode, stats=signal_stats(bytes(kept)))
 
 
 def cmd_selftest(args: argparse.Namespace) -> int:
@@ -387,18 +408,19 @@ def cmd_selftest(args: argparse.Namespace) -> int:
         kind = "output (monitored)" if is_sink else "input"
         # try the full command first, then drop whatever pw-record refuses, the
         # same way the daemon's meters do
-        total = peak = 0
-        err_text, rc, used = "", None, None
+        probe = Probe()
+        used = None
         shapes = [(True, True), (False, True), (False, False)]
         if working_shape in shapes:
             shapes.insert(0, shapes.pop(shapes.index(working_shape)))
         for raw, props in shapes:
             cmd = spec.command(raw=raw, props=props)
-            total, peak, err_text, rc = _probe(cmd, args.seconds, skip_wav=not raw)
+            probe = _probe(cmd, args.seconds, skip_wav=not raw)
             used = cmd
-            if total or not any(m in err_text.lower() for m in UNSUPPORTED_MARKERS):
+            if probe.total or not any(m in probe.error.lower() for m in UNSUPPORTED_MARKERS):
                 break
-            print(f"  [note] {label}: pw-record refused an option, retrying without it ({err_text.splitlines()[0][:90]})")
+            print(f"  [note] {label}: pw-record refused an option, retrying without it ({probe.error.splitlines()[0][:90]})")
+        total, peak, err_text, rc = probe.total, probe.peak, probe.error, probe.rc
         if total == 0:
             problems += 1
             print(f"  [NO DATA] {label} ({kind}) -> {res.node}")
@@ -409,8 +431,20 @@ def cmd_selftest(args: argparse.Namespace) -> int:
             state = "silent" if peak < 0.001 else f"peak {to_db(peak):.1f} dB"
             shape = "" if used == spec.command() else "  (reduced command shape)"
             print(f"  [ok] {label} ({kind}): {total} bytes in {args.seconds:.0f}s, {state}{shape}")
-            if peak < 0.001:
-                print("       nothing audible happened during the test; talk into the microphone or start the game and run this again")
+            stats = probe.stats
+            if stats.get("frames"):
+                print(f"       rms {stats['rms']:.3f} · Scheitelfaktor {stats['crest']} · Nulldurchgänge "
+                      f"{stats['zcr'] * 100:.0f}% · Kanäle {', '.join(f'{c:.3f}' for c in stats['channels'])}")
+            from .meters import signal_verdict
+
+            for finding in signal_verdict(stats, "output" if is_sink else "input"):
+                problems += finding["level"] == "error"
+                mark = {"error": "FAIL", "warning": "warn"}.get(finding["level"], "note")
+                print(f"       [{mark}] {finding['title']}")
+                if finding.get("why"):
+                    print(f"              {finding['why']}")
+                if finding.get("fix"):
+                    print(f"              -> {finding['fix']}")
 
     print("\n=== router streams ===")
     for name, route in sorted(cfg.routes.items()):

@@ -293,3 +293,72 @@ class DeviceFormatTests(unittest.TestCase):
             self.assertEqual(entry["channels"], 1)
         finally:
             router.stop()
+
+
+class PathFindingTests(unittest.TestCase):
+    """Two faults that are only visible in the shape of the graph, and that no
+    dropout measurement ever reports."""
+
+    def _router(self):
+        router = Router(minimal_config(), fake_backend(), node_wait=0.1, sleep=lambda s: None)
+        router.start()
+        router.reconcile()
+        return router
+
+    def test_a_clean_graph_reports_nothing(self):
+        router = self._router()
+        try:
+            self.assertEqual(router.path_findings(), [])
+        finally:
+            router.stop()
+
+    def test_the_same_microphone_over_two_paths_is_reported(self):
+        router = self._router()
+        try:
+            graph = router.backend.graph()
+            mic = graph.by_name("alsa_input.a")
+            out = graph.by_name("alsa_output.b")
+            # something else (a mixer app, OBS monitoring) wires the same mic straight through
+            from tfcz_audio.pw import Link
+
+            graph.links.append(Link(id=9001, output_node=mic.id, input_node=out.id))
+            titles = [f["title"] for f in router.path_findings(graph)]
+            self.assertTrue(any("über 2 Wege" in t for t in titles), titles)
+        finally:
+            router.stop()
+
+    def test_a_feedback_loop_is_an_error(self):
+        router = self._router()
+        try:
+            graph = router.backend.graph()
+            from tfcz_audio.pw import Link
+
+            a, b = graph.by_name("alsa_output.a"), graph.by_name("alsa_output.b")
+            graph.links.append(Link(id=9100, output_node=a.id, input_node=b.id))
+            graph.links.append(Link(id=9101, output_node=b.id, input_node=a.id))
+            findings = router.path_findings(graph)
+            loop = next(f for f in findings if "Kreis" in f["title"])
+            self.assertEqual(loop["level"], "error")
+            self.assertIn("→", loop["why"])
+        finally:
+            router.stop()
+
+    def test_a_big_broken_graph_cannot_make_it_run_away(self):
+        """Cycle hunting must stay bounded even when everything is linked to
+        everything."""
+        from tfcz_audio.pw import Graph, Link, Node
+
+        graph = Graph()
+        for i in range(60):
+            graph.nodes[i] = Node(id=i, name=f"n{i}", media_class="Audio/Sink")
+        for i in range(60):
+            for j in range(60):
+                if i != j:
+                    graph.links.append(Link(id=1000 + i * 60 + j, output_node=i, input_node=j))
+        router = Router(minimal_config(), fake_backend(), node_wait=0.1, sleep=lambda s: None)
+        import time
+
+        started = time.monotonic()
+        findings = router.path_findings(graph)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertLessEqual(len([f for f in findings if "Kreis" in f["title"]]), 3)
