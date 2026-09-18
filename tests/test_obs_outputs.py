@@ -159,8 +159,10 @@ class SwitchTests(unittest.TestCase):
         edit.set_obs_mode(self.router, True)
         targets = {n: r.sink_ref for n, r in self.router.cfg.routes.items() if "obs" in r.sink_ref}
         self.assertEqual(targets, {"a_to_obs": "obs_mic_a", "b_to_obs": "obs_mic_b"})
+        # the descriptions name whoever really feeds them: these devices are
+        # called a_mic/b_mic, so that is what they say
         self.assertEqual([m["description"] for m in self.router.virtual_mics(self.router.backend.graph())],
-                         ["TFCZ Hans", "TFCZ Karl"])
+                         ["TFCZ A", "TFCZ B"])
 
     def test_switching_back_leaves_one_microphone_and_one_target(self):
         edit.set_obs_mode(self.router, True)
@@ -284,3 +286,50 @@ class StableNameTests(unittest.TestCase):
         targets = {n: r.sink_ref for n, r in self.router.cfg.routes.items() if "obs" in r.sink_ref}
         self.assertEqual(targets["a_to_obs"], "obs_mic_a")
         self.assertEqual(targets["b_to_obs"], "obs_mic_b")
+
+
+class AssignmentTests(unittest.TestCase):
+    """Which voice ends up on which microphone. Getting this wrong is silent:
+    the stream carries the right sound under the wrong name."""
+
+    HEADSETS = (
+        '[devices]\n'
+        'headset_a_mic = "alsa_input.a"\n'
+        'headset_b_mic = "alsa_input.b"\n'
+        '[labels]\n'
+        'headset_a = "Hans"\n'
+        'headset_b = "Karl"\n'
+    )
+
+    def route(self, name, source):
+        return f'[routes.{name}]\nfrom = "{source}"\nto = "obs_mic"\n'
+
+    def _switch(self, routes):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "config.toml"
+        cfg = parse(tomllib.loads(self.HEADSETS + routes))
+        cfg.path = path
+        save(cfg, path)
+        router = Router(cfg, fake_backend(), node_wait=0.05, sleep=lambda s: None)
+        router.start()
+        self.addCleanup(router.stop)
+        edit.set_obs_mode(router, True)
+        return {name: (r.sink_ref, router.cfg.virtual.outputs[r.sink_ref].description)
+                for name, r in router.cfg.routes.items() if "obs" in r.sink_ref}
+
+    def test_route_names_in_the_wrong_order_do_not_swap_the_people(self):
+        result = self._switch(self.route("zebra", "headset_a_mic") + self.route("alpha", "headset_b_mic"))
+        self.assertEqual(result["zebra"], ("obs_mic_a", "TFCZ Hans"))
+        self.assertEqual(result["alpha"], ("obs_mic_b", "TFCZ Karl"))
+
+    def test_the_usual_names_end_up_the_usual_way(self):
+        result = self._switch(self.route("a_to_obs", "headset_a_mic") + self.route("b_to_obs", "headset_b_mic"))
+        self.assertEqual(result["a_to_obs"], ("obs_mic_a", "TFCZ Hans"))
+        self.assertEqual(result["b_to_obs"], ("obs_mic_b", "TFCZ Karl"))
+
+    def test_two_routes_from_the_same_person_still_get_two_names(self):
+        """Two identically named sources in OBS would be a guessing game."""
+        result = self._switch(self.route("eins", "headset_a_mic") + self.route("zwei", "headset_a_mic"))
+        descriptions = [d for _, d in result.values()]
+        self.assertEqual(len(set(descriptions)), 2, descriptions)

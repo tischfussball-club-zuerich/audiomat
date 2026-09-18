@@ -180,3 +180,46 @@ class EditTests(unittest.TestCase):
         self.assertNotIn("token", data["api"])
         self.assertTrue(data["api"]["token_set"])
         self.assertEqual(data["path"], str(self.path))
+
+
+class ConcurrentEditTests(unittest.TestCase):
+    """Two edits at the same time: the page can save names while an automation
+    renames a route. Both have to survive."""
+
+    def test_no_edit_is_lost_when_several_arrive_at_once(self):
+        import tempfile
+        import threading
+        from pathlib import Path
+
+        from tfcz_audio import edit
+        from tfcz_audio.config import save
+        from tfcz_audio.router import Router
+
+        from .helpers import fake_backend, minimal_config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.toml"
+            cfg = minimal_config()
+            cfg.path = path
+            save(cfg, path)
+            router = Router(cfg, fake_backend(), node_wait=0.05, sleep=lambda s: None)
+            router.start()
+            try:
+                errors = []
+
+                def add(index):
+                    try:
+                        edit.upsert_route(router, f"r{index}", {"from": "a_mic", "to": "b_out", "volume": 0.5})
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(exc)
+
+                threads = [threading.Thread(target=add, args=(i,)) for i in range(8)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+                self.assertEqual(errors, [])
+                for i in range(8):
+                    self.assertIn(f"r{i}", router.cfg.routes, "an edit was overwritten by a parallel one")
+            finally:
+                router.stop()

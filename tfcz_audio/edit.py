@@ -4,6 +4,7 @@ file, hot-reload the router. Every function returns the new status."""
 from __future__ import annotations
 
 import copy
+import threading
 from typing import Any, Callable
 
 from .config import OBS_MIC, Config, ConfigError, human, parse, save, to_dict
@@ -14,14 +15,21 @@ class EditError(ConfigError):
     pass
 
 
+# Read the config, change it, write it back. Two edits arriving at the same
+# time (the page saves names while a preset renames a route) would otherwise
+# both start from the old file and the second would drop the first.
+_commit_lock = threading.Lock()
+
+
 def _commit(router: Router, mutate: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
-    data = to_dict(router.cfg)
-    mutate(data)
-    new_cfg = parse(copy.deepcopy(data))
-    new_cfg.path = router.cfg.path
-    if new_cfg.path is not None:
-        save(new_cfg)
-    return router.reload(new_cfg)
+    with _commit_lock:
+        data = to_dict(router.cfg)
+        mutate(data)
+        new_cfg = parse(copy.deepcopy(data))
+        new_cfg.path = router.cfg.path
+        if new_cfg.path is not None:
+            save(new_cfg)
+        return router.reload(new_cfg)
 
 
 def set_devices(router: Router, devices: dict[str, Any]) -> dict[str, Any]:
@@ -247,32 +255,55 @@ def setup(router: Router, body: dict[str, Any]) -> dict[str, Any]:
     return _commit(router, mutate)
 
 
+def _person_of(cfg: Config, source_ref: str) -> str:
+    """Whose voice a route to OBS carries, in the words the page uses."""
+    base = source_ref[:-4] if source_ref.endswith("_mic") else source_ref
+    return human(cfg, base)
+
+
+def _obs_assignment(cfg: Config, routes: dict[str, Any]) -> list[tuple[str, str]]:
+    """(route, person) for every route to OBS, headset A first.
+
+    Sorting by route name would be enough only as long as the names happen to
+    be in that order. They are not: a route called "alpha" from headset B and
+    one called "zebra" from headset A would put B's voice on the microphone
+    named after A, and nothing would say so until it is on the stream.
+    """
+    entries = [(name, spec) for name, spec in routes.items() if str(spec.get("to", "")).startswith(OBS_MIC)]
+
+    def order(entry: tuple[str, Any]) -> tuple[int, str]:
+        source = str(entry[1].get("from", ""))
+        rank = 0 if source.startswith("headset_a") else 1 if source.startswith("headset_b") else 2
+        return (rank, entry[0])
+
+    return [(name, _person_of(cfg, str(spec.get("from", "")))) for name, spec in sorted(entries, key=order)]
+
+
 def set_obs_mode(router: Router, separate: bool) -> dict[str, Any]:
     """Switch between one microphone for OBS and one per person, without
     touching anything else. The routes to OBS follow along, so the change is
     complete: a route pointing at a microphone that no longer exists would
     refuse to load."""
     cfg = router.cfg
-    labels = cfg.labels
-    name_a = labels.get("headset_a") or "A"
-    name_b = labels.get("headset_b") or "B"
 
     def mutate(data: dict[str, Any]) -> None:
+        assignment = _obs_assignment(cfg, data["routes"])
+        keys = [OBS_A, OBS_B]
+        if separate and len(assignment) != len(keys):
+            raise EditError(f"Getrennte OBS-Mikrofone brauchen genau zwei Verbindungen zum Stream, "
+                            f"gefunden: {len(assignment)}. Richte die Geräte neu ein.")
         virtual = data.setdefault("virtual", {})
-        outputs = obs_outputs(separate, name_a, name_b)
-        if outputs:
-            virtual["outputs"] = outputs
+        if separate:
+            names = [person for _, person in assignment]
+            if names[0] == names[1]:  # both routes from the same person: keep them apart anyway
+                names = [f"{names[0]} ({route})" for route, _ in assignment]
+            virtual["outputs"] = {key: {"description": f"TFCZ {name}"} for key, name in zip(keys, names, strict=True)}
         else:
             virtual.pop("outputs", None)
-        targets = list(outputs) or [OBS_MIC]
-        obs_routes = [n for n, r in sorted(data["routes"].items()) if str(r.get("to", "")).startswith(OBS_MIC)]
-        if separate and len(obs_routes) != len(targets):
-            raise EditError("Getrennte OBS-Mikrofone brauchen genau zwei Verbindungen zum Stream; "
-                            "richte die Geräte neu ein.")
         # every route has to land on a microphone that exists afterwards: going
         # back to one means all of them point at it, not just the first
-        for index, route_name in enumerate(obs_routes):
-            data["routes"][route_name]["to"] = targets[index] if separate else targets[0]
+        for index, (route_name, _) in enumerate(assignment):
+            data["routes"][route_name]["to"] = keys[index] if separate else OBS_MIC
 
     return _commit(router, mutate)
 

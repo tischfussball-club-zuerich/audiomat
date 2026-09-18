@@ -1009,12 +1009,12 @@ class Router:
         return port_label(match.get("device.bus-path", ""))
 
     def virtual_mics(self, graph: Graph) -> list[dict[str, Any]]:
+        from .meters import obs_meter_key
+
         mics = []
         for name in virtual_names(self.cfg):
             out = self.cfg.virtual.outputs[virtual_key(name)]
             proc = self.procs.get(name)
-            from .meters import obs_meter_key
-
             mics.append({
                 "key": out.key,
                 "meter": obs_meter_key(out.key),
