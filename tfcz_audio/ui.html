@@ -576,10 +576,12 @@
             <label class="check"><input type="checkbox" id="obs-separate"> Für jede Person ein eigenes Mikrofon</label>
             <span class="hint" style="margin:0" id="obs-mode-state"></span>
           </div>
+          <div class="grid" id="obs-names" style="grid-template-columns:max-content 1fr;margin-top:10px"></div>
           <p class="hint" id="obs-mode-why">Mit einem gemeinsamen Mikrofon hört OBS beide Stimmen bereits gemischt.
             Getrennt sieht OBS zwei Quellen und kann jede einzeln behandeln — ein Expander pro Person macht zu, solange
             diese Person nicht spricht, und dann landet die Stimme der anderen nicht doppelt im Stream. In OBS musst du
-            danach beide Quellen einmal hinzufügen.</p>
+            danach beide Quellen einmal hinzufügen. Die Namen oben ändern sich nie von selbst: OBS merkt sich den
+            technischen Namen, und der bleibt auch dann gleich, wenn du die Person umbenennst.</p>
 
           <h3>Verbindungen</h3>
           <p class="hint">Neuen Pfeil anlegen, oder den Namen eines bestehenden eintippen, um ihn zu ändern.
@@ -1080,7 +1082,7 @@
     $('#obslines').innerHTML = mics.map(mic => {
       const [msg, colour] = obsState(mic);
       const what = many
-        ? `In OBS heisst diese Quelle «${esc(mic.description)}». Getrennt pro Person, damit OBS jede Stimme einzeln filtern kann.`
+        ? `In OBS heisst diese Quelle «${esc(mic.description)}» (<code>${esc(mic.node)}</code>). Getrennt pro Person, damit OBS jede Stimme einzeln filtern kann.`
         : `Das nimmt OBS als «${esc(mic.description)}» auf. Wenn sich dieser Balken bewegt, hören es deine Zuschauer.`;
       return `<div class="obsline">
         <svg class="i i-lg"><use href="#i-tower"/></svg>
@@ -1304,8 +1306,10 @@
     const box = $('#obs-separate');
     if (document.activeElement === box) return;
     box.checked = !!state.status.separate_obs;
-    const mics = obsMics().map(m => m.description).join(' · ');
-    $('#obs-mode-state').textContent = mics ? (obsMics().length > 1 ? 'zwei Quellen: ' : 'eine Quelle: ') + mics : '';
+    const mics = obsMics();
+    $('#obs-mode-state').textContent = mics.length ? (mics.length > 1 ? 'zwei Quellen' : 'eine Quelle') : '';
+    $('#obs-names').innerHTML = mics.map(m =>
+      `<span>${esc(m.description)}</span><code>${esc(m.node)}</code>`).join('');
   }
   $('#obs-separate').addEventListener('change', e => {
     const separate = e.target.checked;

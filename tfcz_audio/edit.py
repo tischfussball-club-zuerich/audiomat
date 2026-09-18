@@ -282,6 +282,13 @@ def set_labels(router: Router, labels: dict[str, Any]) -> dict[str, Any]:
 
     def mutate(data: dict[str, Any]) -> None:
         data["labels"] = clean
+        # A renamed person should be renamed in OBS too. Only the description
+        # follows: the node names stay as they are, because that is what OBS
+        # stores in the scene and what must never move under it.
+        outputs = data.get("virtual", {}).get("outputs") or {}
+        for key, alias in ((OBS_A, "headset_a"), (OBS_B, "headset_b")):
+            if key in outputs and clean.get(alias):
+                outputs[key]["description"] = f"TFCZ {clean[alias]}"
 
     return _commit(router, mutate)
 

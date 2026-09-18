@@ -223,3 +223,64 @@ class DiagramTests(unittest.TestCase):
         page = resources.files("tfcz_audio").joinpath("ui.html").read_text()
         self.assertIn("const stack = (aliases, side, x)", page)
         self.assertNotIn("top + i * (nodeH + gap)", page, "no fixed row height any more")
+
+
+class StableNameTests(unittest.TestCase):
+    """OBS stores the node name in the scene. It must survive everything that
+    is not an explicit change of the setup, and no two may ever collide."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "config.toml"
+        cfg = minimal_config()
+        cfg.path = self.path
+        cfg.labels = {"headset_a": "Hans", "headset_b": "Karl"}
+        save(cfg, self.path)
+        self.router = Router(cfg, fake_backend(), node_wait=0.05, sleep=lambda s: None)
+        self.router.start()
+        edit.upsert_route(self.router, "b_to_obs", {"from": "b_mic", "to": "obs_mic", "volume": 1.0})
+        edit.set_obs_mode(self.router, True)
+
+    def tearDown(self):
+        self.router.stop()
+        self.tmp.cleanup()
+
+    def names(self):
+        return [o.mic_name for o in self.router.cfg.virtual.outputs.values()]
+
+    def test_the_names_are_derived_from_the_key_not_from_discovery(self):
+        self.assertEqual(self.names(), ["tfcz.obsmic.a", "tfcz.obsmic.b"])
+
+    def test_they_survive_a_restart(self):
+        reloaded = parse(tomllib.loads(self.path.read_text()))
+        self.assertEqual([o.mic_name for o in reloaded.virtual.outputs.values()], self.names())
+
+    def test_renaming_a_person_changes_the_label_but_not_the_name(self):
+        before = self.names()
+        edit.set_labels(self.router, {"headset_a": "Hansruedi", "headset_b": "Karl"})
+        self.assertEqual(self.names(), before, "OBS would lose the source")
+        self.assertEqual([o.description for o in self.router.cfg.virtual.outputs.values()],
+                         ["TFCZ Hansruedi", "TFCZ Karl"])
+
+    def test_changing_a_volume_or_a_route_leaves_them_alone(self):
+        before = self.names()
+        self.router.set_route("a_to_obs", volume=0.5)
+        edit.upsert_route(self.router, "a_to_b", {"from": "a_mic", "to": "b_out", "volume": 0.3})
+        self.assertEqual(self.names(), before)
+
+    def test_two_microphones_can_never_share_a_name(self):
+        with self.assertRaises(ConfigError):
+            parse(tomllib.loads(MINIMAL.replace('to = "obs_mic"', 'to = "obs_mic_a"')
+                                + '[virtual.outputs.obs_mic_a]\nmic_name = "tfcz.x"\n'
+                                  '[virtual.outputs.obs_mic_b]\nmic_name = "tfcz.x"\n'))
+
+    def test_a_name_is_never_reused_for_the_other_person(self):
+        """obs_mic_a belongs to the route from headset A, in both directions of
+        the switch."""
+        targets = {n: r.sink_ref for n, r in self.router.cfg.routes.items() if "obs" in r.sink_ref}
+        self.assertEqual(targets["a_to_obs"], "obs_mic_a")
+        edit.set_obs_mode(self.router, False)
+        edit.set_obs_mode(self.router, True)
+        targets = {n: r.sink_ref for n, r in self.router.cfg.routes.items() if "obs" in r.sink_ref}
+        self.assertEqual(targets["a_to_obs"], "obs_mic_a")
+        self.assertEqual(targets["b_to_obs"], "obs_mic_b")

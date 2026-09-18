@@ -339,6 +339,15 @@ In OBS both sources have to be added once after switching. Nothing else
 changes, and switching back restores the single microphone with the node
 name it always had, so an old scene keeps working.
 
+The names OBS stores are `tfcz.obsmic.a` and `tfcz.obsmic.b`. They come
+from the config key, not from discovery order, so they are the same after
+a reboot, after a replug and after a daemon restart, and `obs_mic_a`
+always belongs to the route from headset A. Renaming a person changes only
+the description OBS shows in the list, never the name behind it. Two
+outputs sharing a node name is refused when the config is read. The web UI
+shows both names under **Mikrofone für OBS**, so there is no guessing in
+the OBS dialog.
+
 ### Repairing the system
 
 **Erweitert → Diagnose → System reparieren** looks at the machine around
