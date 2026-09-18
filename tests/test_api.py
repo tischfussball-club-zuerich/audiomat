@@ -568,3 +568,28 @@ class IconTests(unittest.TestCase):
         self.assertEqual(missing, [], f"icons used but not defined: {missing}")
         unused = sorted(defined - used)
         self.assertEqual(unused, [], f"icons defined but never used: {unused}")
+
+
+class UiReloadTests(ApiTestCase):
+    def test_an_edited_page_is_picked_up_without_a_restart(self):
+        """Caching the page forever makes an edited file look like a failed
+        install: the old bytes keep being served until the daemon restarts."""
+        import os
+        import time
+        from importlib import resources
+        from pathlib import Path
+
+        from tfcz_audio.api import load_ui
+
+        path = Path(str(resources.files("tfcz_audio").joinpath("ui.html")))
+        original = path.read_bytes()
+        try:
+            first = load_ui()
+            path.write_bytes(original + b"\n<!-- edited -->\n")
+            os.utime(path, (time.time() + 1, time.time() + 1))
+            second = load_ui()
+            self.assertNotEqual(first, second)
+            self.assertIn(b"edited", second)
+        finally:
+            path.write_bytes(original)
+            load_ui()

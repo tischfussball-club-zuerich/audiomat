@@ -168,14 +168,25 @@ def _journal(level: str, limit: int) -> tuple[list[dict[str, Any]], str]:
     return entries, "full history from the system journal"
 
 
-_UI_CACHE: bytes | None = None
+_UI_CACHE: tuple[float, bytes] | None = None
 
 
 def load_ui() -> bytes:
+    """The page, re-read when the file changes.
+
+    Caching it forever means an edited or replaced ui.html keeps serving the
+    old bytes until the daemon restarts, which is confusing during development
+    and indistinguishable from a failed install.
+    """
     global _UI_CACHE  # noqa: PLW0603
-    if _UI_CACHE is None:
-        _UI_CACHE = resources.files("tfcz_audio").joinpath("ui.html").read_bytes()
-    return _UI_CACHE
+    path = resources.files("tfcz_audio").joinpath("ui.html")
+    try:
+        stamp = Path(str(path)).stat().st_mtime
+    except OSError:
+        stamp = 0.0
+    if _UI_CACHE is None or _UI_CACHE[0] != stamp:
+        _UI_CACHE = (stamp, path.read_bytes())
+    return _UI_CACHE[1]
 
 
 def ui_build() -> str:
