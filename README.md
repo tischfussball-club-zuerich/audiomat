@@ -316,6 +316,7 @@ tfcz-audio devices [-p]                 PipeWire audio nodes (+ ALSA card props)
 tfcz-audio check                        validate config, report missing devices
 tfcz-audio selftest [--seconds N]       record from every device and judge what arrives
 tfcz-audio versions [--json]            versions of every tool this router depends on
+tfcz-audio tone [alias] [--side left|right|both]   test tone on one headphone
 tfcz-audio fix [id ...] [--all]         what is broken about the system, and repair it
 tfcz-audio run [--dry-run]              run the daemon in the foreground
 ```
@@ -350,6 +351,23 @@ the description OBS shows in the list, never the name behind it. Two
 outputs sharing a node name is refused when the config is read. The web UI
 shows both names under **Mikrofone für OBS**, so there is no guessing in
 the OBS dialog.
+
+### The test tone
+
+Everything else in this program measures what comes *in*. **Erweitert →
+Einrichtung → Testton** is the only check for what goes *out*: a short
+two-note tone on one headphone, left, right or both.
+
+A level bar cannot tell you that the headphone on person A's head is the
+one the page calls "Hans", that both ears work, that left is left, or that
+the device is not muted somewhere in the system. Silence on one side is
+the point: it turns "I hear something" into "I hear it on the left".
+
+The tone is a quarter of full scale with a 20 ms fade at both ends,
+because it plays into headphones somebody is wearing. It goes to the
+chosen node by name, never to the system default, and one plays at a time.
+`tfcz-audio tone` does the same from a terminal; without an alias it lists
+what is connected.
 
 ### Repairing the system
 
@@ -411,6 +429,8 @@ client can drive it.
 | GET | `/config` | current config as JSON (token hidden) |
 | GET / PUT | `/audio` | read or change the system-wide buffer size (`quantum` in frames, 0 = automatic, `persist` to keep it) |
 | POST | `/audio/dropouts` | measure dropouts with pw-top |
+| GET | `/tone` | which devices a test tone can go to, and how the last one went |
+| POST | `/tone/{alias}` | play it (`side`: `left`, `right`, `both`; `seconds`) |
 | GET | `/repair` | what is broken about the system and what can be repaired from here |
 | POST | `/repair/{action}` | run one of those repairs |
 | GET | `/versions` | versions of PipeWire, WirePlumber, the tools, the capture driver and the packages (`fresh=1` skips the 20 s cache) |

@@ -117,6 +117,15 @@ PATHS: dict[str, dict[str, Any]] = {
                                     params=[_query("seconds", "Messdauer", {"type": "number"})])},
     "/analysis": {"post": _op("Tonsystem analysieren", "Wer gibt den Takt vor, wo geht Ton verloren, wer hängt sonst noch im Graph.",
                               tag="Diagnose", params=[_query("seconds", "Messdauer", {"type": "number"})])},
+    "/tone": {"get": _op("Wohin ein Testton gehen kann, und was der letzte gemacht hat", tag="Einrichtung")},
+    "/tone/{alias}": {"post": _op(
+        "Testton auf einem Kopfhörer abspielen",
+        "Zwei Töne von etwa einer Sekunde, nur links, nur rechts oder auf beiden Seiten. Damit lässt sich "
+        "prüfen, ob es das richtige Gerät ist, ob beide Ohren funktionieren und ob die Seiten stimmen.",
+        tag="Einrichtung",
+        params=[_path("alias", "Gerätekürzel, z. B. headset_a_out"),
+                _query("side", "left, right oder both"),
+                _query("seconds", "Dauer, höchstens 4", {"type": "number"})])},
     "/repair": {"get": _op(
         "Was am System kaputt ist und sich richten lässt",
         "Fehlende Pakete, ein nicht laufendes Tonsystem, ein Dienst ohne Autostart. Jeder Eintrag sagt, "

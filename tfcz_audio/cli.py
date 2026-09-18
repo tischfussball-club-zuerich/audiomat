@@ -27,7 +27,7 @@ from .api import serve
 from .config import Config, ConfigError, default_config_paths, find_config, load, load_or_recover
 from .meters import FakeMeterManager, MeterManager
 from .pw import PipeWireBackend, PwError, cubic_to_db, kill_stale_helpers
-from .router import Router
+from .router import Router, RouterError, UnknownRoute
 from .sdnotify import Notifier
 
 log = logging.getLogger("tfcz")
@@ -683,6 +683,54 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+# -------------------------------------------------------------------- tone
+
+
+def cmd_tone(args: argparse.Namespace) -> int:
+    """Play a test tone on one headphone: the only check for what goes out."""
+    from .tone import SIDE_LABELS, TonePlayer
+
+    cfg, _ = load_or_recover(find_config(args.config))
+    backend = PipeWireBackend()
+    router = Router(cfg, backend)
+    try:
+        graph = router.refresh_devices()
+    except PwError as exc:
+        print(f"cannot read the PipeWire graph: {exc}", file=sys.stderr)
+        return 1
+
+    targets = router.output_targets(graph)
+    if not args.alias:
+        if not targets:
+            print("No output device is connected right now.")
+            return 1
+        print("Test tone on which device?\n")
+        for entry in targets:
+            print(f"  {entry['alias']:16} {entry['label']}")
+        print("\ntfcz-audio tone <alias> [--side left|right|both]")
+        return 0
+
+    try:
+        node, label = router.tone_target(args.alias, graph)
+    except (RouterError, UnknownRoute) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    player = TonePlayer()
+    print(f"{label}: {SIDE_LABELS.get(args.side, args.side)} …")
+    player.play(node, label, args.side, args.seconds)
+    while player.state()["running"]:
+        time.sleep(0.1)
+    state = player.state()
+    if state["error"]:
+        print(f"  failed: {state['error']}", file=sys.stderr)
+        if state["command"]:
+            print(f"  command: {state['command']}", file=sys.stderr)
+        return 1
+    print("  played. Heard it on the expected side? Then this device is wired correctly.")
+    return 0
+
+
 # --------------------------------------------------------------------- fix
 
 
@@ -1000,6 +1048,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--seconds", type=float, default=2.0, help="how long to record per device")
     s.add_argument("--fake", action="store_true", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_selftest)
+
+    s = sub.add_parser("tone", help="play a test tone on one headphone (no alias: list them)")
+    s.add_argument("alias", nargs="?")
+    s.add_argument("--side", choices=("left", "right", "both"), default="both")
+    s.add_argument("--seconds", type=float, default=1.2)
+    s.set_defaults(func=cmd_tone)
 
     s = sub.add_parser("fix", help="show what is broken about the system and repair it")
     s.add_argument("action", nargs="*", help="ids to run; without any, the list is only shown")

@@ -301,6 +301,9 @@
   .report-wrap[hidden] { display: none; }
   .report-wrap > .copy-all { position: absolute; top: 9px; right: 18px; z-index: 1; }
   .report-wrap > pre.report { padding-top: 44px; }
+  .tone-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; }
+  .tone-row .who { display: flex; align-items: center; gap: 8px; font-weight: 800; min-width: 200px; }
+  .tone-row .who > .i { color: var(--blue); flex: none; }
   .checklist { display: grid; gap: 10px; margin: 10px 0 14px; }
   .checklist .item {
     border: 1px solid var(--card-brd); border-radius: var(--r-lg); padding: 10px 12px;
@@ -574,6 +577,13 @@
             <button class="btn" id="add-alias"><svg class="i i-sm"><use href="#i-plus"/></svg>Gerät hinzufügen</button>
             <button class="btn btn-blue" id="save-devices">Geräte speichern</button>
           </div>
+
+          <h3>Testton</h3>
+          <p class="hint">Der einzige Weg zu prüfen, was <b>hinausgeht</b>: ein kurzer Ton auf einem Kopfhörer.
+            Damit siehst du, ob es das richtige Gerät ist, ob beide Ohren funktionieren und ob links und rechts
+            stimmen. Setz den Kopfhörer auf und klick.</p>
+          <div id="tone-targets"></div>
+          <p class="hint" style="margin:0" id="tone-state"></p>
 
           <h3>Mikrofone für OBS</h3>
           <p class="hint">Wie viele Mikrofone OBS von hier bekommt.</p>
@@ -1323,6 +1333,43 @@
     });
     api('PUT', '/config/devices', devices).then(() => { toast('Geräte gespeichert'); refresh(true); }, fail);
   });
+
+  // ------------------------------------------------------------- Testton
+  const SIDE_LABEL = { left: 'links', right: 'rechts', both: 'beide' };
+  function renderToneTargets(d) {
+    const targets = d.targets || [];
+    $('#tone-targets').innerHTML = targets.length ? targets.map(t => `
+      <div class="tone-row">
+        <span class="who">${svg('i-headphones')} ${esc(t.label)}</span>
+        ${['left', 'right', 'both'].map(side =>
+          `<button class="btn btn-sm" data-tone="${esc(t.alias)}" data-side="${side}">${SIDE_LABEL[side]}</button>`).join('')}
+      </div>`).join('')
+      : '<p class="hint">Gerade ist kein Kopfhörer angeschlossen.</p>';
+    $('#tone-targets').querySelectorAll('button[data-tone]').forEach(b => b.addEventListener('click', () => {
+      $('#tone-targets').querySelectorAll('button[data-tone]').forEach(x => { x.disabled = true; });
+      const side = b.dataset.side;
+      api('POST', `/tone/${encodeURIComponent(b.dataset.tone)}?side=${side}`)
+        .then(r => {
+          $('#tone-state').textContent = `spielt … ${SIDE_LABEL[side]}, auf «${r.label}»`;
+          setTimeout(pollTone, 900);
+        }, e => { $('#tone-state').textContent = ''; fail(e); })
+        .finally(() => setTimeout(() => $('#tone-targets').querySelectorAll('button[data-tone]').forEach(x => { x.disabled = false; }), 1500));
+    }));
+  }
+  function pollTone() {
+    api('GET', '/tone').then(d => {
+      renderToneTargets(d);
+      if (d.running) { setTimeout(pollTone, 600); return; }
+      if (d.error) {
+        $('#tone-state').innerHTML = `<span style="color:#f0a6a2">Der Ton liess sich nicht abspielen: ${esc(d.error)}</span>`;
+      } else if (d.label) {
+        $('#tone-state').textContent = `fertig: ${SIDE_LABEL[d.side] || d.side} auf «${d.label}». `
+          + (d.side === 'both' ? 'Auf beiden Ohren gehört? Dann stimmt dieses Gerät.'
+                               : `Auf der Seite ${SIDE_LABEL[d.side]} gehört? Dann stimmt die Zuordnung.`);
+      }
+    }, () => {});
+  }
+  $('#tone-targets').addEventListener('tfcz-load', pollTone);
 
   function renderObsMode() {
     const box = $('#obs-separate');
@@ -2082,6 +2129,7 @@
         if (serialized !== lastConfig) {
           lastConfig = serialized; state.config = data.cfg;
           renderLabels(); renderRouteForm(); renderObsMode();
+          api('GET', '/tone').then(renderToneTargets).catch(() => {});
           $('#cfgpath').textContent = data.cfg.path || '(keine)';
           api('GET', '/health').then(h => {
             $('#build').textContent = `${h.version} · ${h.build} · ${h.module || ''}`;

@@ -878,3 +878,33 @@ class DemoModeTests(ApiTestCase):
         self.assertIn("Vorführbetrieb", page)
         script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
         self.assertIn("demo-banner').hidden = !h.demo", script)
+
+
+class ToneApiTests(ApiTestCase):
+    def test_the_targets_are_listed_with_the_state(self):
+        status, body = self.call("GET", "/tone")
+        self.assertEqual(status, 200)
+        self.assertIn("targets", body)
+        self.assertIn("running", body)
+
+    def test_a_microphone_is_refused(self):
+        status, body = self.call("POST", "/tone/a_mic", headers={"Origin": self.base})
+        self.assertEqual(status, 400)
+        self.assertIn("Ausgabegerät", body["error"])
+
+    def test_a_nonsense_side_is_refused(self):
+        status, body = self.call("POST", "/tone/a_out?side=diagonal", headers={"Origin": self.base})
+        self.assertEqual(status, 400)
+        self.assertIn("side", body["error"])
+
+    def test_the_page_offers_the_buttons(self):
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        self.assertIn('id="tone-targets"', page)
+        self.assertIn("Testton", page)
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        for side in ("left", "right", "both"):
+            self.assertIn(f"'{side}'", script)

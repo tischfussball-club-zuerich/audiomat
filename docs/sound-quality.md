@@ -116,6 +116,15 @@ remove everything else — the person next to you is speech.
 
 ## Checked by hand
 
+### Is this even the right headphone?
+
+**Erweitert → Einrichtung → Testton** plays a short tone on one
+headphone, left, right or both. It answers what no measurement can: that
+the headphone on this person's head is the one the page means, that both
+ears work, that the sides are not swapped, and that the device is not
+muted in the system. A device stuck on one channel by its profile gives
+itself away here too -- "left" is heard on both ears.
+
 ### A microphone clips
 
 USB headsets often have a microphone boost, and the system volume can

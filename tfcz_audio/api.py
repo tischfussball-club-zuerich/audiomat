@@ -254,8 +254,10 @@ class ApiServer(ThreadingHTTPServer):
         self._connection_lock = threading.Lock()
         self._refused_logged = 0.0
         from .repair import Runner
+        from .tone import TonePlayer
 
         self.repairs = Runner()
+        self.tone = TonePlayer()
         super().__init__(address, Handler)
 
     def process_request(self, request: Any, client_address: Any) -> None:
@@ -538,6 +540,20 @@ class Handler(BaseHTTPRequestHandler):
 
             fresh = str(params.get("fresh", "")).lower() in TRUE_WORDS
             return ok, {"ok": True, **versions.collect(fresh)}
+        if seg == ["tone"] and read:
+            return ok, {"ok": True, "targets": router.output_targets(), **self.server.tone.state()}
+        if len(seg) == 2 and seg[0] == "tone" and write:
+            side = str(params.get("side", "both"))
+            try:
+                seconds = float(params.get("seconds", 1.2))
+            except (TypeError, ValueError):
+                seconds = 1.2
+            node, label = router.tone_target(seg[1])
+            try:
+                result = self.server.tone.play(node, label, side, seconds)
+            except ValueError as exc:
+                raise BadRequest(str(exc)) from None
+            return (ok if result["started"] else HTTPStatus.CONFLICT), {"ok": result["started"], **result}
         if seg == ["repair"] and read:
             from . import repair
 

@@ -1893,6 +1893,38 @@ class Router:
             })
         return findings
 
+    def output_targets(self, graph: Graph | None = None) -> list[dict[str, Any]]:
+        """Devices a test tone can be sent to: everything that plays sound.
+
+        Sinks only. Sending a tone at a microphone would do nothing and only
+        cost trust in the check.
+        """
+        graph = graph if graph is not None else self._graph_or_empty()
+        out = []
+        for alias in sorted(self.cfg.devices):
+            res = self.resolved.get(alias)
+            node = graph.by_name(res.node) if res and res.node else None
+            if node is None or not node.media_class.startswith("Audio/Sink"):
+                continue
+            out.append({"alias": alias, "node": node.name, "label": human(self.cfg, alias),
+                        "present": True})
+        return out
+
+    def tone_target(self, alias: str, graph: Graph | None = None) -> tuple[str, str]:
+        """(node, label) for a test tone, or a clear refusal."""
+        graph = graph if graph is not None else self._graph_or_empty()
+        if alias not in self.cfg.devices:
+            known = ", ".join(sorted(self.cfg.devices)) or "keine"
+            raise RouterError(f"Das Gerät «{alias}» ist nicht eingerichtet (bekannt: {known})")
+        res = self.resolved.get(alias)
+        node = graph.by_name(res.node) if res and res.node else None
+        label = human(self.cfg, alias)
+        if node is None:
+            raise RouterError(f"{label} ist nicht angeschlossen")
+        if not node.media_class.startswith("Audio/Sink"):
+            raise RouterError(f"{label} ist kein Ausgabegerät; ein Testton geht nur an Kopfhörer oder Lautsprecher")
+        return node.name, label
+
     def hardware(self) -> list[dict[str, Any]]:
         graph = self._graph_or_empty()
         groups = physical_devices(graph)
