@@ -825,3 +825,34 @@ class UpdateFailureTests(unittest.TestCase):
                 update.log_path().write_bytes(b"\xff\xfe junk \x00" * 100)
                 state = update.status()
         self.assertIn(state["state"], ("running", "stale", "done"))
+
+
+class RequestTimeoutTests(ApiTestCase):
+    """A wedged router must not take the page with it. Without a limit the
+    browser waits minutes, and the page stops updating without saying why."""
+
+    def test_every_request_carries_a_deadline(self):
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        self.assertIn("AbortController", script)
+        self.assertIn("stopper.abort()", script)
+        self.assertIn("antwortet nicht", script, "the timeout has to say something in German")
+
+    def test_measuring_and_repairing_get_a_longer_one(self):
+        """A dropout measurement or an apt install legitimately takes a while;
+        they must not be cut off at the same moment as a status poll."""
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        slow = re.search(r"const SLOW_PATHS = /\^\\/\(([^)]*)\)", script).group(1)
+        for path in ("analysis", "diagnostics", "repair", "update"):
+            self.assertIn(path, slow)
+        limits = re.search(r"SLOW_PATHS\.test\(path\) \? (\d+) : (\d+)", script)
+        self.assertGreater(int(limits.group(1)), int(limits.group(2)))
