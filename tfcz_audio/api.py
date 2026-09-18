@@ -189,6 +189,19 @@ def load_ui() -> bytes:
     return _UI_CACHE[1]
 
 
+_LOGO_CACHE: bytes | None = None
+
+
+def load_logo() -> bytes:
+    """The club's own header logo, shipped with the package so the page needs
+    no network. The file is used as provided; the brand guide forbids redrawing
+    or altering the mark."""
+    global _LOGO_CACHE  # noqa: PLW0603
+    if _LOGO_CACHE is None:
+        _LOGO_CACHE = resources.files("tfcz_audio").joinpath("logo.png").read_bytes()
+    return _LOGO_CACHE
+
+
 def ui_build() -> str:
     """Short fingerprint of the page being served, so an outdated install is
     visible instead of leaving people looking for a section that is not there."""
@@ -237,6 +250,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def _error(self, status: HTTPStatus, message: str) -> None:
         self._send(status, {"ok": False, "error": message})
+
+    def _send_asset(self, body: bytes, content_type: str) -> None:
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _send_html(self, body: bytes) -> None:
         self.send_response(HTTPStatus.OK)
@@ -340,6 +362,9 @@ class Handler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             if self.command in ("GET", "HEAD") and path in ("/", "/ui", "/ui/", "/index.html"):
                 self._send_html(load_ui())
+                return
+            if self.command in ("GET", "HEAD") and path == "/logo.png":
+                self._send_asset(load_logo(), "image/png")
                 return
             if self.command not in ("GET", "HEAD") and not self._same_origin():
                 self._error(HTTPStatus.FORBIDDEN, "cross-site request rejected")

@@ -130,6 +130,12 @@ Everything the command line offers is reachable from that page:
 either since the last start or the full history from the system journal.
 Output is plain text you can copy into a message.
 
+The club's own header logo (`logo-horizontal-white.png` from the brand
+guide) ships with the package and is served from the daemon, used exactly
+as supplied at the documented height of 38.8 px, 35.2 px on a phone. The
+guide forbids redrawing or altering the mark, so nothing here reproduces
+it by other means.
+
 Fonts are not fetched from the internet: the page asks for Nunito Sans and
 falls back to the system's geometric sans if it is not installed locally.
 The background swirl module from the brand guide is a website component

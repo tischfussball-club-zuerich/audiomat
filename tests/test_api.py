@@ -593,3 +593,20 @@ class UiReloadTests(ApiTestCase):
         finally:
             path.write_bytes(original)
             load_ui()
+
+
+class LogoTests(ApiTestCase):
+    def test_the_club_logo_is_served_from_the_package(self):
+        """The brand guide forbids redrawing the mark, so the supplied file is
+        shipped and served as is; the page must not depend on the network."""
+        import urllib.request
+
+        req = urllib.request.Request(self.base + "/logo.png")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            body = resp.read()
+            self.assertEqual(resp.headers["Content-Type"], "image/png")
+        self.assertTrue(body.startswith(b"\x89PNG\r\n\x1a\n"), "a real PNG")
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        self.assertIn('src="logo.png"', page)
+        self.assertNotIn("http://design.tfcz.ch", page, "no network fetch for brand assets")

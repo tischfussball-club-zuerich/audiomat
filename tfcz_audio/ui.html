@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>TFCZ Audio</title>
+<link rel="icon" href="logo.png">
 <style>
   /* ---------------------------------------------------------------- Tokens */
   :root {
@@ -72,11 +73,19 @@
     content: ""; position: absolute; left: 22px; right: 22px; bottom: -1px; height: 3px;
     background: linear-gradient(90deg, var(--blue), var(--gold)); border-radius: 0 0 var(--r-xl) var(--r-xl);
   }
-  .head-in { max-width: 1160px; margin-inline: auto; padding: 12px 22px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
-  .wordmark { flex: none; display: flex; align-items: baseline; gap: 9px; }
-  .wordmark b { font-weight: 900; font-size: 20px; letter-spacing: .02em; color: var(--ink-strong); }
-  .wordmark span { font-weight: 900; font-size: 11px; color: var(--blue); text-transform: uppercase; letter-spacing: .18em; }
+  .head-in { max-width: 1160px; margin-inline: auto; padding: 12px 22px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  /* the logo is used as supplied and never scaled below the documented height;
+     the gap keeps the clearance the brand guide asks for */
+  .brand { flex: none; display: block; line-height: 0; border-radius: var(--r-sm); transition: transform var(--t-fast) var(--bounce); }
+  .brand img { height: 38.8px; width: auto; display: block; }
+  .brand:active { transform: scale(.96); }
+  .brand:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--gold); }
+  .brand-label {
+    flex: none; margin-left: 10px; padding-left: 16px; border-left: 1px solid var(--card-brd);
+    font-weight: 900; font-size: 11px; color: var(--blue); text-transform: uppercase; letter-spacing: .18em;
+  }
   .grow { flex: 1 1 auto; }
+  .site-link { margin-left: 4px; }
 
   /* ----------------------------------------------------------------- Icons */
   .i { width: 17px; height: 17px; display: block; flex: none; }
@@ -113,6 +122,7 @@
   /* --------------------------------------------------------------- Buttons */
   .btn {
     display: inline-flex; align-items: center; gap: 8px; justify-content: center;
+    text-decoration: none;
     font: inherit; font-weight: 700; font-size: 14px; padding: 9px 16px;
     border-radius: var(--btn-radius); border: 1px solid var(--card-brd);
     background: rgba(230, 227, 218, .06); color: var(--ink); cursor: pointer;
@@ -323,7 +333,10 @@
   /* ------------------------------------------------------------ Responsive */
   @media (max-width: 640px) {
     .wrap { padding: 0 16px 32px; }
-    .head-in { padding: 10px 16px; }
+    .head-in { padding: 10px 16px; gap: 10px; }
+    .brand img { height: 35.2px; }
+    .brand-label { margin-left: 6px; padding-left: 10px; }
+    .site-link { display: none; }
     header::after { left: 16px; right: 16px; }
     section.panel { padding: 16px 14px 20px; }
     .grid, .summary, .problem dl { grid-template-columns: 1fr; }
@@ -408,6 +421,9 @@
     <rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/>
     <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>
   </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>
+  </symbol>
   <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M5 12h14"/>
   </symbol>
@@ -421,10 +437,15 @@
 
 <header>
   <div class="head-in">
-    <div class="wordmark"><b>TFCZ</b><span>Audio</span></div>
-    <div class="grow"></div>
-    <button class="btn btn-ghost" id="open-wizard"><svg class="i"><use href="#i-plug"/></svg>Geräte einrichten</button>
+    <a class="brand" href="/" title="TFCZ Audio">
+      <img src="logo.png" alt="Tischfussball Club Zürich" width="136" height="39">
+    </a>
+    <span class="brand-label">Audio</span>
+    <span class="grow"></span>
     <span id="overall" class="pill off">Verbinde …</span>
+    <button class="btn btn-ghost" id="open-wizard"><svg class="i"><use href="#i-plug"/></svg>Geräte einrichten</button>
+    <a class="btn btn-ghost site-link" href="https://tfcz.ch" target="_blank" rel="noopener">
+      <svg class="i"><use href="#i-arrow-left"/></svg>Zur Website</a>
   </div>
 </header>
 
