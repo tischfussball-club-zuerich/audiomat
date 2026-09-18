@@ -495,6 +495,11 @@
 </header>
 
 <div class="wrap">
+  <div id="demo-banner" class="problem warning" hidden style="margin-top:16px">
+    <div class="t"><svg class="i"><use href="#i-alert"/></svg><span class="grow">Vorführbetrieb: hier läuft kein echter Ton</span></div>
+    <dl><dt>Warum</dt><dd>Dieser Router wurde mit <code>--fake</code> gestartet und arbeitet mit erfundenen Geräten.</dd>
+    <dt>Was tun</dt><dd>Für den echten Betrieb ohne <code>--fake</code> starten: <code>systemctl --user restart tfcz-audio</code>.</dd></dl>
+  </div>
   <div id="problems" style="margin-top:16px"></div>
 
   <div id="wizard" hidden>
@@ -2078,7 +2083,11 @@
           lastConfig = serialized; state.config = data.cfg;
           renderLabels(); renderRouteForm(); renderObsMode();
           $('#cfgpath').textContent = data.cfg.path || '(keine)';
-          api('GET', '/health').then(h => { $('#build').textContent = `${h.version} · ${h.build} · ${h.module || ''}`; }).catch(() => {});
+          api('GET', '/health').then(h => {
+            $('#build').textContent = `${h.version} · ${h.build} · ${h.module || ''}`;
+            // a demo daemon routes nothing; without this the page looks perfectly healthy
+            $('#demo-banner').hidden = !h.demo;
+          }).catch(() => {});
           api('GET', '/audio').then(renderAudio).catch(() => {});
           api('GET', '/diagnostics').then(d => { if (d.kind) showDiag(d); }).catch(() => {});
           api('GET', '/update').then(u => { if (u.log || u.problem) showUpdate(u); }).catch(() => {});

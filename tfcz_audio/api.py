@@ -484,9 +484,14 @@ class Handler(BaseHTTPRequestHandler):
         ok = HTTPStatus.OK
 
         if not seg or seg == ["health"]:
+            from .pw import FakeBackend
+
             # cheap liveness probe: no pw-dump, no /proc reads
             return ok, {
                 "ok": not router.last_error,
+                # a service started with --fake looks completely normal on the
+                # page while routing nothing at all; it has to say so
+                "demo": isinstance(router.backend, FakeBackend),
                 "version": __version__,
                 "build": ui_build(),
                 # which copy of the package this process actually loaded: a restart

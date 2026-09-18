@@ -856,3 +856,25 @@ class RequestTimeoutTests(ApiTestCase):
             self.assertIn(path, slow)
         limits = re.search(r"SLOW_PATHS\.test\(path\) \? (\d+) : (\d+)", script)
         self.assertGreater(int(limits.group(1)), int(limits.group(2)))
+
+
+class DemoModeTests(ApiTestCase):
+    """A daemon started with --fake looks perfectly healthy on the page while
+    routing nothing at all. Someone copying a unit file or a command from the
+    docs must not spend an evening on that."""
+
+    def test_health_says_it_is_a_demo(self):
+        status, body = self.call("GET", "/health")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["demo"], "the fake backend is not reported")
+
+    def test_the_page_has_a_banner_for_it(self):
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        self.assertIn('id="demo-banner"', page)
+        self.assertIn("Vorführbetrieb", page)
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        self.assertIn("demo-banner').hidden = !h.demo", script)
