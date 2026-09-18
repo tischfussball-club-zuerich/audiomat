@@ -102,9 +102,13 @@ def start() -> dict[str, Any]:
     if src is None:
         return {"started": False, **current, "problem": problem}
 
-    state_dir().mkdir(parents=True, exist_ok=True)
+    try:
+        state_dir().mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return {"started": False, **current,
+                "problem": f"Der Ordner für die Protokolle lässt sich nicht anlegen: {exc}"}
     script = state_dir() / "update.sh"
-    script.write_text(
+    script_text = (
         "#!/bin/bash\n"
         f'cd {shell_quote(str(src))} || exit 1\n'
         "export GIT_TERMINAL_PROMPT=0\n"  # fail instead of waiting for a password nobody can type
@@ -117,7 +121,13 @@ def start() -> dict[str, Any]:
         "rc=$?\n"
         'echo; echo "' + DONE_MARKER + '$rc)"\n'
     )
-    script.chmod(0o755)
+    try:
+        script.write_text(script_text)
+        script.chmod(0o755)
+    except OSError as exc:
+        # everything else is ready; saying why beats a bare error on the page
+        return {"started": False, **current,
+                "problem": f"Das Aktualisierungsskript lässt sich nicht schreiben: {exc}"}
     try:
         log_path().write_text(f"Aktualisierung gestartet in {src}\n")
     except OSError as exc:

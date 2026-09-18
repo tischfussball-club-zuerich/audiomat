@@ -778,3 +778,50 @@ class DiagnosticsLockTests(unittest.TestCase):
         done = threading.Event()
         threading.Thread(target=lambda: (diagnostics.state(), done.set()), daemon=True).start()
         self.assertTrue(done.wait(timeout=5), "the lock was left taken")
+
+
+class UpdateFailureTests(unittest.TestCase):
+    """The update button must always answer with a sentence, never with a bare
+    error: it is pressed by whoever is running the stream."""
+
+    def test_an_unwritable_state_directory_is_explained(self):
+        import os
+        import stat
+        import tempfile
+        from pathlib import Path as P
+        from unittest import mock
+
+        from tfcz_audio import update
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = P(tmp) / "src"
+            (source / ".git").mkdir(parents=True)
+            (source / "install.sh").write_text("#!/bin/sh\nexit 0\n")
+            state = P(tmp) / "state"
+            state.mkdir()
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": str(state)}), \
+                 mock.patch.object(update, "source_dir", lambda: source):
+                update.state_dir().mkdir(parents=True, exist_ok=True)
+                os.chmod(update.state_dir(), stat.S_IRUSR | stat.S_IXUSR)
+                try:
+                    result = update.start()
+                finally:
+                    os.chmod(update.state_dir(), stat.S_IRWXU)
+        self.assertFalse(result["started"])
+        self.assertIn("nicht", result["problem"].lower())
+        self.assertNotIn("Traceback", result["problem"])
+
+    def test_a_log_full_of_binary_junk_does_not_break_the_reading(self):
+        import os
+        import tempfile
+        from pathlib import Path as P
+        from unittest import mock
+
+        from tfcz_audio import update
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.dict(os.environ, {"XDG_STATE_HOME": tmp}):
+                update.state_dir().mkdir(parents=True, exist_ok=True)
+                update.log_path().write_bytes(b"\xff\xfe junk \x00" * 100)
+                state = update.status()
+        self.assertIn(state["state"], ("running", "stale", "done"))
