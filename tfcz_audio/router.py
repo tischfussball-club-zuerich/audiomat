@@ -67,6 +67,15 @@ class RouterError(Exception):
     pass
 
 
+class GraphBusy(PwError):
+    """Somebody else is reading the graph and no recent picture is at hand.
+
+    A separate error because it means "try again in a moment", not "the audio
+    system is broken" -- the difference between a quiet pass and a red card on
+    the page.
+    """
+
+
 class UnknownRoute(RouterError):
     pass
 
@@ -239,6 +248,7 @@ class Router:
         self._graph_cache: tuple[float, Graph] | None = None
         self._graph_error: tuple[float, str] | None = None  # negative cache: do not re-run pw-dump for every caller while it fails
         self._graph_fetch_lock = threading.Lock()  # concurrent cache misses share one pw-dump
+        self._last_graph: tuple[float, Graph] | None = None  # the most recent picture, whatever the cache says
         self.graph_wait_limit = 1.5  # how long a supervisor pass queues behind someone else's read
         self.stale_graph_limit = 5.0  # older than this, no picture is better than a wrong one
         self._apply_retry_at: dict[str, float] = {}  # per-route backoff after a failed wpctl call
@@ -348,12 +358,14 @@ class Router:
         if wait is None:
             self._graph_fetch_lock.acquire()
         elif not self._graph_fetch_lock.acquire(timeout=wait):
-            cached = self._graph_cache
-            age = self._clock() - cached[0] if cached is not None else None
-            if cached is not None and 0.0 <= age < self.stale_graph_limit:
+            # _last_graph, not _graph_cache: the supervisor clears the cache
+            # before every pass, so the cache is exactly what it does not have
+            last = self._last_graph
+            age = self._clock() - last[0] if last is not None else None
+            if last is not None and 0.0 <= age < self.stale_graph_limit:
                 log.debug("another pw-dump is still running; working from a picture %.1fs old", age)
-                return cached[1]
-            raise PwError("pw-dump is busy (another read is still running)")
+                return last[1]
+            raise GraphBusy("another read of the audio graph is still running")
         try:
             cached = self._graph_cache
             if cached is not None and 0.0 <= self._clock() - cached[0] < self.graph_cache_ttl:
@@ -368,6 +380,7 @@ class Router:
                 raise PwError(self._graph_error[1]) from exc
             self._graph_error = None
             self._graph_cache = (self._clock(), graph)
+            self._last_graph = self._graph_cache  # survives _invalidate_graph()
             return graph
         finally:
             self._graph_fetch_lock.release()
@@ -523,6 +536,12 @@ class Router:
                 self.last_error = ""
                 if self._pw_down_logged:
                     self._pipewire_recovered()
+            except GraphBusy:
+                # somebody else is reading and there is no recent picture. That
+                # is a busy moment, not a broken audio system: skip the pass
+                # quietly instead of putting an error on the page.
+                log.debug("skipping this pass: the audio graph is being read elsewhere")
+                return
             except PwError as exc:
                 if not self._pw_down_logged:
                     log.warning("pw-dump failed: %s (further failures are not logged until it recovers)", exc)

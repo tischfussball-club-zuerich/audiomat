@@ -639,3 +639,53 @@ class GraphContentionTests(unittest.TestCase):
         finally:
             backend.graph = real_graph
             router.stop()
+
+
+class GraphBusyTests(unittest.TestCase):
+    """Being busy is not being broken. A pass that cannot get a look at the
+    graph right now must stay quiet, not put an error on the page."""
+
+    def test_a_busy_moment_is_not_reported_as_a_broken_audio_system(self):
+        import threading
+        import time
+
+        from tfcz_audio.router import Router
+
+        backend = fake_backend()
+        real_graph = backend.graph
+        router = Router(minimal_config(), backend, node_wait=0.02, sleep=lambda s: None)
+        router.start()
+        router.graph_wait_limit = 0.2
+        router.graph_cache_ttl = 0.0
+        try:
+            def slow(*args, **kwargs):
+                time.sleep(2.0)
+                return real_graph(*args, **kwargs)
+
+            backend.graph = slow
+            reader = threading.Thread(target=lambda: router.signal_graph(), daemon=True)
+            reader.start()
+            time.sleep(0.2)
+            router.reconcile()
+            self.assertEqual(router.last_error, "", "a busy read was reported as PipeWire being unreachable")
+            self.assertEqual([p for p in router.problems() if p["level"] == "error"], [])
+            reader.join(timeout=10)
+        finally:
+            backend.graph = real_graph
+            router.stop()
+
+    def test_the_last_picture_survives_the_supervisors_own_invalidation(self):
+        """The supervisor clears the cache before every pass, so its fallback
+        has to come from somewhere else."""
+        from tfcz_audio.router import Router
+
+        router = Router(minimal_config(), fake_backend(), node_wait=0.02, sleep=lambda s: None)
+        router.start()
+        try:
+            router.reconcile()
+            self.assertIsNotNone(router._last_graph)
+            router._invalidate_graph()
+            self.assertIsNone(router._graph_cache)
+            self.assertIsNotNone(router._last_graph, "nothing left to fall back on")
+        finally:
+            router.stop()
