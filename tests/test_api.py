@@ -610,3 +610,18 @@ class LogoTests(ApiTestCase):
             page = resp.read().decode()
         self.assertIn('src="logo.png"', page)
         self.assertNotIn("http://design.tfcz.ch", page, "no network fetch for brand assets")
+
+
+class BrandLineTests(unittest.TestCase):
+    def test_the_signature_line_is_never_a_left_to_right_gradient(self):
+        """The brand guide's window signature is a solid blue line on top and a
+        solid gold one below. Gradients are for backgrounds only, and the
+        approved ones all run between the documented colour pairs."""
+        import re
+        from importlib import resources
+
+        page = resources.files("tfcz_audio").joinpath("ui.html").read_text()
+        horizontal = re.findall(r"linear-gradient\(90deg[^)]*\)[^;]*", page)
+        self.assertEqual(horizontal, [], f"horizontal gradients found: {horizontal}")
+        self.assertIn("header::before { top: 0; background: var(--blue)", page)
+        self.assertIn("header::after { bottom: -1px; background: var(--gold)", page)
