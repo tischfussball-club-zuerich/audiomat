@@ -552,3 +552,19 @@ class SignalGraphTests(ApiTestCase):
         spare = next(n for n in body["nodes"] if n["name"] == "alsa_output.spare")
         self.assertFalse(spare["connected"])
         self.assertEqual(spare["category"], "device")
+
+
+class IconTests(unittest.TestCase):
+    def test_every_icon_used_is_defined(self):
+        """A missing sprite symbol renders as nothing at all, silently."""
+        import re
+        from importlib import resources
+
+        page = resources.files("tfcz_audio").joinpath("ui.html").read_text()
+        defined = set(re.findall(r'symbol id="(i-[a-z0-9-]+)"', page))
+        css_classes = {"i-sm", "i-lg", "i-close", "i-add"}  # size and colour modifiers, not sprite ids
+        used = (set(re.findall(r'href="#(i-[a-z0-9-]+)"', page)) | set(re.findall(r"'(i-[a-z0-9-]+)'", page))) - css_classes
+        missing = sorted(used - defined)
+        self.assertEqual(missing, [], f"icons used but not defined: {missing}")
+        unused = sorted(defined - used)
+        self.assertEqual(unused, [], f"icons defined but never used: {unused}")
