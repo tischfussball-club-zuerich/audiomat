@@ -1442,6 +1442,13 @@ class Router:
                 "Gefunden: " + ", ".join(str(q) for q in quanta),
                 "Das ist normal, wenn Geräte auf eigenen Uhren laufen; PipeWire rechnet dazwischen um.", "")
 
+        formats = self.device_formats(graph, rows)
+        for entry in formats:
+            for finding in entry["findings"]:
+                add(**finding)
+        for finding in self.rate_findings(graph, rows, formats):
+            add(**finding)
+
         return {
             "available": True,
             "window": window,
@@ -1449,11 +1456,133 @@ class Router:
             "historic": historic,
             "rows": rows,
             "findings": findings,
+            "devices": formats,
             "totals": totals,
             "drivers": [{"name": d["name"], "quantum": d["quantum"], "rate": d["rate"], "errors": d["errors"]} for d in drivers],
             "quanta": quanta,
             "buffer": quantum_state(graph),
         }
+
+    # ------------------------------------------------------ Format und Rate
+
+    def device_formats(self, graph: Any = None, rows: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+        """What each configured device actually runs at, and what is wrong with
+        it. A headset in its telephone profile or a stereo device stuck on one
+        channel sounds broken without losing a single packet, so none of this
+        shows up in the dropout measurement."""
+        from .pw import describe_node, is_comms_profile, node_format, parse_top_format
+
+        graph = graph if graph is not None else self._graph_or_empty()
+        by_name = {r["name"]: r for r in (rows or [])}
+        out: list[dict[str, Any]] = []
+        for alias, res in sorted(self.resolved.items()):
+            if not res.present or not res.node:
+                continue
+            node = graph.by_name(res.node)
+            if node is None:
+                continue
+            device = None
+            try:
+                device = graph.devices.get(int(node.props.get("device.id")))
+            except (TypeError, ValueError):
+                device = None
+            fmt = node_format(node, device)
+            # pw-top prints the format that was really negotiated, which beats
+            # the properties whenever both are there
+            measured = parse_top_format(by_name.get(res.node, {}).get("format", ""))
+            channels = measured.get("channels") or fmt["channels"]
+            rate = measured.get("rate") or fmt["rate"]
+            info = describe_node(node, graph)
+            label = info.get("friendly") or res.node
+            findings: list[dict[str, str]] = []
+
+            if is_comms_profile(fmt):
+                findings.append({
+                    "level": "warning",
+                    "title": f"«{label}» läuft im Sprechprofil",
+                    "why": f"Das Gerät steht auf dem Profil «{fmt['profile'] or fmt['profile_name']}». "
+                           "Solche Profile sind fürs Telefonieren gedacht: ein Kanal, stark komprimiert, "
+                           "oft 8 oder 16 kHz.",
+                    "effect": "Der Ton klingt dumpf und zischelt, Sprache wird schwer verständlich.",
+                    "fix": "Auf das volle Profil umstellen: wpctl status zeigt die Karte, "
+                           "pactl list cards die Profile, und in den Ton-Einstellungen von Ubuntu "
+                           "lässt es sich am schnellsten wechseln (nicht «Headset», sondern «Analog Stereo» "
+                           "bzw. das Profil ohne «head unit»).",
+                })
+            elif channels == 1 and info.get("kind") == "output":
+                findings.append({
+                    "level": "warning",
+                    "title": f"«{label}» läuft mit einem Kanal",
+                    "why": f"Der Knoten meldet {channels} Kanal. Kopfhörer sind stereo; ein Kanal deutet auf ein "
+                           "eingeschränktes Profil hin.",
+                    "effect": "Der Ton kommt nur auf einem Ohr an oder wird zusammengemischt.",
+                    "fix": "Profil der Karte auf Stereo stellen (siehe Ton-Einstellungen von Ubuntu).",
+                })
+
+            if rate and rate < 44100:
+                findings.append({
+                    "level": "warning",
+                    "title": f"«{label}» läuft mit {rate} Hz",
+                    "why": "Unter 44100 Hz ist Telefonqualität. Das kommt vom Profil des Geräts, nicht vom Router.",
+                    "effect": "Alles über etwa 8 kHz fehlt: der Ton klingt dumpf, S-Laute verschwinden.",
+                    "fix": "Profil des Geräts wechseln (siehe oben). Danach hier nochmals messen.",
+                })
+
+            out.append({
+                "alias": alias,
+                "node": res.node,
+                "label": label,
+                "kind": info.get("kind", ""),
+                "channels": channels,
+                "rate": rate,
+                "position": fmt["position"],
+                "profile": fmt["profile"] or fmt["profile_name"],
+                "sample_format": measured.get("sample_format", ""),
+                "findings": findings,
+            })
+        return out
+
+    def rate_findings(self, graph: Any = None, rows: list[dict[str, Any]] | None = None,
+                      formats: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
+        """Sample rates that do not match. PipeWire resamples silently, so this
+        never shows up as a lost packet -- it is only audible."""
+        from .pw import quantum_state
+
+        graph = graph if graph is not None else self._graph_or_empty()
+        clock = quantum_state(graph)
+        findings: list[dict[str, str]] = []
+
+        device_rates: dict[int, list[str]] = {}
+        for entry in (formats if formats is not None else self.device_formats(graph, rows)):
+            if entry["rate"]:
+                device_rates.setdefault(entry["rate"], []).append(entry["label"])
+
+        if len(device_rates) > 1:
+            listed = "; ".join(f"{rate} Hz: {', '.join(names)}" for rate, names in sorted(device_rates.items()))
+            findings.append({
+                "level": "warning",
+                "title": "Die Geräte laufen mit verschiedenen Abtastraten",
+                "why": listed,
+                "effect": "PipeWire rechnet dazwischen um. Das geht meistens gut, kostet aber Qualität, und wenn ein "
+                          "Gerät seine Rate nicht sauber hält, knackt es regelmässig.",
+                "fix": "Alles auf 48000 Hz bringen: die Aufnahmekarte kann nur das, also die Headsets ebenfalls darauf "
+                       "festlegen.",
+            })
+
+        clock_rate = clock.get("rate") or 0
+        off = sorted(r for r in device_rates if clock_rate and r != clock_rate)
+        if off:
+            findings.append({
+                "level": "warning",
+                "title": f"Das Tonsystem läuft auf {clock_rate} Hz, Geräte auf {', '.join(str(r) for r in off)} Hz",
+                "why": "Die Uhr von PipeWire und die Geräte sind sich nicht einig, also wird für jedes Gerät "
+                       "umgerechnet.",
+                "effect": "Dauerhaftes Umrechnen klingt je nach Gerät leicht rau und kann bei Drift knacken.",
+                "fix": "In ~/.config/pipewire/pipewire.conf.d/10-rate.conf eintragen: "
+                       "context.properties = { default.clock.rate = 48000, default.clock.allowed-rates = [ 48000 ] } "
+                       "und danach systemctl --user restart pipewire wireplumber.",
+            })
+        return findings
 
     def hardware(self) -> list[dict[str, Any]]:
         graph = self._graph_or_empty()

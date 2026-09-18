@@ -295,6 +295,17 @@
   .report-wrap[hidden] { display: none; }
   .report-wrap > .copy-all { position: absolute; top: 9px; right: 18px; z-index: 1; }
   .report-wrap > pre.report { padding-top: 44px; }
+  .checklist { display: grid; gap: 10px; margin: 10px 0 14px; }
+  .checklist .item {
+    border: 1px solid var(--card-brd); border-radius: var(--r-lg); padding: 10px 12px;
+    background: rgba(230, 227, 218, .04); transition: opacity var(--t-fast) var(--ease);
+  }
+  .checklist .item.done { opacity: .5; }
+  .checklist .item > label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+  .checklist .item .t { font-weight: 800; }
+  .checklist .item dl { margin: 6px 0 0 28px; display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
+  .checklist .item dt { color: var(--blue); font-weight: 700; }
+  .checklist .item dd { margin: 0; color: var(--ink-muted); }
   pre.report {
     background: rgba(5, 17, 28, .7); border: 1px solid var(--card-brd); border-radius: var(--r-lg);
     padding: 12px 14px; max-height: 340px; overflow: auto; margin: 10px 0 0; color: var(--ink);
@@ -634,6 +645,15 @@
             <span class="hint" style="margin:0" id="analysis-state"></span>
           </div>
           <div id="analysis"></div>
+
+          <h3>Von Hand prüfen</h3>
+          <p class="hint">Diese Punkte kann kein Programm messen, sie erklären aber die meisten Fälle von
+            «klingt schlecht, obwohl nichts verloren geht». Der Reihe nach durchgehen; die Haken bleiben in
+            diesem Browser gespeichert. Ausführlich in <code>docs/sound-quality.md</code>.</p>
+          <div class="checklist" id="checklist"></div>
+          <div class="row">
+            <button class="btn btn-sm" id="checklist-reset"><svg class="i i-sm"><use href="#i-refresh"/></svg>Haken zurücksetzen</button>
+          </div>
 
           <h3>Protokoll</h3>
           <p class="hint">Was der Router bisher gemacht hat.</p>
@@ -1287,6 +1307,64 @@
     $('#versions').hidden = e.target.checked;
   });
 
+  // -------------------------------------------- Prüfliste zum Selbstprüfen
+  const CHECKLIST = [
+    { id: 'hdmi-pcm', t: 'Gibt die Spielquelle PCM aus, nicht Dolby/DTS?',
+      why: 'Schickt die Konsole oder der PC über HDMI einen komprimierten Tonstrom, nimmt die Karte ihn als Rauschen auf.',
+      sign: 'Lautes Zischen oder Knattern statt Spielton, von Anfang an und unabhängig von der Lautstärke.',
+      fix: 'In den Toneinstellungen der Quelle auf PCM / Stereo stellen, nicht auf «Automatisch» oder «Bitstream».' },
+    { id: 'mic-level', t: 'Übersteuert ein Mikrofon?',
+      why: 'USB-Headsets haben oft einen Mikrofon-Boost, und die Systemlautstärke kann über 100 % stehen.',
+      sign: 'Kratzige, harte Sprache, die lauter wird statt deutlicher. «Tonweg testen» zeigt einen Spitzenpegel nahe 0 dB.',
+      fix: 'Im Reiter Einrichtung die Aufnahme auf etwa 70 % stellen und in alsamixer -c <Karte> den Mic-Boost ausschalten.' },
+    { id: 'filter-chain', t: 'Läuft eine eigene Filterkette mit?',
+      why: 'Rauschunterdrückung oder Mithören aus ~/.config/pipewire/ liegen vor diesem Router im Tonweg.',
+      sign: 'Blecherne, wässrige Stimme, einzelne Silben fallen weg. Die Messung oben listet solche Knoten.',
+      fix: 'Die Kette zum Test abschalten und nochmals hören. Klingt es sauber, liegt es an ihr.' },
+    { id: 'double-path', t: 'Kommt derselbe Ton zweimal an?',
+      why: 'Eine Verbindung dieses Routers plus ein Monitor-Ausgang oder OBS-Monitoring ergeben zwei Wege zum selben Ziel.',
+      sign: 'Hohl, metallisch, leichtes Echo, im schlimmsten Fall Rückkopplung.',
+      fix: 'Im Signalweg (Vollbild) nachsehen, ob zwei Pfeile am selben Ziel landen, und in OBS «Monitor und Ausgabe» prüfen.' },
+    { id: 'usb-ports', t: 'Hängen die Geräte an eigenen USB-Anschlüssen?',
+      why: 'Zwei Headsets und die Aufnahmekarte an einem Hub teilen sich Bandbreite und Strom.',
+      sign: 'Sporadisches Knacken, das kommt und geht, oft bei Bewegung am Kabel.',
+      fix: 'Headsets direkt an verschiedene Anschlüsse des Rechners stecken. Das braucht die Geräteerkennung ohnehin.' },
+    { id: 'headset-own', t: 'Mischt das Headset selbst mit?',
+      why: 'Manche Headsets haben eigene Rauschunterdrückung, Mithören oder einen Spielmodus in der Hardware.',
+      sign: 'Der Effekt bleibt, auch wenn am Rechner alles neutral steht.',
+      fix: 'Am Headset oder in dessen Software alle Effekte ausschalten und nochmals hören.' },
+    { id: 'room', t: 'Ist es der Raum?',
+      why: 'Offene Mikrofone nehmen den Tisch, die Halle und den anderen Kopfhörer mit auf.',
+      sign: 'Hallig, viel Hintergrund, der andere hört sich selbst leise zurück.',
+      fix: 'Mikrofonarm näher an den Mund, Kopfhörer leiser, und die Mikrofone in Pausen stummschalten.' },
+  ];
+  function checklistState() {
+    try { return JSON.parse(localStorage.getItem('tfcz-checklist') || '{}') || {}; } catch (e) { return {}; }
+  }
+  function saveChecklist(done) {
+    try { localStorage.setItem('tfcz-checklist', JSON.stringify(done)); } catch (e) {}
+  }
+  function renderChecklist() {
+    const done = checklistState();
+    $('#checklist').innerHTML = CHECKLIST.map(c => `
+      <div class="item ${done[c.id] ? 'done' : ''}" data-id="${esc(c.id)}">
+        <label><input type="checkbox" ${done[c.id] ? 'checked' : ''}><span class="t">${esc(c.t)}</span></label>
+        <dl><dt>Warum</dt><dd>${esc(c.why)}</dd>
+            <dt>Zeichen</dt><dd>${esc(c.sign)}</dd>
+            <dt>Was tun</dt><dd>${esc(c.fix)}</dd></dl>
+      </div>`).join('');
+    $('#checklist').querySelectorAll('.item').forEach(item => {
+      item.querySelector('input').addEventListener('change', e => {
+        const state = checklistState();
+        state[item.dataset.id] = e.target.checked;
+        saveChecklist(state);
+        item.classList.toggle('done', e.target.checked);
+      });
+    });
+  }
+  $('#checklist-reset').addEventListener('click', () => { saveChecklist({}); renderChecklist(); });
+  renderChecklist();
+
   // ------------------------------------------ Kopierknopf für jede Ausgabe
   function copyText(text) {
     if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
@@ -1516,7 +1594,8 @@
       Taktgeber: ${(a.drivers || []).map(d => esc(d.name) + ' (' + d.quantum + ')').join(', ') || 'keiner gemeldet'} ·
       Gruppen: ${(a.quanta || []).join(', ') || '–'}</p>`;
     const rows = (a.rows || []).filter(r => r.errors || r.category === 'router' || r.category === 'filter').slice(0, 24);
-    const table = `<div style="overflow-x:auto"><table class="an">
+    // a table of nothing but headers looks like a failure; leave it out instead
+    const table = !rows.length ? '' : `<div style="overflow-x:auto"><table class="an">
       <thead><tr><th>Knoten</th><th>gehört zu</th><th>Puffer</th><th>verloren</th></tr></thead>
       <tbody>${rows.map(r => `<tr class="${r.errors ? 'has-err' : ''}">
         <td>${esc(r.name)}<div class="sub">${esc(r.format || '')}${r.driver ? ' · Taktgeber' : ''}</div></td>
@@ -1524,7 +1603,17 @@
         <td>${r.quantum || '–'}</td>
         <td class="${r.errors ? 'bad' : ''}">${r.errors.toLocaleString('de-CH')}</td>
       </tr>`).join('')}</tbody></table></div>`;
-    box.innerHTML = (a.findings || []).map(problemHtml).join('') + head + table;
+    const devs = a.devices || [];
+    const devTable = !devs.length ? '' : `<p class="hint" style="margin:14px 0 6px">Womit die eingerichteten Geräte laufen:</p>
+      <div style="overflow-x:auto"><table class="an">
+      <thead><tr><th>Gerät</th><th>Profil</th><th>Kanäle</th><th>Abtastrate</th></tr></thead>
+      <tbody>${devs.map(d => `<tr class="${d.findings && d.findings.length ? 'has-err' : ''}">
+        <td>${esc(d.label)}<div class="sub">${esc(d.node)}</div></td>
+        <td>${esc(d.profile || '–')}</td>
+        <td>${d.channels || '–'}</td>
+        <td class="${d.rate && d.rate < 44100 ? 'bad' : ''}">${d.rate ? d.rate.toLocaleString('de-CH') + ' Hz' : '–'}</td>
+      </tr>`).join('')}</tbody></table></div>`;
+    box.innerHTML = (a.findings || []).map(problemHtml).join('') + head + table + devTable;
   }
   function problemHtml(p) {
     return `<div class="problem ${esc(p.level)}"><div class="t">${svg(LEVEL_ICON[p.level] || 'i-info')}<span class="grow">${esc(p.title)}</span></div>

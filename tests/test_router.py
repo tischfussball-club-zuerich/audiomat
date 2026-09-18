@@ -220,3 +220,76 @@ class LatencyRequestTests(unittest.TestCase):
         parse(tomllib.loads('[audio]\nlatency = "512/48000"\n' + MINIMAL))
         with self.assertRaises(ConfigError):
             parse(tomllib.loads('[audio]\nlatency = "low"\n' + MINIMAL))
+
+
+class DeviceFormatTests(unittest.TestCase):
+    """Bad sound that loses no packets: a telephony profile or a rate nobody
+    else runs at. Neither shows up in the dropout measurement."""
+
+    def _router(self):
+        cfg = minimal_config()
+        backend = fake_backend()
+        router = Router(cfg, backend, node_wait=0.1, sleep=lambda s: None)
+        router.start()
+        return router, backend
+
+    def test_a_telephony_profile_is_reported(self):
+        router, backend = self._router()
+        try:
+            graph = backend.graph()
+            node = graph.by_name(router.resolved["a_out"].node)
+            node.props.update({"device.profile.name": "headset-head-unit",
+                               "device.profile.description": "Headset Head Unit",
+                               "audio.channels": 1, "node.rate": "1/16000"})
+            entries = router.device_formats(graph)
+            entry = next(e for e in entries if e["alias"] == "a_out")
+            titles = [f["title"] for f in entry["findings"]]
+            self.assertTrue(any("Sprechprofil" in t for t in titles), titles)
+            self.assertTrue(any("16000 Hz" in t for t in titles), titles)
+        finally:
+            router.stop()
+
+    def test_a_normal_device_produces_no_finding(self):
+        router, backend = self._router()
+        try:
+            graph = backend.graph()
+            for res in router.resolved.values():
+                node = graph.by_name(res.node) if res.node else None
+                if node is not None:
+                    node.props.update({"device.profile.name": "analog-stereo",
+                                       "audio.channels": 2, "node.rate": "1/48000"})
+            entries = router.device_formats(graph)
+            self.assertTrue(entries)
+            self.assertEqual([f for e in entries for f in e["findings"]], [])
+            self.assertEqual(router.rate_findings(graph), [])
+        finally:
+            router.stop()
+
+    def test_mixed_sample_rates_are_reported(self):
+        router, backend = self._router()
+        try:
+            graph = backend.graph()
+            rates = ["1/48000", "1/44100"]
+            for i, res in enumerate(sorted(router.resolved.values(), key=lambda r: r.node or "")):
+                node = graph.by_name(res.node) if res.node else None
+                if node is not None:
+                    node.props.update({"audio.channels": 2, "node.rate": rates[i % 2]})
+            titles = [f["title"] for f in router.rate_findings(graph)]
+            self.assertTrue(any("verschiedenen Abtastraten" in t for t in titles), titles)
+        finally:
+            router.stop()
+
+    def test_the_measured_format_wins_over_the_properties(self):
+        """pw-top prints what was really negotiated."""
+        router, backend = self._router()
+        try:
+            graph = backend.graph()
+            alias = "a_out"
+            name = router.resolved[alias].node
+            graph.by_name(name).props.update({"audio.channels": 2, "node.rate": "1/48000"})
+            rows = [{"name": name, "format": "S16LE 1 16000"}]
+            entry = next(e for e in router.device_formats(graph, rows) if e["alias"] == alias)
+            self.assertEqual(entry["rate"], 16000)
+            self.assertEqual(entry["channels"], 1)
+        finally:
+            router.stop()

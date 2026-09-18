@@ -694,3 +694,23 @@ class WizardModalTests(ApiTestCase):
         self.assertIn("closeWizard", script)
         # Esc must not close the dialog from under an open dropdown
         self.assertIn('document.querySelector(\'.csel[data-open="1"]\')', script)
+
+
+class ChecklistTests(ApiTestCase):
+    def test_the_manual_checklist_is_on_the_diagnostics_tab(self):
+        """What no program can measure still has to be walked through, so it is
+        a list with tick boxes rather than a paragraph in the docs."""
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        panels = dict(re.findall(r'<section class="tabpanel" data-tab="([a-z]+)"[^>]*>(.*?)</section>', page, re.S))
+        self.assertIn('id="checklist"', panels["diag"])
+        script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
+        ids = re.findall(r"\{ id: '([a-z-]+)'", script)
+        for item in ("hdmi-pcm", "mic-level", "filter-chain", "double-path", "usb-ports"):
+            self.assertIn(item, ids)
+        # ticks survive a reload but must never break the page when storage is off
+        self.assertIn("localStorage.getItem('tfcz-checklist')", script)
+        self.assertIn("catch (e) { return {}; }", script)

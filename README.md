@@ -113,7 +113,9 @@ who do not care about audio plumbing:
     **Vollbild** opens it over the whole window with zoom controls; on a
     real setup the graph is far wider than the panel. Plus and minus zoom,
     `einpassen` fits it, and Escape closes.
-  * **Diagnose**: the checks, the audio-system analysis and the log.
+  * **Diagnose**: the checks, the audio-system analysis (including what
+    profile, how many channels and which sample rate each device really
+    runs at), the by-hand checklist for bad sound, and the log.
   * **System**: API token, config path, which build is running, and an
     **Aktualisieren** button that runs `git pull` and `./install.sh` and
     shows their output. It only works from a git checkout, and it runs as
@@ -463,7 +465,11 @@ prints the fix for each failing line.
   timing: try a bigger buffer live with
   `pw-metadata -n settings 0 clock.force-quantum 2048`, watch the ERR
   column in `pw-top`, and confirm realtime priority with
-  `tfcz-audio doctor`.
+  `tfcz-audio doctor`. When nothing is being lost and it still sounds
+  wrong, the cause is a profile, a sample rate, a compressed HDMI stream, a
+  clipping microphone, a filter chain, a doubled path or the room:
+  [docs/sound-quality.md](docs/sound-quality.md) and the checklist under
+  **Diagnose → Von Hand prüfen** walk through all of them.
 * **A connection shows "linked to the wrong device"**: the daemon muted it
   on purpose. The audio system attached the stream to something other
   than the chosen device, usually because the device was missing and the

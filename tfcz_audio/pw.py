@@ -184,6 +184,57 @@ def is_hdmi_capture(node: Node, device: Device | None) -> bool:
     return node.media_class.startswith("Audio/Source") and ("hws" in text or "capture" in text or "hdmi" in text)
 
 
+# profile names that mean "this device is in a telephone mode": mono, heavily
+# compressed, often 8 or 16 kHz. Speech through them is dull and hissy.
+COMMS_PROFILE_HINTS = ("headset", "headset_head_unit", "hfp", "hsp", "handsfree", "chat", "communication", "voice")
+
+TOP_FORMAT = re.compile(r"(?P<format>[A-Za-z][A-Za-z0-9_]*)\s+(?P<channels>\d+)\s+(?P<rate>\d+)")
+
+
+def parse_top_format(text: str) -> dict[str, Any]:
+    """pw-top prints the negotiated format as e.g. ``S16LE 2 48000``."""
+    m = TOP_FORMAT.search(text or "")
+    if not m:
+        return {}
+    return {"sample_format": m.group("format"), "channels": int(m.group("channels")), "rate": int(m.group("rate"))}
+
+
+def node_format(node: Node, device: Device | None = None) -> dict[str, Any]:
+    """Channels, rate and card profile of a device node, as far as PipeWire
+    tells us. Every field is optional: which properties a node carries depends
+    on the driver and on the WirePlumber version."""
+    props = node.props
+    out: dict[str, Any] = {"channels": 0, "rate": 0, "position": "", "profile": "", "profile_name": ""}
+    try:
+        out["channels"] = int(props.get("audio.channels") or 0)
+    except (TypeError, ValueError):
+        pass
+    for key in ("audio.rate", "node.rate", "api.alsa.rate"):
+        value = props.get(key)
+        if value is None:
+            continue
+        # node.rate is a fraction like "1/48000"
+        text = str(value)
+        digits = text.rsplit("/", 1)[-1]
+        try:
+            out["rate"] = int(float(digits))
+        except (TypeError, ValueError):
+            continue
+        if out["rate"]:
+            break
+    out["position"] = str(props.get("audio.position") or "")
+    for source in (props, device.props if device else {}):
+        out["profile"] = out["profile"] or str(source.get("device.profile.description") or "")
+        out["profile_name"] = out["profile_name"] or str(source.get("device.profile.name") or "")
+    return out
+
+
+def is_comms_profile(fmt: dict[str, Any]) -> bool:
+    """A profile meant for telephony rather than for listening."""
+    text = f"{fmt.get('profile_name', '')} {fmt.get('profile', '')}".lower()
+    return any(hint in text for hint in COMMS_PROFILE_HINTS)
+
+
 def looks_like_speakers(node: Node, device: Device | None) -> bool:
     """Output that is probably a loudspeaker rather than a headset: HDMI/monitor
     audio or the built-in card. Routing a microphone there risks echo."""
@@ -700,11 +751,17 @@ class FakeBackend:
         self._next_id += 1
         self._graph.devices[dev.id] = dev
         props = {"device.id": dev.id, "device.api": "alsa", **extra}
+        # a believable format, so the demo shows what the real machine shows:
+        # USB headset microphones are mono, everything else stereo, all at 48 kHz
+        fmt = {"node.rate": "1/48000", "device.profile.name": "analog-stereo",
+               "device.profile.description": "Analog Stereo"}
         if mic:
-            n = self.add_device(mic, "Audio/Source", f"{description} Mono", props)
+            n = self.add_device(mic, "Audio/Source", f"{description} Mono",
+                                {**props, **fmt, "audio.channels": 1 if bus == "usb" else 2})
             n.volume, n.mute = 1.0, False
         if out:
-            n = self.add_device(out, "Audio/Sink", f"{description} Analog Stereo", props)
+            n = self.add_device(out, "Audio/Sink", f"{description} Analog Stereo",
+                                {**props, **fmt, "audio.channels": 2})
             n.volume, n.mute = 1.0, False
         return dev
 
