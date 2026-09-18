@@ -649,6 +649,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0
 
 
+# ----------------------------------------------------------------- versions
+
+
+def cmd_versions(args: argparse.Namespace) -> int:
+    """Everything that has a version and can explain odd behaviour, in one
+    block that can be pasted into a bug report."""
+    from . import versions
+
+    if getattr(args, "json", False):
+        print(json.dumps(versions.collect(fresh=True), indent=2, ensure_ascii=False))
+    else:
+        print(versions.as_text(versions.collect(fresh=True)))
+    return 0
+
+
 # -------------------------------------------------------------------- check
 
 
@@ -875,6 +890,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--seconds", type=float, default=2.0, help="how long to record per device")
     s.add_argument("--fake", action="store_true", help=argparse.SUPPRESS)
     s.set_defaults(func=cmd_selftest)
+
+    s = sub.add_parser("versions", help="show the versions of every tool this router depends on")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_versions)
 
     s = sub.add_parser("devices", help="list PipeWire audio sources and sinks")
     s.add_argument("--json", action="store_true")

@@ -441,6 +441,11 @@ class Handler(BaseHTTPRequestHandler):
 
             result = update.start()
             return (ok if result["started"] else HTTPStatus.CONFLICT), {"ok": result["started"], **result}
+        if seg == ["versions"] and read:
+            from . import versions
+
+            fresh = str(params.get("fresh", "")).lower() in TRUE_WORDS
+            return ok, {"ok": True, **versions.collect(fresh)}
         if seg == ["diagnostics"] and read:
             return ok, {"ok": True, **self.server.diagnostics.state()}
         if seg == ["diagnostics"] and write:

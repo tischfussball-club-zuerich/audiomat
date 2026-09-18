@@ -281,6 +281,17 @@
   .dot.ok { background: #6fbf8e; }
   .dot.bad { background: var(--red); }
 
+  .vgroup { margin-top: 14px; }
+  .vgroup > .eyebrow { margin-bottom: 8px; }
+  /* the columns may shrink: a long path or package list has to wrap inside the
+     card instead of pushing the table out of it */
+  .vtable { display: grid; grid-template-columns: max-content minmax(0, max-content) minmax(0, 1fr); gap: 6px 16px; align-items: baseline; }
+  .vtable > span { font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+  .vtable .n { color: var(--ink-muted); }
+  .vtable .v { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-weight: 700; }
+  .vtable .d { color: var(--ink-muted); font-size: 12px; }
+  .vtable .v.missing, .vtable .v.bad { color: #f0a6a2; }
+  .vtable .d.bad { color: #f0a6a2; }
   pre.report {
     background: rgba(5, 17, 28, .7); border: 1px solid var(--card-brd); border-radius: var(--r-lg);
     padding: 12px 14px; max-height: 340px; overflow: auto; margin: 10px 0 0; color: var(--ink);
@@ -332,6 +343,8 @@
     .brand img { height: 35.2px; }
     section.panel { padding: 16px 14px 20px; }
     .grid, .summary, .problem dl { grid-template-columns: 1fr; }
+    .vtable { grid-template-columns: 1fr; gap: 2px; }
+    .vtable .n { margin-top: 8px; }
     .csel { min-width: 0; width: 100%; }
     .choice { flex-wrap: wrap; }
     .choice .meter { flex-basis: 100%; max-width: none; }
@@ -412,6 +425,9 @@
   <symbol id="i-network" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/>
     <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/>
+  </symbol>
+  <symbol id="i-key" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m15.5 7.5 3 3L22 7l-3-3"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>
   </symbol>
   <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M5 12h14"/>
@@ -495,6 +511,7 @@
           <button class="tab" role="tab" data-tab="wiring" aria-selected="false"><svg class="i"><use href="#i-network"/></svg>Signalweg</button>
           <button class="tab" role="tab" data-tab="diag" aria-selected="false"><svg class="i"><use href="#i-activity"/></svg>Diagnose</button>
           <button class="tab" role="tab" data-tab="system" aria-selected="false"><svg class="i"><use href="#i-file"/></svg>System</button>
+          <button class="tab" role="tab" data-tab="api" aria-selected="false"><svg class="i"><use href="#i-key"/></svg>API</button>
         </div>
 
         <section class="tabpanel" data-tab="setup" role="tabpanel">
@@ -609,13 +626,7 @@
         </section>
 
         <section class="tabpanel" data-tab="system" role="tabpanel" hidden>
-          <p class="hint">Zugang zu diesem Router und welche Fassung gerade läuft.</p>
-
-          <h3>Zugang</h3>
-          <div class="row">
-            <label class="check" for="token">API-Token (nur nötig, wenn in der Einstellungsdatei eines gesetzt ist)</label>
-            <input type="password" id="token" placeholder="Token" autocomplete="off">
-          </div>
+          <p class="hint">Welche Fassung gerade läuft und worauf sie aufsetzt.</p>
 
           <h3>Fassung</h3>
           <div class="grid" style="grid-template-columns:max-content 1fr">
@@ -634,6 +645,42 @@
             <span class="hint" style="margin:0" id="update-state"></span>
           </div>
           <pre class="report" id="update-log" hidden></pre>
+
+          <h3>Werkzeuge und Versionen</h3>
+          <p class="hint">Alles, worauf dieser Router aufsetzt. Stimmt etwas nicht, steht die Ursache oft hier:
+            ein fehlendes Werkzeug, ein zu altes PipeWire oder ein Aufnahmetreiber, der nach einem Kernel-Update
+            nicht mehr gebaut wurde. Diese Liste gehört in jede Fehlermeldung.</p>
+          <div class="row">
+            <button class="btn btn-sm" id="vers-refresh"><svg class="i i-sm"><use href="#i-refresh"/></svg>Neu einlesen</button>
+            <label class="check"><input type="checkbox" id="vers-text"> als Text zum Kopieren</label>
+            <span class="hint" style="margin:0" id="vers-state"></span>
+          </div>
+          <div id="versions"></div>
+          <pre class="report" id="versions-text" hidden></pre>
+        </section>
+
+        <section class="tabpanel" data-tab="api" role="tabpanel" hidden>
+          <p class="hint">Diesen Router kann auch ein anderes Programm steuern, etwa der Advanced Scene Switcher
+            in OBS. Er spricht HTTP und antwortet mit JSON.</p>
+
+          <h3>Zugang</h3>
+          <div class="row">
+            <label class="check" for="token">API-Token (nur nötig, wenn in der Einstellungsdatei eines gesetzt ist)</label>
+            <input type="password" id="token" placeholder="Token" autocomplete="off">
+          </div>
+          <p class="hint">Das Token bleibt nur in diesem Browser. Ist in der Einstellungsdatei keines gesetzt,
+            ist das Feld hier ohne Bedeutung.</p>
+
+          <h3>Adresse</h3>
+          <div class="grid" style="grid-template-columns:max-content 1fr">
+            <span>Basis</span><code id="api-base">–</code>
+            <span>Lautstärke setzen</span><code>POST /routes/&lt;route&gt;/volume/0.4</code>
+            <span>Route ein/aus</span><code>POST /routes/&lt;route&gt;/mute/true</code>
+            <span>Voreinstellung</span><code>POST /presets/&lt;name&gt;</code>
+            <span>Zustand lesen</span><code>GET /status</code>
+          </div>
+          <p class="hint" style="margin-top:8px">Alles Weitere steht in <code>docs/advanced-scene-switcher.md</code>.
+            Die Namen der Routen und Voreinstellungen stehen im Reiter <b>Einrichtung</b>.</p>
         </section>
       </div>
     </details>
@@ -662,7 +709,8 @@
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
   const state = { status: null, config: null, devices: [], hardware: [], levels: {}, levelsAvailable: undefined,
-                  dragging: new Set(), pending: new Map(), selected: null, failures: 0, wiz: null, audio: null };
+                  dragging: new Set(), pending: new Map(), selected: null, failures: 0, wiz: null, audio: null,
+                  versionsLoaded: false };
   const ICON = { mic: 'i-mic', out: 'i-headphones', game: 'i-gamepad', obs: 'i-tower', speaker: 'i-speaker' };
   const svg = (name, cls) => `<svg class="i ${cls || ''}"><use href="#${name}"/></svg>`;
 
@@ -1016,6 +1064,8 @@
     document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
     document.querySelectorAll('.tabpanel').forEach(p => { p.hidden = p.dataset.tab !== name; });
     try { localStorage.setItem('tfcz-tab', name); } catch (e) {}
+    if (name === 'system' && !state.versionsLoaded) loadVersions(false);
+    if (name === 'api') $('#api-base').textContent = location.origin;
   }
   document.querySelectorAll('.tab').forEach((tab, idx, all) => {
     tab.addEventListener('click', () => showTab(tab.dataset.tab));
@@ -1028,7 +1078,7 @@
   });
   const TAB_ALIASES = { setup: 'setup', einrichtung: 'setup', sound: 'sound', klang: 'sound',
                         wiring: 'wiring', signalweg: 'wiring', verkabelung: 'wiring',
-                        diag: 'diag', diagnose: 'diag', system: 'system' };
+                        diag: 'diag', diagnose: 'diag', system: 'system', api: 'api' };
   function openTabFromHash() {
     const want = TAB_ALIASES[(location.hash || '').replace('#', '').toLowerCase()];
     if (!want) return false;
@@ -1204,6 +1254,36 @@
   const startDiag = kind => api('POST', '/diagnostics', { kind }).then(showDiag, fail);
   $('#run-doctor').addEventListener('click', () => startDiag('doctor'));
   $('#run-selftest').addEventListener('click', () => startDiag('selftest'));
+
+  // ------------------------------------------------- Werkzeuge und Versionen
+  function renderVersions(d) {
+    const groups = d.groups || [];
+    $('#versions').innerHTML = groups.map(g => `
+      <div class="vgroup">
+        <span class="eyebrow">${esc(g.title)}</span>
+        <div class="vtable">${(g.items || []).map(i => `
+          <span class="n ${esc(i.level)}">${esc(i.name)}</span>
+          <span class="v ${esc(i.level)}">${esc(i.version)}</span>
+          <span class="d ${esc(i.level)}">${esc(i.detail || '')}</span>`).join('')}</div>
+      </div>`).join('');
+    const text = groups.map(g => `=== ${g.title}\n` + (g.items || []).map(i =>
+      `  ${i.name}: ${i.version}${i.detail ? '   (' + i.detail + ')' : ''}`).join('\n')).join('\n\n');
+    $('#versions-text').textContent = `tfcz-audio Versionen (${d.host || ''})\n\n` + text;
+    $('#vers-state').textContent = '';
+  }
+  function loadVersions(fresh) {
+    state.versionsLoaded = true;
+    $('#vers-state').innerHTML = '<span class="spin"></span> lese …';
+    return api('GET', '/versions' + (fresh ? '?fresh=1' : '')).then(renderVersions, e => {
+      $('#vers-state').textContent = '';
+      $('#versions').innerHTML = `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Versionen nicht lesbar</span></div><dl><dd>${esc(e.message)}</dd></dl></div>`;
+    });
+  }
+  $('#vers-refresh').addEventListener('click', () => loadVersions(true));
+  $('#vers-text').addEventListener('change', e => {
+    $('#versions-text').hidden = !e.target.checked;
+    $('#versions').hidden = e.target.checked;
+  });
 
   let logTimer = null;
   function loadLog() {

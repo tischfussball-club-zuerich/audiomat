@@ -443,11 +443,11 @@ class AdvancedTabsTests(ApiTestCase):
 
         with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
             page = resp.read().decode()
-        for tab in ("setup", "sound", "diag", "system"):
+        for tab in ("setup", "sound", "diag", "system", "api"):
             self.assertIn(f'data-tab="{tab}"', page)
         for control in ("labels", "devices", "r-from-mount", "save-defaults", "quantum-mount",
                         "dropout-check", "run-doctor", "run-selftest", "run-analysis",
-                        "log-level-mount", "token", "cfgpath", "build"):
+                        "log-level-mount", "token", "cfgpath", "build", "versions", "vers-refresh"):
             self.assertIn(f'id="{control}"', page, control)
         script = re.search(r"<script>(.*)</script>", page, re.S).group(1)
         referenced = set(re.findall(r"\$\('#([a-zA-Z0-9_-]+)'\)", script))
@@ -625,3 +625,27 @@ class BrandLineTests(unittest.TestCase):
         self.assertEqual(horizontal, [], f"horizontal gradients found: {horizontal}")
         self.assertIn("header::before { top: 0; background: var(--blue)", page)
         self.assertIn("header::after { bottom: -1px; background: var(--gold)", page)
+
+
+class VersionsApiTests(ApiTestCase):
+    def test_the_endpoint_lists_the_tools_this_router_depends_on(self):
+        status, body = self.call("GET", "/versions")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        titles = [g["title"] for g in body["groups"]]
+        self.assertIn("Werkzeuge", titles)
+        names = [i["name"] for g in body["groups"] for i in g["items"]]
+        for tool in ("tfcz-audio", "PipeWire", "WirePlumber", "pw-loopback", "wpctl"):
+            self.assertIn(tool, names)
+
+    def test_the_token_field_sits_in_the_api_tab(self):
+        """It is about talking to this router, not about the machine it runs on."""
+        import re
+        import urllib.request
+
+        with urllib.request.urlopen(self.base + "/", timeout=5) as resp:
+            page = resp.read().decode()
+        panels = dict(re.findall(r'<section class="tabpanel" data-tab="([a-z]+)"[^>]*>(.*?)</section>', page, re.S))
+        self.assertIn('id="token"', panels["api"])
+        self.assertNotIn('id="token"', panels["system"])
+        self.assertIn('id="versions"', panels["system"])

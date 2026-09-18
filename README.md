@@ -121,8 +121,16 @@ who do not care about audio plumbing:
     `listen = "127.0.0.1"` means local users only.
 
   Each tab is linkable: `/#einrichtung`, `/#klang`, `/#diagnose`,
-  `/#system` open the page with that tab in front, which is handy when
-  pointing someone at a specific control.
+  `/#system`, `/#api` open the page with that tab in front, which is handy
+  when pointing someone at a specific control.
+
+  **System** also lists every tool the router builds on with its version:
+  PipeWire and WirePlumber as they actually answer, the ALSA and kernel
+  version, the `hws` capture driver, where each helper binary lives and
+  which packages are installed. When something behaves oddly, that list is
+  usually where the reason shows up, and it can be switched to plain text
+  for pasting into a message. **API** holds the token field and the
+  addresses an external tool talks to.
 
 Everything the command line offers is reachable from that page:
 **Check the system** runs `doctor`, **Test the sound path** runs
@@ -288,6 +296,7 @@ tfcz-audio reset                        back to config values
 tfcz-audio devices [-p]                 PipeWire audio nodes (+ ALSA card props)
 tfcz-audio check                        validate config, report missing devices
 tfcz-audio selftest [--seconds N]       record from every device and show what arrives
+tfcz-audio versions [--json]            versions of every tool this router depends on
 tfcz-audio run [--dry-run]              run the daemon in the foreground
 ```
 
@@ -322,6 +331,7 @@ client can drive it.
 | GET | `/config` | current config as JSON (token hidden) |
 | GET / PUT | `/audio` | read or change the system-wide buffer size (`quantum` in frames, 0 = automatic, `persist` to keep it) |
 | POST | `/audio/dropouts` | measure dropouts with pw-top |
+| GET | `/versions` | versions of PipeWire, WirePlumber, the tools, the capture driver and the packages (`fresh=1` skips the 20 s cache) |
 | GET / POST | `/diagnostics` | read the last report, or start one (`kind`: `doctor` or `selftest`) |
 | GET | `/logs` | recent log lines (`level`, `limit`, `source`: `memory` or `journal`) |
 | PUT | `/config/devices` | replace the alias -> node mapping, save, hot-reload |
