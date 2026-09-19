@@ -1338,6 +1338,9 @@ class Router:
                     "Es wird am USB-Anschluss erkannt, weil gleiche Geräte keine Seriennummer melden.",
                     "In einem anderen Anschluss gilt es als fehlend.", "Beschrifte Stecker und Anschluss.")
 
+        for finding in self.usb_findings(graph):
+            add(**finding)
+
         if self.last_error and not any(p["level"] == "error" for p in out):
             add("warning", "daemon", "daemon", self.last_error)
         order = {"error": 0, "warning": 1, "info": 2}
@@ -1891,6 +1894,60 @@ class Router:
                        "context.properties = { default.clock.rate = 48000, default.clock.allowed-rates = [ 48000 ] } "
                        "und danach systemctl --user restart pipewire wireplumber.",
             })
+        return findings
+
+    def usb_findings(self, graph: Graph | None = None) -> list[dict[str, Any]]:
+        """Two USB audio devices hanging off the same hub.
+
+        Measured on the studio machine, and it cost weeks: both headsets are
+        full-speed devices, and behind one hub they share its transaction
+        translator. The game sound and the other person's voice came out with
+        noise that grew with the signal. Moving one headset to a port on
+        another controller removed it completely.
+
+        No installer can fix this -- somebody has to move a plug -- so the least
+        the tool can do is say which two devices, and why.
+        """
+        from .pw import shares_usb_path, usb_topology
+
+        graph = graph if graph is not None else self._graph_or_empty()
+        findings: list[dict[str, Any]] = []
+        # one entry per physical device, not per alias: a headset is two nodes
+        devices: dict[str, dict[str, Any]] = {}
+        for alias in sorted(self.cfg.devices):
+            res = self.resolved.get(alias)
+            node = graph.by_name(res.node) if res and res.node else None
+            if node is None:
+                continue
+            info = describe_node(node, graph)
+            path = info.get("bus_path") or ""
+            if not usb_topology(path)["usb"]:
+                continue
+            entry = devices.setdefault(path, {"aliases": [], "label": ""})
+            entry["aliases"].append(alias)
+            base = alias.rpartition("_")[0] if alias.rpartition("_")[2] in ("mic", "out") else alias
+            entry["label"] = entry["label"] or human(self.cfg, base)
+
+        paths = sorted(devices)
+        for i, first in enumerate(paths):
+            for second in paths[i + 1:]:
+                shared = shares_usb_path(first, second)
+                if shared != "hub":
+                    continue
+                one, two = devices[first]["label"], devices[second]["label"]
+                findings.append({
+                    "level": "warning",
+                    "code": "usb_shared_hub",
+                    "what": devices[first]["aliases"][0],
+                    "title": f"«{one}» und «{two}» hängen am selben USB-Hub",
+                    "why": f"Beide sind über {usb_topology(first)['hub'].split('-usb-')[0]} am selben Hub "
+                           f"angeschlossen ({usb_topology(first)['port']} und {usb_topology(second)['port']}).",
+                    "effect": "Zwei USB-Audiogeräte an einem Hub teilen sich dessen Übersetzer für langsame Geräte. "
+                              "Das klingt nach Rauschen, das mit dem Signal lauter wird — genau der Fehler, der im "
+                              "Studio wochenlang gesucht wurde.",
+                    "fix": "Steck eines der beiden direkt an den Rechner, an einen Anschluss eines anderen "
+                           "Controllers (nicht in denselben Hub oder Verteiler). Danach hier nochmals nachsehen.",
+                })
         return findings
 
     def output_targets(self, graph: Graph | None = None) -> list[dict[str, Any]]:

@@ -148,12 +148,21 @@ nodes; names containing `clean` or `sidetone` give them away.
 
 ### USB
 
-Two headsets and the capture card on one hub share bandwidth and power.
+**Checked automatically now.** Two USB headsets behind one hub share its
+transaction translator, because they are full-speed devices. On the studio
+machine that produced noise on the game sound and on the other person's
+voice that grew with the signal, and it took weeks to find. Moving one
+headset to a port on another controller removed it completely.
 
-*Sounds like*: sporadic crackling that comes and goes.
+The page reports it by name when two audio devices end up on one hub, and
+the setup wizard says so while the second headset is still being chosen.
 
-*Fix*: plug the headsets into separate ports of the machine directly —
-the device identification needs that anyway.
+*Sounds like*: noise that rises and falls with the signal, not silence
+between words; also sporadic crackling.
+
+*Fix*: plug one of them directly into the machine, on a different
+controller — not into the same hub or extension. The device
+identification prefers separate ports anyway.
 
 ### The headset does its own processing
 

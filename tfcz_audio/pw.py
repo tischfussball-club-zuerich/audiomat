@@ -331,6 +331,9 @@ def physical_devices(graph: Graph) -> list[dict[str, Any]]:
         g["speakers"] = g["speakers"] or info["speakers"]
         g["port"] = info["port"]
         g["serial"] = info["serial"]
+        # which hub it hangs off, so the setup can warn before two audio devices
+        # end up sharing one (see usb_topology)
+        g["hub"] = usb_topology(info["bus_path"])["hub"]
         (g["inputs"] if info["kind"] == "input" else g["outputs"] if info["kind"] == "output" else []).append(info)
     out = list(groups.values())
     for g in out:
@@ -1008,6 +1011,51 @@ def port_label(bus_path: str) -> str:
     if bus_path.startswith("pci-"):
         return "interner Steckplatz " + bus_path[4:]
     return bus_path
+
+
+def usb_topology(bus_path: str) -> dict[str, Any]:
+    """Where a USB device hangs: which controller, through which hub, on which
+    port.
+
+    'pci-0000:09:00.0-usb-0:1.2:1.0' -> controller pci-0000:09:00.0, bus 0,
+    ports [1, 2], i.e. port 2 of a hub that sits in root port 1. A single
+    number means the device is plugged into the machine directly.
+    """
+    out: dict[str, Any] = {"usb": False, "controller": "", "bus": "", "ports": [],
+                           "hub": "", "port": "", "through_hub": False}
+    if not bus_path or "-usb-" not in bus_path:
+        return out
+    head, tail = bus_path.split("-usb-", 1)
+    parts = tail.split(":")
+    ports = parts[1].split(".") if len(parts) >= 2 and parts[1] else []
+    out.update({
+        "usb": True,
+        "controller": head,
+        "bus": parts[0] if parts else "",
+        "ports": ports,
+        "port": ".".join(ports),
+        "through_hub": len(ports) > 1,
+        # everything but the last step: the hub the device is plugged into
+        "hub": f"{head}-usb-{parts[0]}:{'.'.join(ports[:-1])}" if len(ports) > 1 else "",
+    })
+    return out
+
+
+def shares_usb_path(first: str, second: str) -> str:
+    """"hub", "controller" or "" for two bus paths.
+
+    Two full-speed devices behind one hub share its transaction translator.
+    Measured on the studio machine: two USB headsets on one hub produced noise
+    that grew with the signal, and moving one to its own controller removed it.
+    """
+    a, b = usb_topology(first), usb_topology(second)
+    if not (a["usb"] and b["usb"]) or first == second:
+        return ""
+    if a["hub"] and a["hub"] == b["hub"]:
+        return "hub"
+    if a["controller"] == b["controller"]:
+        return "controller"
+    return ""
 
 
 def identity_for(node: Node, graph: Graph) -> dict[str, Any]:

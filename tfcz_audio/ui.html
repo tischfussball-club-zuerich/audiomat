@@ -1970,7 +1970,7 @@
     } catch (e) { fail(e); return false; }
   }
   const hwById = id => state.hardware.find(g => g.id === id);
-  function headsetChoice(g, selected, taken, showMeter) {
+  function headsetChoice(g, selected, taken, showMeter, clash) {
     const lvl = g.inputs.length ? state.levels[g.inputs[0].name] : null;
     const assigned = [...g.inputs, ...g.outputs].map(n => n.assigned_label).find(Boolean);
     const idText = g.identity && g.identity.strategy === 'port'
@@ -1986,6 +1986,9 @@
         <div class="sub">${esc([g.bus, g.port, what].filter(Boolean).join(' · '))}</div>
         ${idText ? `<div class="sub">${esc(idText)}</div>` : ''}
         ${taken ? '<div class="sub">bereits für die andere Person gewählt</div>' : ''}
+        ${clash ? `<div class="sub" style="color:var(--gold-light)">Hängt am selben USB-Hub wie das andere Headset.
+          Zwei Audiogeräte an einem Hub rauschen, und das Rauschen wächst mit dem Signal. Steck dieses hier
+          direkt an den Rechner.</div>` : ''}
       </div>
       ${g.outputs.length ? `<button class="btn btn-sm wiz-tone" data-tone-node="${esc(g.outputs[0].name)}"
         title="kurzer Ton auf diesem Kopfhörer">${svg('i-headphones', 'i-sm')}Testton</button>` : ''}
@@ -2008,13 +2011,17 @@
       const who = w.step === 0 ? 'A' : 'B';
       const other = w.step === 0 ? w.b : w.a;
       const cur = w.step === 0 ? w.a : w.b;
+      // the headset the other person already has: anything on its hub is a
+      // problem waiting to happen, and here is the moment to say so
+      const otherHub = (state.hardware.find(g => g.id === other) || {}).hub || '';
       body.innerHTML = `
         <p class="hint">Welches Headset trägt Person ${who}? ${speakHint} Gib der Person einen Namen, damit die Seite von
           «${who === 'A' ? 'Anna' : 'Ben'}» spricht statt von «Headset ${who}».</p>
         ${headsets.length === 1 ? `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Nur ein Headset gefunden</span></div><dl><dd>Steck auch das zweite Headset ein; diese Liste aktualisiert sich von selbst.</dd></dl></div>` : ''}
         <div class="row" style="margin-bottom:12px"><label for="wiz-name">Name:</label>
           <input type="text" id="wiz-name" value="${esc(who === 'A' ? w.nameA : w.nameB)}" placeholder="z.B. ${who === 'A' ? 'Anna' : 'Ben'}" style="width:220px"></div>
-        ${headsets.length ? headsets.map(g => headsetChoice(g, cur === g.id, other === g.id, !metersOff)).join('')
+        ${headsets.length ? headsets.map(g => headsetChoice(g, cur === g.id, other === g.id, !metersOff,
+            !!(otherHub && g.hub && g.hub === otherHub && g.id !== other))).join('')
           : `<div class="problem warning"><div class="t">${svg('i-alert')}<span class="grow">Kein Headset gefunden</span></div><dl>
              <dt>Warum</dt><dd>Kein angeschlossenes Gerät hat sowohl Mikrofon als auch Kopfhörer.</dd>
              <dt>Was tun</dt><dd>Steck das USB-Headset ein und warte kurz; diese Liste aktualisiert sich von selbst.</dd></dl></div>`}`;

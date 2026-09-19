@@ -628,6 +628,19 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         bad(str(exc), "tfcz-audio init-config, then edit the [devices] or run Setup in the web UI.")
 
+    # two USB audio devices behind one hub: measured in the studio, weeks of
+    # noise, and nothing but moving a plug fixes it
+    try:
+        cfg_for_usb, _ = load_or_recover(find_config(args.config)) if not getattr(args, "cfg", None) else (args.cfg, "")
+        from .pw import FakeBackend
+
+        usb_router = Router(cfg_for_usb, FakeBackend() if getattr(args, "fake", False) else PipeWireBackend())
+        usb_router.refresh_devices()
+        for finding in usb_router.usb_findings():
+            warn(finding["title"], finding["fix"])
+    except Exception:  # noqa: BLE001 - a check must never end the report
+        pass
+
     if _tool("systemctl"):
         rc, out = _run(["systemctl", "--user", "is-enabled", "tfcz-audio"])
         if out.strip() in ("enabled", "static"):

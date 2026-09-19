@@ -96,6 +96,10 @@ who do not care about audio plumbing:
 * **Status** at the top: "Everything is working", or a list of problems in
   plain language, each with *why*, *effect* and *what to do*. Problems the
   daemon can fix itself (a device muted in the system) get a **Fix** button.
+* **Problems** in plain language, including two USB audio devices that ended
+  up on the same hub: full-speed devices share a hub's transaction
+  translator, which sounds like noise that grows with the signal. That one
+  cost the studio weeks before it was found by measurement.
 * **How the sound flows**: a diagram with inputs on the left, outputs on the
   right and one arrow per connection. Arrow thickness is the volume, dashed
   means off, red means a device is missing. Live green bars show sound
