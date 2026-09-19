@@ -6,6 +6,22 @@ WirePlumber behaviour can only be confirmed on the Ubuntu box. This is the
 list of things to verify once, in order. Each step says what "good" looks
 like and what to do otherwise.
 
+## 0. Where the headsets are plugged in
+
+Do this before anything else, because it is the one thing software cannot
+fix and the one that cost the studio weeks of hunting.
+
+**The two headsets must not hang off the same USB hub.** USB headsets are
+full-speed devices; behind one hub they share its transaction translator,
+and the result is noise on the game sound and on the other person's voice
+that grows with the signal — not silence, not crackling, noise that
+follows the audio. In the studio one headset sits on a hub and the other
+directly on a motherboard port, on a different controller.
+
+The page says so on its own: two audio devices on one hub appear in the
+problem list by name, and the setup wizard warns while the second headset
+is being chosen. `tfcz-audio doctor` prints it too.
+
 ## 1. Install
 
 ```
@@ -16,12 +32,25 @@ Good: ends with `tfcz-audio doctor` showing only `[ok]` lines and
 "Everything needed is in place." Then open <http://127.0.0.1:8787/>.
 
 Otherwise: fix the `[FAIL]` lines as printed, re-run `tfcz-audio doctor`.
+Most of them can be done from the page: **Erweitert → Diagnose → System
+reparieren** installs missing packages, starts the audio session, enables
+the service and writes the WirePlumber rule for the capture card.
+**Erweitert → System** lists the version of everything involved, which is
+what to paste into a message when asking for help.
 
 ## 2. Devices are seen
 
 Web UI → Set up devices. Good: both headsets appear as "microphone +
 headphones", the VC42 inputs appear as "HDMI capture input N". Speak into
-a headset: its bar moves.
+a headset: its bar moves. Press **Testton** on the same row and confirm
+the tone comes out of the headphone on that person's head — the bar proves
+the microphone, the tone proves the headphone, and a swapped pair sounds
+perfectly normal to everyone except the two people wearing them.
+
+Afterwards, in **Erweitert → Einrichtung → Testton**, play *links* and
+*rechts* on each headset once. Heard on the wrong side, or on both: the
+device is on a profile that collapses to one channel, see
+[sound-quality.md](sound-quality.md).
 
 Otherwise:
 * Headset missing: `wpctl status` must list it under Sources and Sinks.
@@ -70,9 +99,18 @@ this WirePlumber; report it.
 
 Add "Audio Input Capture (PipeWire)" → "TFCZ OBS Mic". Good: the OBS
 meter moves when someone talks, and the web UI says "Sound is reaching
-OBS right now". Add the game sound as its own "Audio Input Capture
-(PipeWire)" source pointing at the HDMI input. Never use "ALSA Input
-Capture": the UI would report the device as taken over by OBS.
+OBS right now".
+
+With the two commentators sitting next to each other, switch on
+**Erweitert → Einrichtung → Mikrofone für OBS → Für jede Person ein
+eigenes Mikrofon** instead. OBS then sees `TFCZ <name A>` and
+`TFCZ <name B>` as two sources, which is what lets an expander per person
+keep the other voice out of the stream. Both have to be added once after
+switching; the names never change by themselves afterwards.
+
+Add the game sound as its own "Audio Input Capture (PipeWire)" source
+pointing at the HDMI input. Never use "ALSA Input Capture": the UI would
+report the device as taken over by OBS.
 
 ## 7. Restart behaviour
 
@@ -104,11 +142,13 @@ reboot after `install.sh`), or lingering is off: `tfcz-audio doctor`.
 These are the assumptions the daemon makes about PipeWire that no test on
 a development machine can confirm. Each one takes a minute.
 
-**Who drives the audio clock.** With everything linked, run `pw-top`. The
-rows that are not indented are the drivers. If an `hws` (capture card) row
-is a driver, switch the HDMI source off and check that the headsets still
-hear each other and that the ERR column stays at zero. If it stalls, apply
-the priority rule in [hdmi-capture.md](hdmi-capture.md).
+**Who drives the audio clock.** `install.sh` writes a WirePlumber rule that
+keeps the capture inputs from driving it, so this should already be right:
+switch the HDMI source off and check that the headsets still hear each
+other. If everything goes silent at once, the rule is missing or in the
+format the other WirePlumber version reads — **Erweitert → Diagnose →
+System reparieren** offers to write it. `pw-top` shows the drivers as the
+rows that are not indented.
 
 **Realtime priority after a boot without login.**
 
