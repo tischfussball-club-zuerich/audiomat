@@ -124,24 +124,36 @@ esac
 # restarted only when the installed rule changed.
 echo "==> HDMI capture inputs: low driver priority"
 wp_version=$(wireplumber --version 2>/dev/null | grep -oE 'libwireplumber [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' || true)
-if [[ -z $wp_version ]] || [[ ${wp_version%%.*} -eq 0 && ${wp_version##*.} -lt 5 ]]; then
-  HDMI_RULE=52-tfcz-hdmi-priority.lua;  HDMI_DIR=$WP_LUA_DIR
+if [[ -z $wp_version ]]; then
+  # Cannot tell which WirePlumber this is. Installing both formats is safe --
+  # each version ignores the directory of the other -- and guessing wrong
+  # installs a rule that silently does nothing, which is the one outcome that
+  # leaves the HDMI card driving the graph without any sign of it.
+  HDMI_RULES=(52-tfcz-hdmi-priority.lua 52-tfcz-hdmi-priority.conf)
+  HDMI_DIRS=("$WP_LUA_DIR" "$WP_DIR")
+  HDMI_OTHER=""
+  echo "    (WirePlumber version unknown: installing the rule in both formats)"
+elif [[ ${wp_version%%.*} -eq 0 && ${wp_version##*.} -lt 5 ]]; then
+  HDMI_RULES=(52-tfcz-hdmi-priority.lua);  HDMI_DIRS=("$WP_LUA_DIR")
   HDMI_OTHER=$WP_DIR/52-tfcz-hdmi-priority.conf
 else
-  HDMI_RULE=52-tfcz-hdmi-priority.conf; HDMI_DIR=$WP_DIR
+  HDMI_RULES=(52-tfcz-hdmi-priority.conf); HDMI_DIRS=("$WP_DIR")
   HDMI_OTHER=$WP_LUA_DIR/52-tfcz-hdmi-priority.lua
 fi
 hdmi_changed=0
 # a rule left over in the other format (WirePlumber upgraded or an earlier install)
-if [[ -f $HDMI_OTHER ]]; then rm -f "$HDMI_OTHER"; hdmi_changed=1; fi
-mkdir -p "$HDMI_DIR"
-if [[ -f $HDMI_DIR/$HDMI_RULE ]] && cmp -s "$HERE/wireplumber/$HDMI_RULE" "$HDMI_DIR/$HDMI_RULE"; then
-  echo "    rule already in place ($HDMI_DIR/$HDMI_RULE)"
-else
-  cp "$HERE/wireplumber/$HDMI_RULE" "$HDMI_DIR/$HDMI_RULE"
-  echo "    installed $HDMI_DIR/$HDMI_RULE"
-  hdmi_changed=1
-fi
+if [[ -n $HDMI_OTHER && -f $HDMI_OTHER ]]; then rm -f "$HDMI_OTHER"; hdmi_changed=1; fi
+for i in "${!HDMI_RULES[@]}"; do
+  rule=${HDMI_RULES[$i]}; dir=${HDMI_DIRS[$i]}
+  mkdir -p "$dir"
+  if [[ -f $dir/$rule ]] && cmp -s "$HERE/wireplumber/$rule" "$dir/$rule"; then
+    echo "    rule already in place ($dir/$rule)"
+  else
+    cp "$HERE/wireplumber/$rule" "$dir/$rule"
+    echo "    installed $dir/$rule"
+    hdmi_changed=1
+  fi
+done
 # --studio: the naming rules that give the headsets and the HDMI inputs their
 # stable node names (config.toml refers to them). Lua because of WirePlumber 0.4.
 if (( RESTORE_STUDIO )); then

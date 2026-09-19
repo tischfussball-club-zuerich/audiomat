@@ -58,8 +58,16 @@ kill_matching pw-record 'tfcz\.meter\.'
 
 rm -f "$UNIT_DIR/tfcz-audio.service" && echo "==> removed systemd unit"
 rm -f "$BIN" && echo "==> removed $BIN"
-for WP_RULE in "${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/wireplumber.conf.d/52-tfcz-hdmi-priority.conf" \
-               "${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/main.lua.d/52-tfcz-hdmi-priority.lua"; do
+WP_CONF_D="${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/wireplumber.conf.d"
+WP_LUA_D="${XDG_CONFIG_HOME:-$HOME/.config}/wireplumber/main.lua.d"
+# The driver-priority rule, and the studio naming rules from install.sh
+# --studio. They rename devices and reorder the graph for the whole session, so
+# leaving them behind after an uninstall changes the machine forever with
+# nothing left to explain it.
+for WP_RULE in "$WP_CONF_D/52-tfcz-hdmi-priority.conf" \
+               "$WP_LUA_D/52-tfcz-hdmi-priority.lua" \
+               "$WP_LUA_D/51-avmatrix-audio-names.lua" \
+               "$WP_LUA_D/52-headset-stable-names.lua"; do
   if [[ -f $WP_RULE ]]; then
     rm -f "$WP_RULE" && echo "==> removed $WP_RULE (restart WirePlumber or log out and in to apply)"
   fi
