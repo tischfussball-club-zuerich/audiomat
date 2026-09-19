@@ -240,3 +240,28 @@ class SideParsingTests(unittest.TestCase):
             tone.clean_side("diagonal")
         self.assertIn("Seite", str(caught.exception))
         self.assertNotIn("must be", str(caught.exception))
+
+
+class NeverOnTheStreamTests(unittest.TestCase):
+    """The mix bus for OBS is a sink like any other. A tone into it would go
+    out on the stream and into both headsets at once."""
+
+    def setUp(self):
+        self.router = Router(minimal_config(), fake_backend(), node_wait=0.05, sleep=lambda s: None)
+        self.router.start()
+        self.router.reconcile()
+        self.addCleanup(self.router.stop)
+
+    def test_our_own_channels_are_refused(self):
+        for name in ("tfcz.obsmix", "tfcz.obsmic", "tfcz.a_to_b.out"):
+            with self.subTest(name), self.assertRaises(RouterError) as caught:
+                self.router.tone_target(name)
+            self.assertIn("echte Geräte", str(caught.exception))
+
+    def test_real_devices_are_still_allowed(self):
+        node, _ = self.router.tone_target("alsa_output.a")
+        self.assertEqual(node, "alsa_output.a")
+
+    def test_the_listed_targets_never_contain_our_own(self):
+        for entry in self.router.output_targets():
+            self.assertFalse(entry["node"].startswith("tfcz."), entry)

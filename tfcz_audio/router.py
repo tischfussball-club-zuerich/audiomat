@@ -1920,6 +1920,10 @@ class Router:
 
             raw = graph.by_name(alias)
             if raw is not None:
+                if raw.name.startswith("tfcz."):
+                    # our own mix bus is a sink like any other, and a tone into
+                    # it would go out on the stream and into both headsets
+                    raise RouterError("Der Testton geht nur an echte Geräte, nicht an die Kanäle dieses Routers")
                 if not raw.media_class.startswith("Audio/Sink"):
                     raise RouterError(f"{describe_node(raw, graph).get('friendly') or alias} ist kein Ausgabegerät; "
                                       "ein Testton geht nur an Kopfhörer oder Lautsprecher")
