@@ -385,7 +385,10 @@ what is connected.
 the router: missing packages, an audio session that is not running, a
 service that will not come back after a reboot, lingering, PulseAudio
 answering instead of PipeWire, sample rates that do not match, leftover
-helper processes. Each finding says what it breaks and carries the exact
+helper processes, and the WirePlumber rule that keeps an HDMI capture input
+from driving the graph — that one can go missing with a deleted file or a
+WirePlumber upgrade from 0.4 to 0.5, and nothing shows it until the HDMI
+source is switched off and everything stalls at once. Each finding says what it breaks and carries the exact
 command.
 
 What can be done without being root is done at the press of a button:

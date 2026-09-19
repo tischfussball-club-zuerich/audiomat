@@ -101,3 +101,71 @@ class RunnerTests(unittest.TestCase):
             self.assertTrue(path.is_file())
             self.assertIn("48000", path.read_text())
             self.assertIn("pipewire.conf.d", str(path))
+
+
+class HdmiRuleTests(unittest.TestCase):
+    """The rule that keeps an HDMI capture input from driving the graph can go
+    missing -- deleted, or left in the wrong format when WirePlumber is upgraded
+    from 0.4 to 0.5. Nothing shows it until the HDMI source is switched off and
+    everything stalls at once, so the daemon carries the text and can put it
+    back."""
+
+    def test_the_embedded_rule_is_the_one_the_installer_writes(self):
+        from pathlib import Path
+
+        self.assertEqual(repair.HDMI_RULE_CONF, Path("wireplumber/52-tfcz-hdmi-priority.conf").read_text())
+        self.assertEqual(repair.HDMI_RULE_LUA, Path("wireplumber/52-tfcz-hdmi-priority.lua").read_text())
+
+    def test_which_format_this_wireplumber_reads(self):
+        for version, wanted in (((0, 4), ["lua"]), ((0, 5), ["conf"]), ((1, 0), ["conf"]), (None, ["conf", "lua"])):
+            with mock.patch.object(repair, "wireplumber_major", lambda v=version: v):
+                self.assertEqual(repair.hdmi_rule_state()["wanted"], wanted, version)
+
+    def test_it_is_only_offered_on_a_machine_with_such_a_card(self):
+        with mock.patch.object(repair, "has_capture_card", lambda: False), \
+             mock.patch.object(repair.shutil, "which", lambda name: f"/usr/bin/{name}"), \
+             mock.patch.object(repair, "_run", lambda cmd, timeout=5.0: (0, "active")), \
+             mock.patch.object(repair, "_unit_active", lambda unit: True):
+            self.assertNotIn("hdmi-rule", [a.id for a in repair.detect()])
+
+    def test_a_missing_rule_is_offered_as_a_repair(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}), \
+             mock.patch.object(repair, "has_capture_card", lambda: True), \
+             mock.patch.object(repair, "wireplumber_major", lambda: (0, 5)), \
+             mock.patch.object(repair.shutil, "which", lambda name: f"/usr/bin/{name}"), \
+             mock.patch.object(repair, "_run", lambda cmd, timeout=5.0: (0, "active")), \
+             mock.patch.object(repair, "_unit_active", lambda unit: True):
+            action = next(a for a in repair.detect() if a.id == "hdmi-rule")
+            self.assertIn("Taktgeber", action.why)
+            self.assertFalse(action.needs_root, "it writes into the user's own config")
+
+    def test_writing_it_puts_the_file_where_this_version_reads_it(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}), \
+             mock.patch.object(repair, "wireplumber_major", lambda: (0, 4)), \
+             mock.patch.object(repair, "_run", lambda cmd, timeout=5.0: (0, "restarted")):
+            runner = repair.Runner()
+            rc = runner._python_fix(repair.Action(id="hdmi-rule", title="", why="", effect="", python="hdmi_rule"))
+            written = Path(tmp, "wireplumber", "main.lua.d", "52-tfcz-hdmi-priority.lua")
+            self.assertEqual(rc, 0)
+            self.assertTrue(written.is_file())
+            self.assertEqual(written.read_text(), repair.HDMI_RULE_LUA)
+            self.assertFalse(Path(tmp, "wireplumber", "wireplumber.conf.d").exists(),
+                             "0.4 does not read the conf format")
+
+    def test_an_existing_rule_is_not_reported_as_missing(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": tmp}), \
+             mock.patch.object(repair, "wireplumber_major", lambda: (0, 5)):
+            path = Path(tmp, "wireplumber", "wireplumber.conf.d", "52-tfcz-hdmi-priority.conf")
+            path.parent.mkdir(parents=True)
+            path.write_text(repair.HDMI_RULE_CONF)
+            self.assertEqual(repair.hdmi_rule_state()["missing"], [])

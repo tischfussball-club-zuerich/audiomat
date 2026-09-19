@@ -171,6 +171,105 @@ def _rate_problem(router: Any) -> dict[str, Any]:
     return {"titles": [f["title"] for f in findings], "path": str(rate_drop_in())}
 
 
+# The rule that keeps an HDMI capture input from driving the graph. install.sh
+# writes it, but it can go missing: deleted by hand, lost with a home directory,
+# or left in the wrong format when WirePlumber is upgraded from 0.4 to 0.5. The
+# failure is silent -- until the HDMI source is switched off and everything
+# stalls with it -- so the daemon carries the text and can put it back.
+HDMI_RULE_CONF = """# Installed by tfcz-audio's install.sh into
+# ~/.config/wireplumber/wireplumber.conf.d/ (removed again by uninstall.sh).
+#
+# All devices share one PipeWire graph and one node drives its clock. PipeWire
+# prefers PCI devices over USB, so an HDMI capture input can become that
+# driver. When its HDMI source is switched off or unplugged the card stops
+# delivering samples, and everything that follows it stalls: the headsets, the
+# intercom and the OBS microphones all go silent at once. Giving the capture
+# inputs a low driver priority lets the USB headsets (2000) drive the graph
+# instead, so a missing HDMI source only silences that one input.
+#
+# The cards are called "HAudio 1..4" with the AVMatrix VC42 driver and "HWS"
+# in the upstream hws driver; either one matches.
+monitor.alsa.rules = [
+  {
+    matches = [
+      { device.nick = "~HAudio.*" }
+      { api.alsa.card.name = "~HAudio.*" }
+      { alsa.card_name = "~.*HWS.*" }
+    ]
+    actions = {
+      update-props = {
+        priority.driver  = 100
+        priority.session = 100
+      }
+    }
+  }
+]
+"""
+
+HDMI_RULE_LUA = """-- Installed by tfcz-audio's install.sh into ~/.config/wireplumber/main.lua.d/
+-- (WirePlumber 0.4; 0.5 and newer use 52-tfcz-hdmi-priority.conf instead).
+-- Removed again by uninstall.sh.
+--
+-- All devices share one PipeWire graph and one node drives its clock. PipeWire
+-- prefers PCI devices over USB, so an HDMI capture input can become that
+-- driver. When its HDMI source is switched off or unplugged the card stops
+-- delivering samples, and everything that follows it stalls: the headsets, the
+-- intercom and the OBS microphones all go silent at once. Giving the capture
+-- inputs a low driver priority lets the USB headsets (2000) drive the graph
+-- instead, so a missing HDMI source only silences that one input.
+--
+-- The cards are called "HAudio 1..4" with the AVMatrix VC42 driver and "HWS"
+-- in the upstream hws driver; either one matches.
+table.insert(alsa_monitor.rules, {
+  matches = {
+    { { "api.alsa.card.name", "matches", "HAudio*" } },
+    { { "alsa.card_name", "matches", "*HWS*" } },
+  },
+  apply_properties = {
+    ["priority.driver"] = 100,
+    ["priority.session"] = 100,
+  },
+})
+"""
+
+
+def wireplumber_major() -> tuple[int, int] | None:
+    """(major, minor) of the running WirePlumber, or None when it cannot be told."""
+    if not shutil.which("wireplumber"):
+        return None
+    rc, out = _run(["wireplumber", "--version"], timeout=4)
+    match = re.search(r"(\d+)\.(\d+)", out or "")
+    if rc != 0 or not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def hdmi_rule_paths() -> dict[str, Path]:
+    base = Path(os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")) / "wireplumber"
+    return {
+        "conf": base / "wireplumber.conf.d" / "52-tfcz-hdmi-priority.conf",
+        "lua": base / "main.lua.d" / "52-tfcz-hdmi-priority.lua",
+    }
+
+
+def hdmi_rule_state() -> dict[str, Any]:
+    """Which format this WirePlumber reads, and whether the rule is there."""
+    version = wireplumber_major()
+    wanted = ["conf", "lua"] if version is None else (["lua"] if version < (0, 5) else ["conf"])
+    paths = hdmi_rule_paths()
+    missing = [kind for kind in wanted if not paths[kind].is_file()]
+    return {"version": version, "wanted": wanted, "paths": paths, "missing": missing}
+
+
+def has_capture_card() -> bool:
+    """Only worth mentioning on a machine that has such a card."""
+    try:
+        cards = Path("/proc/asound/cards").read_text(errors="replace").lower()
+    except OSError:
+        return False
+    return "hws" in cards or "haudio" in cards
+
+
 def rate_drop_in() -> Path:
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "pipewire" / "pipewire.conf.d" / "10-tfcz-rate.conf"
@@ -254,6 +353,20 @@ def detect(router: Any = None) -> list[Action]:
             note=f"Schreibt {rate['path']}. Danach muss das Tonsystem einmal neu starten "
                  "(systemctl --user restart pipewire wireplumber) — dabei setzt der Ton kurz aus.",
         ))
+
+    if has_capture_card():
+        rule = hdmi_rule_state()
+        if rule["missing"]:
+            where = ", ".join(str(rule["paths"][kind]) for kind in rule["missing"])
+            actions.append(Action(
+                id="hdmi-rule",
+                title="Regel für die Aufnahmekarte fehlt",
+                why=f"Ohne sie kann ein HDMI-Eingang zum Taktgeber des ganzen Tonsystems werden. Erwartet: {where}.",
+                effect="Wird die HDMI-Quelle ausgeschaltet, liefert die Karte keine Daten mehr und alles andere "
+                       "bleibt mit ihr stehen: Headsets, Gegensprechen und die OBS-Mikrofone gleichzeitig.",
+                python="hdmi_rule",
+                note="Schreibt die Regel und startet WirePlumber neu; der Ton setzt dabei kurz aus.",
+            ))
 
     try:
         from .pw import find_stale_helpers
@@ -404,6 +517,19 @@ class Runner:
             )
             self._write(f"geschrieben: {path}\n\n{path.read_text()}\n")
             self._write("Damit es greift: systemctl --user restart pipewire wireplumber\n")
+            return 0
+        if action.python == "hdmi_rule":
+            rule = hdmi_rule_state()
+            texts = {"conf": HDMI_RULE_CONF, "lua": HDMI_RULE_LUA}
+            for kind in rule["wanted"]:
+                path = rule["paths"][kind]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(texts[kind])
+                self._write(f"geschrieben: {path}\n")
+            rc, out = _run(["systemctl", "--user", "restart", "wireplumber"], timeout=30)
+            self._write((out or "WirePlumber neu gestartet") + "\n")
+            if rc != 0:
+                self._write("WirePlumber liess sich nicht neu starten; die Regel greift beim nächsten Start.\n")
             return 0
         if action.python == "stale_helpers":
             from .pw import kill_stale_helpers
