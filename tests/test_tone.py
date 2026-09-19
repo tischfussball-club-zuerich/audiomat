@@ -222,3 +222,21 @@ class WizardToneTests(unittest.TestCase):
         page = resources.files("tfcz_audio").joinpath("ui.html").read_text()
         self.assertIn("data-tone-node", page)
         self.assertIn("e.stopPropagation()", page)
+
+
+class SideParsingTests(unittest.TestCase):
+    """The side is written into a URL by hand as often as it is clicked."""
+
+    def test_case_and_whitespace_do_not_matter(self):
+        for text in ("LEFT", " left ", "Left", "lEfT"):
+            self.assertEqual(tone.clean_side(text), "left")
+
+    def test_nothing_means_both_sides(self):
+        for text in ("", None, "   "):
+            self.assertEqual(tone.clean_side(text), "both")
+
+    def test_something_else_is_refused_in_german(self):
+        with self.assertRaises(ValueError) as caught:
+            tone.clean_side("diagonal")
+        self.assertIn("Seite", str(caught.exception))
+        self.assertNotIn("must be", str(caught.exception))

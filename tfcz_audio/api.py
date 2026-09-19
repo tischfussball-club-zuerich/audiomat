@@ -543,7 +543,7 @@ class Handler(BaseHTTPRequestHandler):
         if seg == ["tone"] and read:
             return ok, {"ok": True, "targets": router.output_targets(), **self.server.tone.state()}
         if len(seg) == 2 and seg[0] == "tone" and write:
-            side = str(params.get("side", "both"))
+            side = params.get("side", "both")
             try:
                 seconds = float(params.get("seconds", 1.2))
             except (TypeError, ValueError):

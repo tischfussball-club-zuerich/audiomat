@@ -892,10 +892,14 @@ class ToneApiTests(ApiTestCase):
         self.assertEqual(status, 400)
         self.assertIn("Ausgabegerät", body["error"])
 
-    def test_a_nonsense_side_is_refused(self):
+    def test_a_nonsense_side_is_refused_in_german(self):
         status, body = self.call("POST", "/tone/a_out?side=diagonal", headers={"Origin": self.base})
         self.assertEqual(status, 400)
-        self.assertIn("side", body["error"])
+        self.assertIn("Seite", body["error"])
+
+    def test_an_upper_case_side_is_understood(self):
+        status, _ = self.call("POST", "/tone/a_out?side=LEFT", headers={"Origin": self.base})
+        self.assertIn(status, (200, 409))  # 409 only if one is already playing
 
     def test_the_page_offers_the_buttons(self):
         import re

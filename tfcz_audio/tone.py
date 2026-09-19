@@ -36,6 +36,18 @@ SIDES = ("left", "right", "both")
 SIDE_LABELS = {"left": "links", "right": "rechts", "both": "beide Seiten"}
 
 
+def clean_side(side: Any) -> str:
+    """What the caller meant. Written by hand into a URL as often as clicked,
+    so case and whitespace are not worth an error, and nothing at all means
+    both sides."""
+    text = str(side or "").strip().lower()
+    if not text:
+        return "both"
+    if text not in SIDES:
+        raise ValueError(f"Die Seite muss «links», «rechts» oder «beide» sein ({', '.join(SIDES)})")
+    return text
+
+
 def make_wav(side: str = "both", seconds: float = 1.2) -> bytes:
     """A stereo WAV with the tone on the chosen side and silence on the other.
 
@@ -43,8 +55,7 @@ def make_wav(side: str = "both", seconds: float = 1.2) -> bytes:
     "I hear it on the left", which is what tells a swapped pair of headphones
     from a correct one.
     """
-    if side not in SIDES:
-        raise ValueError(f"side must be one of {', '.join(SIDES)}")
+    side = clean_side(side)
     seconds = min(max(float(seconds), 0.2), MAX_SECONDS)
     frames = int(RATE * seconds)
     fade = max(1, int(RATE * 0.02))  # 20 ms, so it does not click
@@ -117,8 +128,7 @@ class TonePlayer:
             return self._snapshot()
 
     def play(self, node: str, label: str, side: str = "both", seconds: float = 1.2) -> dict[str, Any]:
-        if side not in SIDES:
-            raise ValueError(f"side must be one of {', '.join(SIDES)}")
+        side = clean_side(side)
         with self._lock:
             if self.running:
                 return {"started": False, **self._snapshot(),
