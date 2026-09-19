@@ -56,3 +56,37 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNone(cfg.state_file)
         cfg = parse(tomllib.loads(MINIMAL))
         self.assertIsNotNone(cfg.state_file)
+
+
+class OwnNodesAreNotDevicesTests(unittest.TestCase):
+    """A device pointing at one of our own channels gets routed like any other
+    device, and the route check only looks at the alias. That is how a feedback
+    loop gets built with nothing objecting."""
+
+    def test_a_device_may_not_be_one_of_our_channels(self):
+        from tfcz_audio.config import ConfigError, parse
+
+        for node in ("tfcz.obsmic", "tfcz.obsmix", "tfcz.a_to_b.out", "tfcz.obsmic.a"):
+            with self.subTest(node), self.assertRaises(ConfigError) as caught:
+                parse({"devices": {"loop": node}})
+            self.assertIn("channel of this router", str(caught.exception))
+
+    def test_the_loop_that_used_to_get_through_is_refused(self):
+        from tfcz_audio.config import ConfigError, parse
+
+        with self.assertRaises(ConfigError):
+            parse({"devices": {"loop": "tfcz.obsmic"},
+                   "routes": {"r": {"from": "loop", "to": "obs_mic"}}})
+
+    def test_real_devices_are_untouched(self):
+        from tfcz_audio.config import parse
+
+        cfg = parse({"devices": {"mic": "alsa_input.usb-something", "out": "alsa_output.usb-something"}})
+        self.assertEqual(cfg.devices["mic"].node, "alsa_input.usb-something")
+
+    def test_a_microphone_for_obs_cannot_be_a_device_alias(self):
+        from tfcz_audio.config import ConfigError, parse
+
+        with self.assertRaises(ConfigError) as caught:
+            parse({"devices": {"obs_mic": "alsa_input.a"}})
+        self.assertIn("reserved", str(caught.exception))

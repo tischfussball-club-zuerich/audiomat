@@ -254,11 +254,17 @@ def parse(data: dict) -> Config:
 
     devices = _section(data, "devices")
     for key, value in devices.items():
-        if key == OBS_MIC:
-            raise ConfigError(f"[devices] '{OBS_MIC}' is reserved for the virtual OBS microphone")
+        if key == OBS_MIC or key in cfg.virtual.outputs:
+            raise ConfigError(f"[devices] '{key}' is reserved for a microphone this router provides to OBS")
         if not ROUTE_NAME_RE.match(key):
             raise ConfigError(f"[devices] '{key}': names must match {ROUTE_NAME_RE.pattern}")
         if isinstance(value, str) and value:
+            if value.startswith("tfcz."):
+                # A device pointing at one of our own nodes gets routed like any
+                # other, and the route check only looks at the alias -- so this
+                # is how a feedback loop gets built without anything objecting.
+                raise ConfigError(f"[devices] {key}: '{value}' is a channel of this router, not a device. "
+                                  f"Use '{OBS_MIC}' as a route target instead.")
             cfg.devices[key] = DeviceSpec(alias=key, node=value)
         elif isinstance(value, dict) and isinstance(value.get("match"), dict) and value["match"]:
             match = {}
