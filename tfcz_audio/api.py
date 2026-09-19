@@ -278,6 +278,16 @@ class ApiServer(ThreadingHTTPServer):
             return
         super().process_request(request, client_address)
 
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """socketserver prints a stack trace to stderr by default."""
+        import sys as _sys
+
+        kind = _sys.exc_info()[0]
+        if kind is not None and issubclass(kind, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            log.debug("connection from %s ended early", client_address)
+            return
+        log.exception("error while serving %s", client_address)
+
     def process_request_thread(self, request: Any, client_address: Any) -> None:
         # counted down here and nowhere else: a refused connection is closed
         # without ever having been counted up
@@ -303,15 +313,35 @@ class Handler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------- plumbing
 
+    #: A client that goes away mid-answer is normal: a tab closed, a page
+    #: navigated away, a curl piped into head. Nothing is wrong on this side,
+    #: and a stack trace per occurrence would bury the journal -- the page polls
+    #: several times a second.
+    GONE = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+    def _write(self, body: bytes) -> bool:
+        try:
+            self.wfile.write(body)
+        except self.GONE:
+            self.close_connection = True
+            log.debug("client %s went away mid-answer", self.address_string())
+            return False
+        return True
+
     def _send(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, indent=2).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+        except self.GONE:
+            self.close_connection = True
+            log.debug("client %s went away before the answer", self.address_string())
+            return
         if self.command != "HEAD":
-            self.wfile.write(body)
+            self._write(body)
 
     def _error(self, status: HTTPStatus, message: str) -> None:
         self._send(status, {"ok": False, "error": message})
@@ -323,16 +353,20 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "max-age=86400")
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(body)
+            self._write(body)
 
     def _send_html(self, body: bytes) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+        except self.GONE:
+            self.close_connection = True
+            return
         if self.command != "HEAD":
-            self.wfile.write(body)
+            self._write(body)
 
     def _read_params(self) -> dict[str, Any]:
         parts = urlsplit(self.path)
@@ -475,6 +509,10 @@ class Handler(BaseHTTPRequestHandler):
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         except ConfigError as exc:
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
+        except self.GONE:
+            # the client hung up; there is nobody left to tell
+            self.close_connection = True
+            log.debug("client %s went away during %s %s", self.address_string(), self.command, self.path)
         except Exception:  # noqa: BLE001
             log.exception("unhandled error for %s %s", self.command, self.path)
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "internal error")

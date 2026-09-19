@@ -435,6 +435,9 @@ client can drive it.
 | GET | `/config` | current config as JSON (token hidden) |
 | GET / PUT | `/audio` | read or change the system-wide buffer size (`quantum` in frames, 0 = automatic, `persist` to keep it) |
 | POST | `/audio/dropouts` | measure dropouts with pw-top |
+| POST | `/analysis` | the full picture: who drives the clock, what each device runs at, doubled paths, loops (`seconds`) |
+| PUT | `/config/audio` | change the `[audio]` section (buffer request, level meters on or off) |
+| GET / POST | `/update` | read the last self-update, or start one (`git pull` and `./install.sh`) |
 | GET | `/tone` | which devices a test tone can go to, and how the last one went |
 | POST | `/tone/{alias}` | play it (`side`: `left`, `right`, `both`; `seconds`) |
 | GET | `/repair` | what is broken about the system and what can be repaired from here |

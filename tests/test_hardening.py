@@ -689,3 +689,32 @@ class GraphBusyTests(unittest.TestCase):
             self.assertIsNotNone(router._last_graph, "nothing left to fall back on")
         finally:
             router.stop()
+
+
+class ClientGoesAwayTests(ApiTestCase):
+    """A tab closed mid-request is normal. A stack trace per occurrence would
+    bury the journal: the page polls several times a second."""
+
+    def test_no_traceback_when_the_client_hangs_up(self):
+        import socket
+        import sys
+        from io import StringIO
+
+        stderr = StringIO()
+        real = sys.stderr
+        sys.stderr = stderr
+        try:
+            for _ in range(5):
+                sock = socket.create_connection(self.server.server_address[:2], timeout=5)
+                sock.sendall(b"GET /status HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+                sock.close()  # gone before the answer is written
+            import time
+
+            time.sleep(1.0)
+        finally:
+            sys.stderr = real
+        self.assertNotIn("Traceback", stderr.getvalue())
+        self.assertNotIn("BrokenPipe", stderr.getvalue())
+        # and the service is still fine
+        status, _ = self.call("GET", "/health")
+        self.assertEqual(status, 200)
